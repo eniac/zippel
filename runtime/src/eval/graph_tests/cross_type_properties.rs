@@ -239,8 +239,8 @@ mod mle_differential_tests {
     #[test]
     fn test_mle_app_evaluation_differential() {
         let src = r#"
-            fn f<F: Field>(instance p: Mle<F, 2>, instance x: F) -> Mle<F, 1> {
-                p(x)
+            fn f<F: Field>(instance p: Mle<F, 2>, instance x: F) -> [F; 2] {
+                coef(p(x))
             }
         "#;
         let dags = lowered::<C>(src, &Ctx::new()).unwrap();
@@ -265,10 +265,10 @@ mod mle_differential_tests {
             _ => unreachable!(),
         };
 
-        // Expected output is a 2-element vector:
-        // [v0 + (v2 - v0)*x, v1 + (v3 - v1)*x]
-        let e0 = v0 + (v2 - v0) * x_scalar;
-        let e1 = v1 + (v3 - v1) * x_scalar;
+        // `p(x)` is `eval(p, [x])`: it fixes variable 0, the low bit of an evaluation's
+        // index, leaving the MLE [v0 + (v1 - v0)*x, v2 + (v3 - v2)*x].
+        let e0 = v0 + (v1 - v0) * x_scalar;
+        let e1 = v2 + (v3 - v2) * x_scalar;
 
         let expected_result = Value::vec_scalar(vec![e0, e1]);
 
@@ -284,5 +284,115 @@ mod mle_differential_tests {
             actual_result,
             expected_result
         );
+    }
+
+    /// The MLE with evaluations `[10, 20, 30, 40]`, as a value.
+    fn mle_10_to_40() -> Value<C> {
+        let evals = [10, 20, 30, 40].map(Fr::from).to_vec();
+        let mle = PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(2, evals));
+        Value::poly(VirtualPolynomial::from_poly(mle))
+    }
+
+    /// `f(p, x, y)` for the MLE `[10, 20, 30, 40]` at random `x`, `y`, with the expected value.
+    fn run_at_point(body: &str) -> (Value<C>, Fr) {
+        let src = format!(
+            "fn f<F: Field>(instance p: Mle<F, 2>, instance x: F, instance y: F) -> F {{ {body} }}"
+        );
+        let dags = lowered::<C>(&src, &Ctx::new()).unwrap();
+        let mut rng = ark_std::test_rng();
+        let scalar = |rng: &mut _| match Value::<C>::random(rng, &ATyp::scalar()) {
+            Value::Scalar(s) => s,
+            _ => unreachable!(),
+        };
+        let (x, y) = (scalar(&mut rng), scalar(&mut rng));
+        let mut inputs = test_inputs();
+        inputs.insert(&Vid::from("p"), &mle_10_to_40());
+        inputs.insert(&Vid::from("x"), &Value::Scalar(x));
+        inputs.insert(&Vid::from("y"), &Value::Scalar(y));
+        // `x` fixes variable 0 (the low bit of an index), `y` variable 1: 10 + 10x + 20y.
+        let expected = Fr::from(10) + Fr::from(10) * x + Fr::from(20) * y;
+        (execute_graph(&dags[0], inputs).unwrap(), expected)
+    }
+
+    /// Applying an MLE is `eval`, at a whole point or one coordinate at a time: each coordinate
+    /// fixes the next variable from the low bit. `p([x, y])` used to fold the point elementwise
+    /// into a vector, and `q(y)` on the one-variable `q = p(x)` read `q` as a line.
+    #[test]
+    fn test_mle_app_is_eval() {
+        for body in [
+            "eval(p, [x, y])",
+            "p([x, y])",
+            "let pt = [x, y]; p(pt)",
+            "let q = p(x); q(y)",
+        ] {
+            let (actual, expected) = run_at_point(body);
+            assert!(
+                values_equal(&actual, &Value::Scalar(expected)),
+                "{body}: got {actual:?}, expected {expected:?}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod multivariate_app_tests {
+    use crate::eval::graph_tests::helpers::*;
+    use ark_poly::DenseMVPolynomial;
+    use ark_poly::multivariate::{SparsePolynomial, SparseTerm, Term};
+    use backend::{ATyp, Value, poly_variant::PolyVariant, virtual_polynomial::VirtualPolynomial};
+    use lang::id::Vid;
+    use share::Ctx;
+
+    type C = TestConfig;
+    type Fr = <C as backend::ArkConfig>::F;
+
+    /// Applying a general polynomial (two variables, degree 2) is `eval`, at a whole point or
+    /// one coordinate at a time; fixing a leading variable used to panic at run time ("MLE
+    /// evaluation failed"), and applying it was not accepted at all.
+    #[test]
+    fn test_poly_app_is_eval() {
+        // p(x0, x1) = 3 + 2·x0 + 5·x0·x1 + 7·x1^2
+        let term = |vars: Vec<(usize, usize)>| SparseTerm::new(vars);
+        let p = SparsePolynomial::from_coefficients_vec(
+            2,
+            vec![
+                (Fr::from(3), term(vec![])),
+                (Fr::from(2), term(vec![(0, 1)])),
+                (Fr::from(5), term(vec![(0, 1), (1, 1)])),
+                (Fr::from(7), term(vec![(1, 2)])),
+            ],
+        );
+        let p_val = || {
+            Value::<C>::poly(VirtualPolynomial::from_poly(
+                PolyVariant::SparseMultivariate(p.clone()),
+            ))
+        };
+        let mut rng = ark_std::test_rng();
+        let mut scalar = || match Value::<C>::random(&mut rng, &ATyp::scalar()) {
+            Value::Scalar(s) => s,
+            _ => unreachable!(),
+        };
+        let (x, y) = (scalar(), scalar());
+        let expected = Fr::from(3) + Fr::from(2) * x + Fr::from(5) * x * y + Fr::from(7) * y * y;
+        for body in [
+            "eval(p, [x, y])",
+            "p([x, y])",
+            "let q = p(x); q(y)",
+            "let q = eval(p, [x]); q(y)",
+        ] {
+            let src = format!(
+                "fn f<F: Field>(instance p: Poly<F, 2, 2>, instance x: F, instance y: F) -> F {{ {body} }}"
+            );
+            let dags = lowered::<C>(&src, &Ctx::new()).unwrap();
+            let mut inputs = test_inputs();
+            inputs.insert(&Vid::from("p"), &p_val());
+            inputs.insert(&Vid::from("x"), &Value::Scalar(x));
+            inputs.insert(&Vid::from("y"), &Value::Scalar(y));
+            let actual = execute_graph(&dags[0], inputs).unwrap();
+            assert!(
+                values_equal(&actual, &Value::Scalar(expected)),
+                "{body}: got {actual:?}, expected {expected:?}"
+            );
+        }
     }
 }

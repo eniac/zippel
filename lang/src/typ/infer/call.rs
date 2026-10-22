@@ -21,80 +21,32 @@ impl CRef<'_> {
             .map(|p| Spanned::new(env.typ(self.at(p)), self.at(p).span().clone()))
             .collect();
 
-        // Is it a polynomial, MLE, or a function?
+        // Is it a polynomial, another variable, or a function?
         match vctx.get(&id.node) {
-            Some(CTyp::Poly(tbase, m, _)) if m.node == 1 => {
-                // It is a univariate polynomial
-                let k = kctx
-                    .get(tbase)
-                    .ok_or(TypeError::from(LubError::kind_not_found(tbase)))?;
-
-                // Only field elements can be evaluated and only 1 argument can be given
-                if !k.is_scalar() || param_types.len() != 1 {
-                    return Err(TypeError::Uni(
+            // Applying a polynomial is `eval` at one point; a scalar for a polynomial in
+            // several variables is the point `[x]`, fixing its variable 0.
+            Some(p_typ @ CTyp::Poly(_, vars, _)) => {
+                let [point] = &param_types.0[..] else {
+                    return Err(TypeError::PolyApp(
                         kctx.clone(),
                         id.node.clone(),
                         param_types.clone(),
                     ));
-                }
-
-                // The argument must fit the polynomial's field (integers embed)
-                if param_types.0[0].node.fits(&CTyp::Base(tbase.clone()), kctx) {
-                    Ok(CTyp::base(tbase))
-                } else {
-                    Err(TypeError::Uni(
-                        kctx.clone(),
-                        id.node.clone(),
-                        param_types.clone(),
-                    ))
-                }
+                };
+                let point = match &point.node {
+                    x @ CTyp::Vec(..) => x.clone(),
+                    x if vars.node > 1 => CTyp::vec(x, 1),
+                    x => x.clone(),
+                };
+                super::poly::evaluated_typ(p_typ.clone(), point, kctx)
             }
-            Some(CTyp::Poly(tbase, n, d)) if d.node == 1 => {
-                // It is a multilinear extension
-                let k = kctx
-                    .get(tbase)
-                    .ok_or(TypeError::from(LubError::kind_not_found(tbase)))?;
-                // Only field elements can be evaluated and only 1 argument can be given
-                if !k.is_scalar() || param_types.len() != 1 {
-                    return Err(TypeError::MleApp(
-                        kctx.clone(),
-                        id.node.clone(),
-                        param_types.clone(),
-                    ));
-                }
-
-                // The argument must be a field and the same as the MLE
-                match &param_types.0[0].node {
-                    CTyp::Fin(_) | CTyp::FieldLiteral if n.node > 0 => {
-                        let rem = n.node - 1;
-                        Ok(CTyp::mle(tbase, rem))
-                    }
-                    CTyp::Base(tb) if tb == tbase && n.node > 0 => {
-                        let rem = n.node - 1;
-                        Ok(CTyp::mle(tbase, rem))
-                    }
-                    CTyp::Vec(CTyp::Base(tb), m) if tb == tbase && n.node == m.node => {
-                        Ok(CTyp::base(tbase))
-                    }
-                    CTyp::Vec(CTyp::Fin(_) | CTyp::FieldLiteral, m) if n.node == m.node => {
-                        Ok(CTyp::base(tbase))
-                    }
-                    CTyp::Vec(CTyp::Fin(_) | CTyp::FieldLiteral, m) if n.node > m.node => {
-                        let rem = n.node - m.node;
-                        Ok(CTyp::mle(tbase, rem))
-                    }
-                    CTyp::Vec(CTyp::Base(tb), m) if tb == tbase && n.node > m.node => {
-                        let rem = n.node - m.node;
-                        Ok(CTyp::mle(tbase, rem))
-                    }
-                    _ => Err(TypeError::MleApp(
-                        kctx.clone(),
-                        id.node.clone(),
-                        param_types.clone(),
-                    )),
-                }
-            }
-            _ => {
+            // Any other variable: it hides the functions of its name, so this calls none.
+            Some(t) => Err(TypeError::NotApplicable(
+                kctx.clone(),
+                id.clone(),
+                t.clone(),
+            )),
+            None => {
                 // It is a function: resolve the call among the declarations of this name.
                 let decls = fctx.iter().filter(|sig| sig.name.node == id.node);
                 let cause = match CSig::resolve_call(decls, &param_types, kctx) {

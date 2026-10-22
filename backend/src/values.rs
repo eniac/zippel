@@ -2480,7 +2480,7 @@ impl<C: ArkConfig> Value<C> {
                         poly.evaluate_mv(&points).expect("full point evaluates"),
                     )
                 } else {
-                    poly.evaluate_or_fix_mle(&points)
+                    poly.evaluate_or_fix(&points)
                         .expect("MLE evaluation failed")
                 };
 
@@ -2509,7 +2509,7 @@ impl<C: ArkConfig> Value<C> {
                         poly.evaluate_mv(v).expect("full point evaluates"),
                     )
                 } else {
-                    poly.evaluate_or_fix_mle(v).expect("MLE evaluation failed")
+                    poly.evaluate_or_fix(v).expect("MLE evaluation failed")
                 };
 
                 let keep_typed_residual = original_num_vars.is_some_and(|n| n_points < n)

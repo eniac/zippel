@@ -144,11 +144,6 @@ pub enum TypeError {
     #[error("`mle` expects a vector whose length is a power of two")]
     Mle,
 
-    /// A multilinear extension was applied to arguments that are neither scalars nor vectors of
-    /// scalars.
-    #[error("Multilinear extension `{1}` must be applied to scalars or a vector of scalars, but got {}", kinded_list(.2, .0))]
-    MleApp(Ctx<Tid, CKind>, Vid, CTyps),
-
     /// The source of a `for` comprehension did not infer to a non-empty vector type; carries
     /// the type actually inferred.
     #[error("A `for` comprehension must range over a non-empty vector, but this has type {}", kinded(.1, .0))]
@@ -163,9 +158,14 @@ pub enum TypeError {
     #[error("`reduce` with `{op}` needs `{op}` to keep the element type {elem}, but it gives {res}", op = .1, elem = kinded(.2, .0), res = kinded(.3, .0))]
     ReduceAcc(Ctx<Tid, CKind>, BinOp, CTyp, CTyp),
 
-    /// A univariate polynomial was applied to arguments other than one scalar point.
-    #[error("Univariate polynomial `{1}` must be evaluated at a single scalar, but got {}", kinded_list(.2, .0))]
-    Uni(Ctx<Tid, CKind>, Vid, CTyps),
+    /// A variable that is not a polynomial was applied. A variable hides every function of its
+    /// name, so the application calls none.
+    #[error("`{}` is a variable of type {}, which cannot be applied", .1.node, kinded(.2, .0))]
+    NotApplicable(Ctx<Tid, CKind>, Spanned<Vid>, CTyp),
+
+    /// A polynomial was applied to other than one point.
+    #[error("Polynomial `{1}` takes one point, but got {}", kinded_list(.2, .0))]
+    PolyApp(Ctx<Tid, CKind>, Vid, CTyps),
 
     /// A `random` or `challenge` was asked to produce a non-field value; both draw from a
     /// scalar field only.
@@ -336,6 +336,7 @@ fn primary_label(cause: &TypeError) -> String {
         | E::NotARecord(kctx, t)
         | E::Unit(kctx, t)
         | E::FunBody(kctx, _, t)
+        | E::NotApplicable(kctx, _, t)
         | E::FuncRet(kctx, _, _, t) => match (cause, t) {
             (E::FuncRet(..), CTyp::Unit) => "produces no value".to_string(),
             _ => has_type(t, kctx),
@@ -350,7 +351,7 @@ fn primary_label(cause: &TypeError) -> String {
             kinded(elem, kctx),
             kinded(res, kctx)
         ),
-        E::MleApp(kctx, _, ts) | E::Uni(kctx, _, ts) => {
+        E::PolyApp(kctx, _, ts) => {
             format!("applied to {}", kinded_list(ts, kctx))
         }
         E::Sample(_, t, k) => format!("{t} has kind {k}"),
@@ -519,6 +520,16 @@ fn decorate(cause: &TypeError, mut d: Diagnostic) -> Diagnostic {
                 }
             }
             d
+        }
+        TypeError::NotApplicable(_, var, _) => {
+            // The caret goes on the applied name, which has the type.
+            if !var.span.is_empty() {
+                d.span = var.span.clone();
+            }
+            d.note(
+                "only functions and polynomials can be applied; a variable hides every function \
+                 of its name",
+            )
         }
         _ => d,
     }

@@ -36,6 +36,9 @@ impl<C: HasOpFactory> UDag<C> {
         Ok(self.materialize(record_op, scope.edge_type, atyp, span.clone()))
     }
 
+    /// `record.field`. The record is lowered whole, so every field's effects happen once, and the
+    /// field is taken from its operation ([`Self::field_of`]). A record literal's fields are
+    /// lowered without building the record, which nothing else would read.
     pub(super) fn lower_proj(
         &mut self,
         scope: &mut Scope<'_, C>,
@@ -44,79 +47,86 @@ impl<C: HasOpFactory> UDag<C> {
         field_name: Spanned<String>,
     ) -> Result<GOp<C>, GraphError> {
         let span = scope.exprs.span(id).clone();
-        // For projection, we need to extract the field from the record
-        // Check if the record expression is a Record literal
-        match scope.exprs[record_exp].clone() {
-            CExp::Record(fields) => {
-                let field_exp = fields.get(&field_name).ok_or_else(|| {
-                    GraphError::from(TypeError::FieldNotFound((field_name.as_str()).to_string()))
-                })?;
-
-                // Add the field expression to the graph
-                self.add_exp(scope, *field_exp, None)
-            }
-            // Any other record: lower it, then take the field from its operation.
-            _ => {
-                let record_typ = scope.infer(record_exp)?;
-                let CTyp::Record(fields) = &record_typ else {
-                    return Err(GraphError::from(TypeError::NotARecord(
-                        (scope.kctx).clone(),
-                        record_typ.clone(),
-                    )));
-                };
-                let field_typ_ctyp = fields.get(&field_name).ok_or_else(|| {
-                    GraphError::from(TypeError::FieldNotFound((field_name.as_str()).to_string()))
-                })?;
-                let record_op = self.add_exp(scope, record_exp, None)?;
-                match &record_op {
-                    // Direct field access from a Record operation
-                    Op::Record(record_fields) => record_fields
-                        .get(&field_name)
-                        .ok_or_else(|| {
-                            GraphError::from(TypeError::FieldNotFound(
-                                (field_name.as_str()).to_string(),
-                            ))
-                        })
-                        .map(|op| (**op).clone()),
-                    Op::Ref(r, _op_typ) => {
-                        // If the DAG node stores a Record, extract the
-                        // field directly (avoiding an unnecessary Proj node).
-                        if let Some(inner) = self[r.node()].op()
-                            && let Op::Record(fields) = inner.get()
-                            && let Some(field_op) = fields.get(&field_name)
-                        {
-                            return Ok(field_op.get().clone());
-                        }
-                        // Record produced by a node (e.g. a record-typed op); add Proj node
-                        let field_typ_atyp = ATyp::from_ctyp(field_typ_ctyp, scope.kctx)
-                            .ok_or_else(|| {
-                                GraphError::from(TypeError::located(
-                                    scope.exprs.span(id),
-                                    TypeError::Ark(
-                                        (scope.kctx).clone(),
-                                        field_typ_ctyp.node.clone(),
-                                    ),
-                                ))
-                            })?;
-                        // If the record source is an Arg node we don't need
-                        // to materialise a Proj node — the field is selected
-                        // directly off the typed reference.
-                        if self[r.node()].is_arg() {
-                            return Ok(Op::Ref(Ref(r.node()), field_typ_atyp));
-                        }
-                        let proj_node = self.add_node(
-                            Node::proj(&record_op, &field_name, &field_typ_atyp),
-                            span.clone(),
-                        );
-                        self.add_edges(scope.edge_type, proj_node, record_op.clone());
-                        Ok(Op::Ref(Ref(proj_node), field_typ_atyp))
-                    }
-                    _ => Err(GraphError::from(TypeError::NotARecord(
-                        (scope.kctx).clone(),
-                        record_typ.clone(),
-                    ))),
+        if let CExp::Record(fields) = scope.exprs[record_exp].clone() {
+            let mut field = None;
+            for (name, exp) in fields.iter() {
+                let op = self.add_exp(scope, *exp, None)?;
+                if *name == field_name {
+                    field = Some(op);
                 }
             }
+            return field.ok_or_else(|| {
+                GraphError::from(TypeError::FieldNotFound((field_name.as_str()).to_string()))
+            });
+        }
+        let record_typ = scope.infer(record_exp)?;
+        let CTyp::Record(fields) = &record_typ else {
+            return Err(GraphError::from(TypeError::NotARecord(
+                (scope.kctx).clone(),
+                record_typ.clone(),
+            )));
+        };
+        let field_typ = fields.get(&field_name).ok_or_else(|| {
+            GraphError::from(TypeError::FieldNotFound((field_name.as_str()).to_string()))
+        })?;
+        let field_atyp = ATyp::from_ctyp(field_typ, scope.kctx).ok_or_else(|| {
+            GraphError::from(TypeError::located(
+                scope.exprs.span(id),
+                TypeError::Ark((scope.kctx).clone(), field_typ.node.clone()),
+            ))
+        })?;
+        let record_op = self.add_exp(scope, record_exp, None)?;
+        self.field_of(
+            scope,
+            &record_op,
+            &record_typ,
+            &field_name,
+            field_atyp,
+            span,
+        )
+    }
+
+    /// The field `field_name`, of type `field_atyp`, of `record_op`, a lowered record of type
+    /// `record_typ`: read straight from a record operation or node, a typed reference for an
+    /// argument, else a new `Proj` node.
+    fn field_of(
+        &mut self,
+        scope: &Scope<'_, C>,
+        record_op: &GOp<C>,
+        record_typ: &CTyp,
+        field_name: &Spanned<String>,
+        field_atyp: ATyp,
+        span: std::ops::Range<usize>,
+    ) -> Result<GOp<C>, GraphError> {
+        let not_found =
+            || GraphError::from(TypeError::FieldNotFound((field_name.as_str()).to_string()));
+        match record_op {
+            Op::Record(record_fields) => record_fields
+                .get(field_name)
+                .map(|op| (**op).clone())
+                .ok_or_else(not_found),
+            Op::Ref(r, _) => {
+                // A node that stores a record: take the field directly (no `Proj` node).
+                if let Some(inner) = self[r.node()].op()
+                    && let Op::Record(fields) = inner.get()
+                {
+                    return fields
+                        .get(field_name)
+                        .map(|op| op.get().clone())
+                        .ok_or_else(not_found);
+                }
+                // An argument: the field is selected directly off the typed reference.
+                if self[r.node()].is_arg() {
+                    return Ok(Op::Ref(Ref(r.node()), field_atyp));
+                }
+                let proj_node = self.add_node(Node::proj(record_op, field_name, &field_atyp), span);
+                self.add_edges(scope.edge_type, proj_node, record_op.clone());
+                Ok(Op::Ref(Ref(proj_node), field_atyp))
+            }
+            _ => Err(GraphError::from(TypeError::NotARecord(
+                (scope.kctx).clone(),
+                record_typ.clone(),
+            ))),
         }
     }
 
@@ -144,17 +154,24 @@ impl<C: HasOpFactory> UDag<C> {
         let ATyp::Record(field_atyps) = &record_atyp else {
             unreachable!("a record type converts to a record ATyp")
         };
+        // The record is lowered once; every field but the updated one is taken from it.
+        let record_op = self.add_exp(scope, record_exp, None)?;
         let mut field_ops: Ctx<String, HOp<C>> = Ctx::new();
         for (fname, fatyp) in field_atyps.iter() {
-            let field_exp = if *fname == field_name.node {
-                value_exp
+            let field_op = if *fname == field_name.node {
+                self.add_exp(scope, value_exp, Some(fatyp.clone()))?
             } else {
-                scope.exprs.push(
-                    CExp::Proj(record_exp, Spanned::new(fname.clone(), span.clone())),
+                let name = Spanned::new(fname.clone(), span.clone());
+                let op = self.field_of(
+                    scope,
+                    &record_op,
+                    &record_typ,
+                    &name,
+                    fatyp.clone(),
                     span.clone(),
-                )
+                )?;
+                self.coerce(op, fatyp, scope.edge_type, span.clone())
             };
-            let field_op = self.add_exp(scope, field_exp, Some(fatyp.clone()))?;
             field_ops.insert(fname, &mk::<C>(field_op));
         }
         Ok(self.materialize(
