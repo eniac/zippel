@@ -159,8 +159,8 @@ fn check_exp_scope(
         match visit {
             Visit::Bind(x, _) => in_scope.bind(x, ()),
             Visit::Unbind(x) => in_scope.unbind(x),
-            Visit::Enter(e) => {
-                if let Exp::Range(range) | Exp::Evaluate(_, Some(range), _) = e.node() {
+            Visit::Enter(e) => match e.node() {
+                Exp::Range(range) | Exp::Evaluate(_, Some(range), _) => {
                     for (name, at) in super::values_in_range(range, sizes) {
                         let bound_at = in_scope
                             .iter()
@@ -178,9 +178,9 @@ fn check_exp_scope(
                         }
                     }
                 }
-                if let Exp::Var(name) = e.node()
-                    && in_scope.get(&name.node).is_none()
-                    && !scope.iter().any(|(n, _)| n == &name.node)
+                Exp::Var(name)
+                    if in_scope.get(&name.node).is_none()
+                        && !scope.iter().any(|(n, _)| n == &name.node) =>
                 {
                     let bound = in_scope
                         .iter()
@@ -191,7 +191,8 @@ fn check_exp_scope(
                         scope: scope.iter().cloned().chain(bound).collect(),
                     });
                 }
-            }
+                _ => {}
+            },
             Visit::EnterStmt(_) | Visit::LeaveStmt(_) | Visit::Leave(_) => {}
         }
     }
