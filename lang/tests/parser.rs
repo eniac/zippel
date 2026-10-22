@@ -199,10 +199,10 @@ fn bracket_forms() {
 
 // ── Range and bracket errors ────────────────────────────────────────────
 
-/// `fn f` over `x: [F; M]` whose body is `exp`, in a file with a `proto`.
+/// `fn _f` over `x: [F; M]` whose body is `exp`, in a file with a `proto`.
 fn indexed_body(exp: &str) -> String {
     format!(
-        "fn f<F: Field, M: Size>(instance x: [F; M]) -> F {{ {exp} }}\n\
+        "fn _f<F: Field, M: Size>(instance x: [F; M]) -> F {{ {exp} }}\n\
          proto p<F: Field>(instance a: F) where a == a {{ verify(a == a) }}"
     )
 }
@@ -217,7 +217,7 @@ fn parse_error_range_bound_not_a_size() {
 /// `proto`.
 fn whole_body(exp: &str) -> String {
     format!(
-        "fn f<F: Field, M: Size>(instance _x: [F; M]) -> F {{ {exp} }}\n\
+        "fn _f<F: Field, M: Size>(instance _x: [F; M]) -> F {{ {exp} }}\n\
          proto p<F: Field>(instance a: F) where a == a {{ verify(a == a) }}"
     )
 }

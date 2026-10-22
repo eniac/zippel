@@ -158,11 +158,20 @@ fn unnamed_random_is_reported_at_the_sample() {
     assert!(stderr.contains("random_anon_leak.zippel:2:16"), "{stderr}");
 }
 
-// A `proto` without `verify` isn't reported by `zippel-check` yet: `check_proto_verify`
-// (E0013, `lang::semantic::verify`) exists but isn't enabled — see the TODO in
-// `CModule::typecheck` (`lang/src/ast/module.rs`). Once it is, add back a
-// `proto_without_verify_is_reported` test here exercising it end-to-end through the
-// `zippel-check` binary.
+// Projection used to panic on a proto without `verify` ("No verifier check found").
+#[test]
+fn proto_without_verify_is_reported() {
+    let (code, stderr) = check_program(
+        "no_verify",
+        "proto p<F: Field>(instance a: F) where a == a {\n    b <- a;\n    ()\n}\n",
+    );
+    assert_eq!(code, Some(1), "{stderr}");
+    assert!(
+        stderr.contains("proto `p` has no `verify` check"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("no_verify.zippel:1:7"), "{stderr}");
+}
 
 #[test]
 fn non_polynomial_fun_is_reported_at_the_operation() {

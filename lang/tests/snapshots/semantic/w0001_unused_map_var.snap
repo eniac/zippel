@@ -1,6 +1,17 @@
 ---
 source: lang/tests/semantic.rs
 ---
+warning: function `f` is never called
+   ╭─[ test.zippel:1:4 ]
+   │
+ 1 │ fn f<F: Field>(instance a: F) -> [F; 3] { [0 for x in 0..3] }
+   │    ┬  
+   │    ╰── no call in this file names `f`
+   │    │  
+   │    ╰── note: if this is intentional, prefix the name with an underscore
+───╯
+
+---
 warning: unused variable `a`
    ╭─[ test.zippel:1:25 ]
    │

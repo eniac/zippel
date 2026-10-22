@@ -185,9 +185,7 @@ fn a_protocol_with_an_unset_range_variable_is_ambiguous() {
             ctx.insert(&Tid::new(name), value);
         }
         let cmodule = module.concretize(&ctx).unwrap();
-        module
-            .check_protocol_instances(&cmodule, &Vid::from("p"), &ctx)
-            .err()
+        lang::semantic::check_protocol_instances(&module, &cmodule, &Vid::from("p"), &ctx).err()
     };
 
     // `N` ranges over 1..4: three instances, and nothing says which to run.
@@ -244,9 +242,9 @@ fn an_ambiguous_protocol_labels_each_expanded_range() {
     let src = "proto p<F: Field, N: 2..21, M: 1..3>(instance a: [F; N], instance b: [F; M]) where a == a {\n    verify(a == a)\n}\n";
     let module = UModule::parse(src).0.unwrap();
     let cmodule = module.concretize(&Ctx::new()).unwrap();
-    let e = module
-        .check_protocol_instances(&cmodule, &Vid::from("p"), &Ctx::new())
-        .unwrap_err();
+    let e =
+        lang::semantic::check_protocol_instances(&module, &cmodule, &Vid::from("p"), &Ctx::new())
+            .unwrap_err();
     assert_snap!(
         SNAP_DIR,
         "ambiguous_protocol_two_ranges",

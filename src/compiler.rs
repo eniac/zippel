@@ -187,9 +187,13 @@ impl ParsedModule {
                 );
                 self.error(vec![Diagnostic::error(Phase::Semantic, 0..0, &message)])
             })?;
-        self.module
-            .check_protocol_instances(typed.module(), &graph.name(), sizes)
-            .map_err(|e| self.error(vec![e.into()]))?;
+        lang::semantic::check_protocol_instances(
+            &self.module,
+            typed.module(),
+            &graph.name(),
+            sizes,
+        )
+        .map_err(|e| self.error(vec![e.into()]))?;
         Ok(CompiledProtocol {
             source_name: self.name.clone(),
             source: Arc::clone(&self.source),

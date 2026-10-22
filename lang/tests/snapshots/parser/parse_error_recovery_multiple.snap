@@ -27,6 +27,17 @@ error: expected generic parameters or '>', found ':'
 ───╯
 
 ---
+warning: function `g` is never called
+   ╭─[ test.zippel:2:4 ]
+   │
+ 2 │ fn g<F: Field>(instance a: F) -> F { a }
+   │    ┬  
+   │    ╰── no call in this file names `g`
+   │    │  
+   │    ╰── note: if this is intentional, prefix the name with an underscore
+───╯
+
+---
 error: expected generic parameters or '>', found ':'
    ╭─[ test.zippel:3:6 ]
    │

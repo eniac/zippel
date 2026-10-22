@@ -51,6 +51,68 @@ proto schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G
     assert!(cmodule.typecheck().is_ok());
 }
 
+// ── Proto `verify` requirement (E0013) ──────────────────────────────────
+
+/// Whether `src`, type-checked under `sizes`, reports E0013.
+fn reports_no_verify(src: &str, sizes: &[(&str, usize)]) -> bool {
+    let (module, _) = UModule::parse(src);
+    let mut ctx = Ctx::new();
+    for (name, value) in sizes {
+        ctx.insert(&Tid::new(name), value);
+    }
+    let cmodule = module.unwrap().concretize(&ctx).unwrap();
+    cmodule
+        .typecheck()
+        .err()
+        .unwrap_or_default()
+        .iter()
+        .any(|d| d.code.as_deref() == Some("E0013"))
+}
+
+#[test]
+fn proto_without_verify() {
+    let src = "proto p<F: Field>(instance a: F) where a == a { let _b = a; }";
+    assert_snap!(
+        SNAP_DIR,
+        "proto_without_verify",
+        render_type_errors(src, &[])
+    );
+}
+
+#[test]
+fn proto_with_empty_body_has_no_verify() {
+    assert!(reports_no_verify(
+        "proto p<F: Field>(instance a: F) where a == a { }",
+        &[]
+    ));
+}
+
+#[test]
+fn proto_reaches_verify_through_calls() {
+    // `check` verifies; `outer` only calls `check`; the proto only calls `outer`.
+    let src = "fn check<F: Field>(instance a: F) { verify(a == a) }\n\
+               fn outer<F: Field>(instance a: F) { check(a) }\n\
+               proto p<F: Field>(instance a: F) where a == a { outer(a) }";
+    assert!(!reports_no_verify(src, &[]));
+}
+
+#[test]
+fn proto_calling_a_function_without_verify_has_no_verify() {
+    let src = "fn f<F: Field>(instance a: F) -> F { a }\n\
+               proto p<F: Field>(instance a: F) where a == a { let _b = f(a); }";
+    assert!(reports_no_verify(src, &[]));
+}
+
+#[test]
+fn proto_verify_follows_the_overload_its_sizes_select() {
+    // Only the length-1 overload verifies, so the proto reaches a `verify` at `N = 1` only.
+    let src = "fn check<F: Field>(instance a: [F; 1]) { verify(a == a) }\n\
+               fn check<F: Field>(instance _a: [F; 2]) { () }\n\
+               proto p<F: Field, N: Size>(instance a: [F; N]) where a == a { check(a) }";
+    assert!(!reports_no_verify(src, &[("N", 1)]));
+    assert!(reports_no_verify(src, &[("N", 2)]));
+}
+
 /// A helper declared `-> Bool` can be used in a `where` clause. `Bool` used
 /// to parse as a type variable named `Bool`, which never matched the result
 /// of `==`.
@@ -434,9 +496,11 @@ fn numeric_literal_finite_index_boundary() {
         let diags = type_diagnostics(src);
         assert!(diags.is_empty(), "`{src}`: {diags:?}");
     };
-    ok("proto p<F: Field>(instance xs: [F; 2]) where xs[1] == xs[1] {}");
+    ok("proto p<F: Field>(instance xs: [F; 2]) where xs[1] == xs[1] { verify(xs[0] == xs[0]) }");
     for index in [BIG, max.as_str(), "-1"] {
-        let src = format!("proto p<F: Field>(instance xs: [F; 2]) where xs[{index}] == xs[0] {{}}");
+        let src = format!(
+            "proto p<F: Field>(instance xs: [F; 2]) where xs[{index}] == xs[0] {{ verify(xs[0] == xs[0]) }}"
+        );
         let diags = type_diagnostics(&src);
         let start = src.find(&format!("[{index}]")).unwrap() + 1;
         assert!(
@@ -450,13 +514,13 @@ fn numeric_literal_finite_index_boundary() {
     ok(&format!(
         "fn big<F: Field>() -> F {{ {BIG} }}
          fn neg<F: Field>() -> F {{ -1 }}
-         proto p<F: Field>(instance a: F) where a == a {{}}"
+         proto p<F: Field>(instance a: F) where a == a {{ verify(a == a) }}"
     ));
 
     // A typed argument pins a generic field parameter; two literals cannot choose between
     // the caller's fields.
     let first = "fn first<X: Field>(instance x: X, instance y: X) -> X { x }
-                 proto p<F: Field>(instance a: F) where a == a {}";
+                 proto p<F: Field>(instance a: F) where a == a { verify(a == a) }";
     ok(&format!(
         "{first} fn g<F: Field, K: Field>(instance a: F) -> F {{ first(a, {BIG}) }}"
     ));
@@ -474,7 +538,7 @@ fn numeric_literal_finite_index_boundary() {
     ok(&format!(
         "proto t<G: Group, H: Group, F: Scalar<G>, K: Scalar<H>>(
              instance p: Uni<F, 1>, instance m: Mle<F, 2>, instance y: F,
-         ) where p({BIG}) == y && eval(m, [{BIG}, 0]) == y {{}}"
+         ) where p({BIG}) == y && eval(m, [{BIG}, 0]) == y {{ verify(y == y) }}"
     ));
 }
 

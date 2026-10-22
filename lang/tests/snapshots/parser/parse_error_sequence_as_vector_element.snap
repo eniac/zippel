@@ -2,11 +2,11 @@
 source: lang/tests/parser.rs
 ---
 error: statements cannot appear directly in a vector element; wrap the element in parentheses, as in `[(let y = a; y), b]`
-   ╭─[ test.zippel:1:53 ]
+   ╭─[ test.zippel:1:54 ]
    │
- 1 │ fn f<F: Field, M: Size>(instance x: [F; M]) -> F { [let y = x[0]; y, x[0]] }
-   │                                                    ────────┬──┬───────────  
-   │                                                            ╰──────────────── statements cannot appear directly in a vector element; wrap the element in parentheses, as in `[(let y = a; y), b]`
-   │                                                               │             
-   │                                                               ╰───────────── while parsing this expression
+ 1 │ fn _f<F: Field, M: Size>(instance x: [F; M]) -> F { [let y = x[0]; y, x[0]] }
+   │                                                     ────────┬──┬───────────  
+   │                                                             ╰──────────────── statements cannot appear directly in a vector element; wrap the element in parentheses, as in `[(let y = a; y), b]`
+   │                                                                │             
+   │                                                                ╰───────────── while parsing this expression
 ───╯
