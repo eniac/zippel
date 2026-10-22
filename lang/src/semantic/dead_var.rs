@@ -20,7 +20,7 @@ use std::ops::Range;
 
 use crate::ast::decl::{Body, UDecl};
 use crate::ast::spanned::Spanned;
-use crate::ast::{Exp, ExpId, Stmt, URef, Visit};
+use crate::ast::{Exp, ExpId, InScope, Stmt, URef, Visit};
 use crate::diagnostic::Diagnostic;
 use crate::id::Vid;
 use lang_derive::Diagnostic as DiagnosticDerive;
@@ -83,14 +83,13 @@ impl Binding {
 
 /// Checks one tree, with `args` (the declaration's arguments) in scope around it.
 fn check_tree(exp: URef<'_>, args: &mut [Binding], out: &mut Vec<Diagnostic>) {
-    let mut walk = exp.walk();
-    // The bindings `walk` is inside, as in `walk.bound()`.
-    let mut bound: Vec<Binding> = Vec::new();
+    // The bindings in scope, each reported when its scope ends if nothing used it.
+    let mut in_scope: InScope<'_, Binding> = InScope::new();
     // Statement values whose result is discarded, reported when the walk reaches them.
     let mut dead: HashSet<ExpId> = HashSet::new();
-    while let Some(visit) = walk.next() {
-        let mut mark_used = |name: &Vid| match walk.resolve(name) {
-            Some(i) => bound[i].used = true,
+    for visit in exp.walk() {
+        let mut mark_used = |name: &Vid| match in_scope.get_mut(name) {
+            Some(binding) => binding.used = true,
             None => {
                 if let Some(arg) = args.iter_mut().find(|a| &a.name == name) {
                     arg.used = true;
@@ -127,13 +126,9 @@ fn check_tree(exp: URef<'_>, args: &mut [Binding], out: &mut Vec<Diagnostic>) {
                     _ => {}
                 }
             }
-            Visit::EnterStmt(_) | Visit::LeaveStmt(_) => {}
-            Visit::Bind(x) => bound.push(Binding::new(x)),
-            Visit::Leave(_) => {
-                while bound.len() > walk.bound().len() {
-                    bound.pop().expect("longer").report(out);
-                }
-            }
+            Visit::Bind(x, _) => in_scope.bind(x, Binding::new(x)),
+            Visit::Unbind(x) => in_scope.unbind(x).report(out),
+            Visit::EnterStmt(_) | Visit::LeaveStmt(_) | Visit::Leave(_) => {}
         }
     }
 }

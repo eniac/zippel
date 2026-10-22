@@ -8,7 +8,6 @@ use crate::ast::spanned::Spanned;
 use crate::ast::{CSig, Expr, GArgs, Sig};
 use crate::id::{Tid, TidSubst, Vid};
 use crate::typ::infer::{Cx, TypeError, TypeTable, VarTypes};
-use crate::typ::lub::Lub;
 use crate::typ::subst::SubstError;
 use crate::typ::{
     CKind, CTyp, GTyp, Range, RangeError, RangeTraversal, SizeSubsts, TypeInline, TypeVars,
@@ -367,10 +366,11 @@ impl CBody {
                         }
                     }
                     None => {
-                        // Empty body `{}` is semantically Unit.
-                        match CTyp::lub_equ(&CTyp::Unit, &ret.node, &kctx) {
-                            Ok(_) => Ok(types),
-                            Err(_) => Err(TypeError::decl(
+                        // Empty body `{}` is semantically Unit, checked like any other body.
+                        if CTyp::Unit.fits(&ret.node, &kctx) {
+                            Ok(types)
+                        } else {
+                            Err(TypeError::decl(
                                 &sig.name,
                                 TypeError::located(
                                     &sig.ret.as_ref().map_or(0..0, |r| r.span.clone()),
@@ -381,7 +381,7 @@ impl CBody {
                                         CTyp::Unit,
                                     ),
                                 ),
-                            )),
+                            ))
                         }
                     }
                 }
