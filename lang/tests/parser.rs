@@ -196,3 +196,35 @@ fn bracket_forms() {
     // A sequence is a comprehension body, never a vector element.
     assert!(!parse_errors(&body_with("[let y = a; y, a]")).is_empty());
 }
+
+// ── Range and bracket errors ────────────────────────────────────────────
+
+/// `fn f` over `x: [F; M]` whose body is `exp`, in a file with a `proto`.
+fn indexed_body(exp: &str) -> String {
+    format!(
+        "fn f<F: Field, M: Size>(instance x: [F; M]) -> F {{ {exp} }}\n\
+         proto p<F: Field>(instance a: F) where a == a {{ verify(a == a) }}"
+    )
+}
+
+#[test]
+fn parse_error_range_bound_not_a_size() {
+    let rendered = render_all(&indexed_body("x[f(M)..M]"));
+    assert_snap!(SNAP_DIR, "parse_error_range_bound_not_a_size", rendered);
+}
+
+#[test]
+fn parse_error_comma_without_stepped_range() {
+    let rendered = render_all(&indexed_body("x[0, 1]"));
+    assert_snap!(
+        SNAP_DIR,
+        "parse_error_comma_without_stepped_range",
+        rendered
+    );
+}
+
+#[test]
+fn parse_error_sequence_as_vector_element() {
+    let rendered = render_all(&indexed_body("[let y = x[0]; y, x[0]]"));
+    assert_snap!(SNAP_DIR, "parse_error_sequence_as_vector_element", rendered);
+}

@@ -82,8 +82,11 @@ prover/verifier divisor nonzero (see `analyses/src/ideal/ops/div.rs` and
 `sample.rs`), so divide by what the exclusions make nonzero, such as `c - a`
 for `c <- challenge<F - [a]>`. See
 `CONTRIBUTING.md`'s "Creating a new protocol with Zippel" section for a
-full worked example, or any file under `examples/*/*.zippel`. The parser
-requires size-type variables to start uppercase and values lowercase.
+full worked example, or any file under `examples/*/*.zippel`. In an expression, a
+bare name's case decides what it is: uppercase is a size (`v[0] * N`), lowercase a
+value. Size parameters may be declared lowercase (`dekart`'s `n: Size`), but are
+then usable only in size positions (types, range bounds, `eval<…>`), not as bare
+expressions; a value must be lowercase to be read.
 
 ## Build, test, and format
 

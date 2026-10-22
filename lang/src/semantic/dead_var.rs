@@ -22,7 +22,7 @@ use crate::ast::decl::{Body, UDecl};
 use crate::ast::spanned::Spanned;
 use crate::ast::{Exp, ExpId, InScope, Stmt, URef, Visit};
 use crate::diagnostic::Diagnostic;
-use crate::id::Vid;
+use crate::id::{Tid, Vid};
 use lang_derive::Diagnostic as DiagnosticDerive;
 
 /// W0001: A variable is bound but never used.
@@ -82,7 +82,7 @@ impl Binding {
 }
 
 /// Checks one tree, with `args` (the declaration's arguments) in scope around it.
-fn check_tree(exp: URef<'_>, args: &mut [Binding], out: &mut Vec<Diagnostic>) {
+fn check_tree(exp: URef<'_>, args: &mut [Binding], sizes: &[&Tid], out: &mut Vec<Diagnostic>) {
     // The bindings in scope, each reported when its scope ends if nothing used it.
     let mut in_scope: InScope<'_, Binding> = InScope::new();
     // Statement values whose result is discarded, reported when the walk reaches them.
@@ -109,6 +109,12 @@ fn check_tree(exp: URef<'_>, args: &mut [Binding], out: &mut Vec<Diagnostic>) {
                 }
                 match e.node() {
                     Exp::Var(x) => mark_used(&x.node),
+                    // A value in a range bound is an error (E0014), not an unused variable.
+                    Exp::Range(range) | Exp::Evaluate(_, Some(range), _) => {
+                        for (name, _) in super::values_in_range(range, sizes) {
+                            mark_used(&name);
+                        }
+                    }
                     // A call of a polynomial variable reads it.
                     Exp::App(f, _) => mark_used(&f.node),
                     // `e;` with something after it discards a pure `e`: dead computation. A
@@ -164,8 +170,9 @@ pub fn check_dead_variables(decl: &UDecl) -> Vec<Diagnostic> {
         .iter()
         .map(|arg| Binding::new(&arg.node.id))
         .collect();
+    let sizes = super::size_params(decl);
     for tree in relation.into_iter().chain(body) {
-        check_tree(tree.root(), &mut args, &mut out);
+        check_tree(tree.root(), &mut args, &sizes, &mut out);
     }
     for arg in args {
         arg.report(&mut out);

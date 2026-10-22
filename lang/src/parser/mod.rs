@@ -802,18 +802,24 @@ where
                     .or_not(),
             )
             .then_ignore(just(Token::RBrack).ignored())
-            .try_map_with(|contents, e| match contents {
-                None => Ok(push(e, UExp::Vec(Exps(Vec::new())))),
+            .validate(|contents, e, emitter| match contents {
+                None => push(e, UExp::Vec(Exps(Vec::new()))),
                 Some(((first, _), Bracket::Map((var, iter)))) => {
-                    Ok(push(e, UExp::Map(first, var, iter)))
+                    push(e, UExp::Map(first, var, iter))
                 }
-                // Only a comprehension body may be a sequence of statements.
-                Some(((_, true), Bracket::Vec(_))) => {
-                    Err(Rich::custom(e.span(), "expected `for` after a sequence"))
-                }
-                Some(((first, false), Bracket::Vec(rest))) => {
+                Some(((first, sequence), Bracket::Vec(rest))) => {
+                    // Only a comprehension body may be a sequence of statements. The error is
+                    // reported at the sequence, and the vector is kept so parsing goes on.
+                    if sequence {
+                        let at = e.state().exprs.span(first).clone();
+                        emitter.emit(Rich::custom(
+                            at.into(),
+                            "statements cannot appear directly in a vector element; wrap the \
+                             element in parentheses, as in `[(let y = a; y), b]`",
+                        ));
+                    }
                     let elems = std::iter::once(first).chain(rest).collect();
-                    Ok(push(e, UExp::Vec(Exps(elems))))
+                    push(e, UExp::Vec(Exps(elems)))
                 }
             }),
         // reduce(op, exp)
@@ -1075,8 +1081,12 @@ where
                 ),
             ))
             .boxed();
-        // `start..end`, below every operator: both bounds are parsed as expressions, then read
-        // as sizes, so a range needs no lookahead to be told from arithmetic.
+
+        // `start..end`, looser than every operator. A bound such as `x + 1` cannot be told from
+        // arithmetic until `..` is reached, so both bounds are parsed as expressions and then
+        // read as sizes (`size_of`). This wraps the Pratt parser instead of being one of its
+        // operators because reading a size can fail, which a Pratt fold cannot report, and
+        // because `..` does not chain: a second `..` is left for the caller to reject.
         operand
             .clone()
             .then(just(Token::DotDot).ignored().ignore_then(operand).or_not())

@@ -15,7 +15,7 @@ use std::ops::Range;
 use crate::ast::decl::UDecl;
 use crate::ast::{Exp, InScope, URef, Visit};
 use crate::diagnostic::{Applicability, Diagnostic, Phase};
-use crate::id::Vid;
+use crate::id::{Tid, Vid};
 
 use super::levenshtein;
 
@@ -62,6 +62,19 @@ fn undefined_variable(name: &Vid, use_spans: &[Range<usize>], similar: &[Vid]) -
     d
 }
 
+/// E0014: A range bound names a value; range bounds are sizes.
+fn value_in_range_bound(name: &Vid, use_span: Range<usize>, bound_at: Range<usize>) -> Diagnostic {
+    Diagnostic::error(
+        Phase::Semantic,
+        use_span,
+        &format!("a range bound is a size, but `{name}` is a value"),
+    )
+    .code("E0014")
+    .primary_label(&format!("`{name}` is a value here, not a size"))
+    .secondary_label(bound_at, &format!("`{name}` is bound here as a value"))
+    .note("range bounds are sizes: literals, size parameters and `+ - * / ^`")
+}
+
 /// Check variable scope in a declaration's body.
 /// Returns a list of scope errors (empty if all variables are defined).
 pub fn check_scope(decl: &UDecl) -> Vec<Diagnostic> {
@@ -80,18 +93,23 @@ pub fn check_scope(decl: &UDecl) -> Vec<Diagnostic> {
 
     // Collect all undefined variable occurrences, preserving first-seen order.
     let mut undefined: Vec<UndefinedOccurrence> = Vec::new();
+    let mut errors = Vec::new();
+    let sizes = super::size_params(decl);
+    let mut check = |tree: URef<'_>| {
+        check_exp_scope(tree, &initial_scope, &sizes, &mut undefined, &mut errors);
+    };
 
     // Check the body based on declaration kind
     match &decl.body {
         crate::ast::Body::Proto { body, relation } => {
-            check_exp_scope(relation.root(), &initial_scope, &mut undefined);
+            check(relation.root());
             if let Some(body) = body {
-                check_exp_scope(body.root(), &initial_scope, &mut undefined);
+                check(body.root());
             }
         }
         crate::ast::Body::Func { body } => {
             if let Some(body) = body {
-                check_exp_scope(body.root(), &initial_scope, &mut undefined);
+                check(body.root());
             }
         }
         crate::ast::Body::TypeAlias => {}
@@ -99,7 +117,6 @@ pub fn check_scope(decl: &UDecl) -> Vec<Diagnostic> {
 
     // Group occurrences by name (preserving first-seen order) and emit one
     // diagnostic per name with "also used here" secondary labels.
-    let mut errors = Vec::new();
     let mut seen: HashSet<Vid> = HashSet::new();
     for occ in &undefined {
         if !seen.insert(occ.name.clone()) {
@@ -128,11 +145,14 @@ pub fn check_scope(decl: &UDecl) -> Vec<Diagnostic> {
 
 /// Check an expression for undefined variable references. `scope` is what is in scope around
 /// it (name, definition span); `undefined` collects every undefined occurrence, which the
-/// caller groups by name into one diagnostic each.
+/// caller groups by name into one diagnostic each. A value named in a range bound, which must
+/// be a size (one of `sizes`), is reported to `errors`.
 fn check_exp_scope(
     exp: URef<'_>,
     scope: &[(Vid, Range<usize>)],
+    sizes: &[&Tid],
     undefined: &mut Vec<UndefinedOccurrence>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     let mut in_scope = InScope::new();
     for visit in exp.walk() {
@@ -140,6 +160,24 @@ fn check_exp_scope(
             Visit::Bind(x, _) => in_scope.bind(x, ()),
             Visit::Unbind(x) => in_scope.unbind(x),
             Visit::Enter(e) => {
+                if let Exp::Range(range) | Exp::Evaluate(_, Some(range), _) = e.node() {
+                    for (name, at) in super::values_in_range(range, sizes) {
+                        let bound_at = in_scope
+                            .iter()
+                            .filter(|(x, ())| x.node == name)
+                            .last()
+                            .map(|(x, ())| x.span.clone())
+                            .or_else(|| {
+                                scope
+                                    .iter()
+                                    .find(|(n, _)| *n == name)
+                                    .map(|(_, s)| s.clone())
+                            });
+                        if let Some(bound_at) = bound_at {
+                            errors.push(value_in_range_bound(&name, at.clone(), bound_at));
+                        }
+                    }
+                }
                 if let Exp::Var(name) = e.node()
                     && in_scope.get(&name.node).is_none()
                     && !scope.iter().any(|(n, _)| n == &name.node)
