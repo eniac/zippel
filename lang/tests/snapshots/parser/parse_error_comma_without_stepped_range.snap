@@ -2,11 +2,11 @@
 source: lang/tests/parser.rs
 ---
 error: expected a range `step..end` after `,`
-   ╭─[ test.zippel:1:57 ]
+   ╭─[ test.zippel:1:58 ]
    │
- 1 │ fn f<F: Field, M: Size>(instance x: [F; M]) -> F { x[0, 1] }
-   │                                                    ─┬   ┬  
-   │                                                     │   ╰── expected a range `step..end` after `,`
-   │                                                     │      
-   │                                                     ╰────── while parsing this expression
+ 1 │ fn _f<F: Field, M: Size>(instance x: [F; M]) -> F { x[0, 1] }
+   │                                                     ─┬   ┬  
+   │                                                      │   ╰── expected a range `step..end` after `,`
+   │                                                      │      
+   │                                                      ╰────── while parsing this expression
 ───╯

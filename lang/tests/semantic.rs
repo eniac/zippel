@@ -382,63 +382,60 @@ fn semantic_duplicate_typevar() {
     );
 }
 
-// `check_proto_verify` (E0013) is implemented in `lang::semantic::verify` but not enabled (see
-// the TODO in `CModule::typecheck`), so these tests call it directly.
+// ── Unused functions (W0002) ────────────────────────────────────────────
 
-#[test]
-fn semantic_proto_without_verify() {
-    let src = "proto p<F: Field>(instance a: F) where a == a { let b = a; }";
-    let (decls, parse_errors) = lang::parser::parse_decls(src);
-    assert!(parse_errors.is_empty());
-    let diags = lang::semantic::check_proto_verify(&decls);
-    let rendered: String = diags
+/// The names W0002 reports in `src`.
+fn unused_functions(src: &str) -> Vec<String> {
+    let (_, diags) = UModule::parse(src);
+    diags
         .iter()
-        .map(|d| lang::diagnostic::render_diagnostic(d, "test.zippel", src))
+        .filter(|d| d.code.as_deref() == Some("W0002"))
+        .map(|d| d.summary.clone())
+        .collect()
+}
+
+const PROTO: &str = "proto p<F: Field>(instance a: F) where a == a { verify(a == a) }";
+
+#[test]
+fn semantic_unused_function() {
+    let src = format!("fn unused<F: Field>(instance a: F) -> F {{ a }}\n{PROTO}");
+    let rendered: String = UModule::parse(&src)
+        .1
+        .iter()
+        .filter(|d| d.code.as_deref() == Some("W0002"))
+        .map(|d| lang::diagnostic::render_diagnostic(d, "test.zippel", &src))
         .collect();
-    assert!(
-        rendered.contains("has no `verify` check"),
-        "expected E0013, got: {rendered}"
-    );
-    assert_snap!(SNAP_DIR, "proto_without_verify", rendered);
+    assert_snap!(SNAP_DIR, "w0002_unused_function", rendered);
 }
 
 #[test]
-fn semantic_proto_empty_body_has_no_verify() {
-    let src = "proto p<F: Field>(instance a: F) where a == a { }";
-    let (decls, _) = lang::parser::parse_decls(src);
-    let diags = lang::semantic::check_proto_verify(&decls);
-    assert!(
-        diags.iter().any(|d| d.code.as_deref() == Some("E0013")),
-        "expected E0013, got: {:?}",
-        diags.iter().map(|d| &d.summary).collect::<Vec<_>>()
-    );
+fn semantic_called_functions_are_used() {
+    // Called from the proto, from another function, from the `where` clause, recursively, or
+    // only from an unused function: each is a call. `_spare` is intentionally unused.
+    let src = "fn leaf<F: Field>(instance a: F) -> F { a }\n\
+               fn mid<F: Field>(instance a: F) -> F { leaf(a) }\n\
+               fn rel<F: Field>(instance a: F) -> Bool { a == a }\n\
+               fn rec<F: Field>(instance a: F) -> F { rec(a) }\n\
+               fn _spare<F: Field>(instance a: F) -> F { rec(a) }\n\
+               proto p<F: Field>(instance a: F) where rel(a) { verify(mid(a) == a) }";
+    assert_eq!(unused_functions(src), Vec::<String>::new());
 }
 
 #[test]
-fn semantic_proto_verify_through_function_calls() {
-    // `check` verifies; `outer` only calls `check`; the proto only calls `outer`.
-    let src = "fn check<F: Field>(instance a: F) { verify(a == a) }\n\
-               fn outer<F: Field>(instance a: F) { check(a) }\n\
-               proto p<F: Field>(instance a: F) where a == a { outer(a) }";
-    let (decls, _) = lang::parser::parse_decls(src);
-    let diags = lang::semantic::check_proto_verify(&decls);
-    assert!(
-        !diags.iter().any(|d| d.code.as_deref() == Some("E0013")),
-        "verify reached through calls should satisfy E0013, got: {:?}",
-        diags.iter().map(|d| &d.summary).collect::<Vec<_>>()
-    );
-}
-
-#[test]
-fn semantic_proto_calling_non_verifying_function_has_no_verify() {
-    let src = "fn f<F: Field>(instance a: F) -> F { a }\n\
-               proto p<F: Field>(instance a: F) where a == a { let b = f(a); }";
-    let (decls, _) = lang::parser::parse_decls(src);
-    let diags = lang::semantic::check_proto_verify(&decls);
-    assert!(
-        diags.iter().any(|d| d.code.as_deref() == Some("E0013")),
-        "expected E0013, got: {:?}",
-        diags.iter().map(|d| &d.summary).collect::<Vec<_>>()
+fn semantic_polynomial_application_is_not_a_call() {
+    // `q(a)` applies the argument `q`, and `r(a)` the local `r`: neither calls the functions.
+    let src = "fn q<F: Field>(instance a: F) -> F { a }\n\
+               fn r<F: Field>(instance a: F) -> F { a }\n\
+               proto p<F: Field>(instance a: F, instance q: Uni<F, 1>) where a == a {\n\
+               let r = q;\n\
+               verify(q(a) == r(a))\n\
+               }";
+    assert_eq!(
+        unused_functions(src),
+        [
+            "function `q` is never called",
+            "function `r` is never called"
+        ]
     );
 }
 

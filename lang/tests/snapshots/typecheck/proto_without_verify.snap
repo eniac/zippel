@@ -1,10 +1,10 @@
 ---
-source: lang/tests/semantic.rs
+source: lang/tests/typecheck.rs
 ---
 error: proto `p` has no `verify` check
    ╭─[ test.zippel:1:7 ]
    │
- 1 │ proto p<F: Field>(instance a: F) where a == a { let b = a; }
+ 1 │ proto p<F: Field>(instance a: F) where a == a { let _b = a; }
    │       ┬  
    │       ╰── no `verify(...)` in this proto or in the functions it calls
    │       │  

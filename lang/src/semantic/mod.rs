@@ -1,7 +1,7 @@
-//! Semantic analysis — checks that run after parsing but before type checking.
+//! Semantic analysis: the checks that report diagnostics about a module, apart from building,
+//! concretizing and type-checking it.
 //!
-//! These checks operate on the untyped AST (`UDecl`, `UExp`, etc.) and catch
-//! errors that don't require full type inference:
+//! [`check_decls`] runs the checks that need no type information, on the parsed declarations:
 //! - Variable scope (defined-before-use)
 //! - Typevar kind validation (group references, range bounds, cycles)
 //! - Size variable binding
@@ -9,17 +9,24 @@
 //! - Type alias cycles
 //! - Proto declaration requirement
 //! - Relation purity
+//! - Unused variables and functions
+//!
+//! [`check_instances`] runs the checks that follow resolved calls, on type-checked instances:
 //! - Proto `verify` requirement
+//!
+//! [`check_protocol_instances`] checks that a protocol to run concretized to one instance.
 
 mod alias_cycle;
 mod dead_var;
 mod duplicate;
 mod edit_distance;
 mod proto;
+mod protocol;
 mod purity;
 mod scope;
 mod size;
 mod typevar;
+mod unused_fn;
 mod verify;
 
 use std::ops::Range;
@@ -31,17 +38,65 @@ pub use alias_cycle::check_type_alias_cycles;
 pub use dead_var::check_dead_variables;
 pub use duplicate::check_duplicate_declarations;
 pub use proto::check_proto_requirement;
+pub use protocol::check_protocol_instances;
 pub use purity::check_purity;
 pub use scope::check_scope;
 pub use size::check_size_binding;
 pub use typevar::check_typevars;
-pub use verify::check_proto_verify;
+pub use unused_fn::check_unused_functions;
 
 pub(crate) use edit_distance::levenshtein;
 
 use crate::ast::Size;
+use crate::ast::decl::{Body, BodyTypes, CBody, UDecl};
+use crate::ast::sig::CSig;
 use crate::ast::spanned::Spanned;
+use crate::diagnostic::Diagnostic;
 use crate::id::Vid;
+
+/// What the checks that need no type information report about parsed declarations.
+pub struct DeclChecks {
+    /// Their diagnostics, in check order.
+    pub diagnostics: Vec<Diagnostic>,
+    /// Whether the type aliases form a cycle, so they cannot be inlined.
+    pub alias_cycle: bool,
+}
+
+/// Runs every check that needs no type information on `decls`, parsed from a file spanning
+/// `file_span`.
+pub fn check_decls(decls: &[Spanned<UDecl>], file_span: Range<usize>) -> DeclChecks {
+    let mut diagnostics = Vec::new();
+    // Module-level checks.
+    diagnostics.extend(check_duplicate_declarations(decls));
+    diagnostics.extend(check_proto_requirement(decls, file_span));
+    diagnostics.extend(check_unused_functions(decls));
+    let alias_cycles = check_type_alias_cycles(decls);
+    let alias_cycle = !alias_cycles.is_empty();
+    diagnostics.extend(alias_cycles);
+    // Per-declaration checks.
+    for decl in decls {
+        diagnostics.extend(check_typevars(&decl.node.sig));
+        diagnostics.extend(check_size_binding(&decl.node.sig));
+        diagnostics.extend(check_scope(&decl.node));
+        diagnostics.extend(check_dead_variables(&decl.node));
+        if let Body::Proto { relation, .. } = &decl.node.body {
+            diagnostics.extend(check_purity(relation));
+        }
+    }
+    DeclChecks {
+        diagnostics,
+        alias_cycle,
+    }
+}
+
+/// Runs every check that follows resolved calls on type-checked `instances`, each of which must
+/// have type-checked so that every call has a resolution. Each diagnostic comes with the
+/// instance it is about.
+pub(crate) fn check_instances<'a>(
+    instances: impl IntoIterator<Item = (&'a CSig, &'a CBody, &'a BodyTypes)>,
+) -> Vec<(&'a CSig, Diagnostic)> {
+    verify::check_proto_verify(instances)
+}
 
 /// The names a range's bounds mention, as value names with the span of each mention, in source
 /// order. Bounds are sizes, so each must be a size parameter of `sizes`; the others are returned.

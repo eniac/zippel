@@ -90,13 +90,13 @@ fn f<F: Field>(instance a: F, instance b: F, instance c: F) -> F {
 
 #[test]
 fn nested_redundant_parens_with_comments() {
-    // Multiple comments around nested redundant parens
+    // Multiple comments around nested redundant parens. `/* A */` and `/* B */` both precede the
+    // body's first token, so they merge as in `comment_both_sides_of_paren_simple`.
     assert_ok(
         "fn f<F: Field>(instance a: F, instance b: F, instance c: F, instance d: F) -> F { /* A */ ( /* B */ (a + b) /* C */ ) + /* D */ (c * d) }",
         "\
 fn f<F: Field>(instance a: F, instance b: F, instance c: F, instance d: F) -> F {
-    /* A */
-    /* B */
+    /* A */ /* B */
     a + b /* C */ + /* D */ c * d
 }
 ",
@@ -130,6 +130,21 @@ fn f<F: Field>(instance a: F, instance b: F, instance c: F) -> F {
     );
 }
 
+#[test]
+fn statement_paren_comment() {
+    // A comment inside a statement's leading `(` is placed like one before the statement.
+    assert_ok(
+        "fn f<F: Field>(instance a: F, instance b: F) -> Bool { let x = a; (/* d */ a) == b; (/* e */ x) == b }",
+        "\
+fn f<F: Field>(instance a: F, instance b: F) -> Bool {
+    let x = a; /* d */
+    a == b; /* e */
+    x == b
+}
+",
+    );
+}
+
 // ══════════════════════════════════════════════════════════════════
 // Section: Relations (where clause)
 // ══════════════════════════════════════════════════════════════════
@@ -141,6 +156,23 @@ fn relation_fallback_paren_comment() {
         "proto p<F: Field>(instance a: F, instance b: F, instance c: F) where (/* c */ a + b) == c { a }",
         "\
 proto p<F: Field>(instance a: F, instance b: F, instance c: F) where /* c */ a + b == c {
+    a
+}
+",
+    );
+}
+
+#[test]
+fn relation_statements_paren_comment() {
+    // As in a body: each comment inside a leading `(` is placed like one before its statement.
+    assert_ok(
+        "proto p<F: Field>(instance a: F, instance b: F, instance c: F) where (/* c */ a + b) == c; (/* d */ a) == b; (/* e */ a + b) == c { a }",
+        "\
+proto p<F: Field>(instance a: F, instance b: F, instance c: F) where
+    /* c */ a + b == c; /* d */
+    a == b; /* e */
+    a + b == c
+{
     a
 }
 ",

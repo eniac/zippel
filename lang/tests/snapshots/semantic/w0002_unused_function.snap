@@ -1,0 +1,12 @@
+---
+source: lang/tests/semantic.rs
+---
+warning: function `unused` is never called
+   ╭─[ test.zippel:1:4 ]
+   │
+ 1 │ fn unused<F: Field>(instance a: F) -> F { a }
+   │    ───┬──  
+   │       ╰──── no call in this file names `unused`
+   │       │    
+   │       ╰──── note: if this is intentional, prefix the name with an underscore
+───╯

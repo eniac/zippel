@@ -5,10 +5,11 @@
 //!
 //! - `format_body` — owns the gap after `{` (or between `{` and `}`).
 //! - `format_relation` — owns the gap after `where`.
-//! - `format_relation_inner` — does NOT own a leading gap; called by
-//!   `format_relation` after the leading gap is consumed. `;`-separated
-//!   relations are a block, which `format_stmts` formats in one loop
-//!   (`gap_hard` after each `;` provides the break).
+//! - `format_seq_exp` — does NOT own a leading gap. A body or relation
+//!   with `;`-separated statements is a block, which `format_stmts`
+//!   formats in one loop: the gap before each statement but the first is
+//!   placed after the previous `;` (`gap_hard`), and the first one's is
+//!   returned to the caller.
 
 use lang::ast::ExpId;
 use lang::ast::exp::{BinOp, Exp, Exps, URef};
@@ -513,13 +514,9 @@ impl<'doc> Formatter<'doc, '_> {
     /// needs no parentheses. Everything else goes through `format_exp`.
     fn format_seq_exp(&mut self, exp: URef<'_>) -> (TriviaGap, Doc<'doc>) {
         match exp.node() {
-            Exp::Block(_) => {
-                // Hand the leading trivia back to the caller like every other
-                // arm, so it is placed for the caller's context instead of by
-                // `format_body_inner`'s statement-level `gap_none`.
-                let gap = self.cursor.advance_to(exp.span().start).trim_if_clean();
-                let doc = self.format_body_inner(exp);
-                (gap, doc)
+            Exp::Block(block) => {
+                let (gap, doc) = self.format_stmts(exp, block);
+                (gap.trim_if_clean(), doc)
             }
             _ => self.format_exp(exp),
         }
@@ -797,11 +794,12 @@ impl<'doc> Formatter<'doc, '_> {
     pub(crate) fn format_relation(&mut self, exp: URef<'_>) -> Doc<'doc> {
         let alloc = self.alloc;
         let style = self.style;
-        // Leading gap — between `where` and the first relation.
+        // Leading gap — between `where` and the first relation's first token.
         // `line()` as open for inline comments (space in flat, newline in
         // broken); at_line_start comments get auto `hardline` open.
         // `line()` as sep for empty gaps (separates `where` from relation).
-        let leading_gap = self.cursor.advance_to(exp.span().start).trim_start();
+        let (leading_gap, content) = self.format_seq_exp(exp);
+        let leading_gap = leading_gap.trim_start();
         let leading_open = match leading_gap.first() {
             Some(e) if !e.needs_start_newline() => Some(alloc.line()),
             _ => None,
@@ -814,24 +812,7 @@ impl<'doc> Formatter<'doc, '_> {
             Some(alloc.line()),
             style,
         );
-
-        let content = self.format_relation_inner(exp);
         alloc.concat([leading, content])
-    }
-
-    fn format_relation_inner(&mut self, exp: URef<'_>) -> Doc<'doc> {
-        let alloc = self.alloc;
-        let style = self.style;
-        match exp.node() {
-            Exp::Block(body) => self.format_stmts(exp, body, true),
-            _ => {
-                let (gap, doc) = self.format_seq_exp(exp);
-                alloc.concat([
-                    format_gap(alloc, gap, Some(alloc.nil()), None, None, style),
-                    doc,
-                ])
-            }
-        }
     }
 
     pub(crate) fn format_body(&mut self, body: Option<URef<'_>>, end: usize) -> Doc<'doc> {
@@ -854,18 +835,19 @@ impl<'doc> Formatter<'doc, '_> {
             return format_gap(alloc, inner_comments, open, None, Some(alloc.nil()), style);
         };
 
-        // Gap after `{` — strip blank lines. `sep = hardline` provides
-        // the structural break for empty gaps; `open = hardline` puts
-        // comments on their own line; `end = hardline` breaks after.
+        // Gap after `{`, through the body's first token — strip blank lines.
+        // `sep = hardline` provides the structural break for empty gaps;
+        // `open = hardline` puts comments on their own line; `end = hardline`
+        // breaks after.
+        let (body_gap, body_doc) = self.format_seq_exp(body);
         let body_leading = format_gap(
             alloc,
-            self.cursor.advance_to(body.span().start).trim_start(),
+            body_gap.trim_start(),
             Some(alloc.hardline()),
             Some(alloc.hardline()),
             Some(alloc.hardline()),
             style,
         );
-        let body_doc = self.format_body_inner(body);
 
         // Gap before `}` — strip blank lines (structural hardline precedes).
         let close_comments = self
@@ -878,32 +860,6 @@ impl<'doc> Formatter<'doc, '_> {
             body_doc,
             gap_hard(alloc, close_comments, style),
         ])
-    }
-
-    fn format_body_inner(&mut self, exp: URef<'_>) -> Doc<'doc> {
-        let alloc = self.alloc;
-        let style = self.style;
-        match exp.node() {
-            Exp::Block(body) => self.format_stmts(exp, body, false),
-            _ => {
-                let (gap, doc) = self.format_exp(exp);
-                // Body context: comments go on their own line. `open = nil`
-                // because body_leading already provides the initial line break;
-                // `end = hardline` breaks after the comment; `sep = nil` for
-                // empty gaps (body_leading handles the break).
-                alloc.concat([
-                    format_gap(
-                        alloc,
-                        gap,
-                        Some(alloc.nil()),
-                        Some(alloc.hardline()),
-                        Some(alloc.nil()),
-                        style,
-                    ),
-                    doc,
-                ])
-            }
-        }
     }
 
     /// Render the gap before `;`. Inline comments get no trailing space
@@ -921,25 +877,24 @@ impl<'doc> Formatter<'doc, '_> {
         format_gap(alloc, gap, None, end, None, style)
     }
 
-    /// A block's statements, each through its `;`, then its value. In a relation (`where`), a
-    /// value statement keeps the relation's gap style; a `<-` statement switches the rest of the
-    /// block to the body's.
-    fn format_stmts(&mut self, expr: URef<'_>, block: &Block, mut relation: bool) -> Doc<'doc> {
+    /// A block's statements, each through its `;`, then its value. The gap before an item is
+    /// everything up to its first token, comments inside a leading `(` included, which leaves
+    /// no node: the first item's is returned, and every other one's placed after the previous
+    /// `;`, so `x; (/* c */ a) == b` reads as `x; /* c */ a == b`.
+    fn format_stmts(&mut self, expr: URef<'_>, block: &Block) -> (TriviaGap, Doc<'doc>) {
         let alloc = self.alloc;
         let style = self.style;
-        let tail = block.tail.map(|t| expr.at(t));
-        let mut docs = Vec::new();
-        for (i, stmt) in block.stmts.iter().enumerate() {
+        // Each item with its gap: up to its start first, keeping blank lines, then what its
+        // first token's gap adds, which a leading `(` hides.
+        let mut items = Vec::new();
+        for stmt in &block.stmts {
             let end = stmt.span.end;
-            relation &= !matches!(stmt.node, Stmt::Log(..));
-            docs.push(match &stmt.node {
+            let before = self.cursor.advance_to(stmt.span.start);
+            let (gap, doc) = match &stmt.node {
                 Stmt::Let(var, value) => {
-                    let keyword = gap_none(
-                        alloc,
-                        self.cursor
-                            .advance_to_token(end, |token| matches!(token, Token::KwLet)),
-                        style,
-                    );
+                    let keyword_gap = self
+                        .cursor
+                        .advance_to_token(end, |token| matches!(token, Token::KwLet));
                     let name_gap = self
                         .cursor
                         .advance_to_token(end, |token| matches!(token, Token::Id(_)));
@@ -947,8 +902,7 @@ impl<'doc> Formatter<'doc, '_> {
                         .cursor
                         .advance_to_token(end, |token| matches!(token, Token::Eq));
                     let (value_gap, value_doc) = self.format_exp(expr.at(*value));
-                    alloc.concat([
-                        keyword,
+                    let doc = alloc.concat([
                         alloc.text("let"),
                         gap_space(alloc, name_gap, style),
                         alloc.as_string(var),
@@ -956,64 +910,43 @@ impl<'doc> Formatter<'doc, '_> {
                         alloc.text("="),
                         gap_space(alloc, value_gap, style),
                         value_doc,
-                    ])
+                    ]);
+                    (keyword_gap, doc)
                 }
-                // The value is an operand (`exp_no_seq`): a block there was parenthesized in the
-                // source and must stay so, which `format_exp` does.
-                Stmt::Discard(value) if relation => {
-                    let (value_gap, value_doc) = self.format_exp(expr.at(*value));
-                    alloc.concat([
-                        format_gap(alloc, value_gap, Some(alloc.nil()), None, None, style),
-                        value_doc,
-                    ])
-                }
-                Stmt::Discard(value) => {
-                    let (value_gap, value_doc) = self.format_exp(expr.at(*value));
-                    alloc.concat([gap_none(alloc, value_gap, style), value_doc])
-                }
+                Stmt::Discard(value) => self.format_exp(expr.at(*value)),
                 Stmt::Log(var, value) => {
-                    let name = gap_none(
-                        alloc,
-                        self.cursor
-                            .advance_to_token(end, |token| matches!(token, Token::Id(_))),
-                        style,
-                    );
+                    let name_gap = self
+                        .cursor
+                        .advance_to_token(end, |token| matches!(token, Token::Id(_)));
                     let arrow_gap = self
                         .cursor
                         .advance_to_token(end, |token| matches!(token, Token::LArrow));
                     let (value_gap, value_doc) = self.format_exp(expr.at(*value));
-                    alloc.concat([
-                        name,
+                    let doc = alloc.concat([
                         alloc.as_string(var),
                         gap_space(alloc, arrow_gap, style),
                         alloc.text("<-"),
                         gap_space(alloc, value_gap, style),
                         value_doc,
-                    ])
+                    ]);
+                    (name_gap, doc)
                 }
-            });
+            };
             let before_semi = self
                 .cursor
                 .advance_to_token(end, |token| matches!(token, Token::Semi));
-            docs.push(self.gap_before_semi(before_semi));
-            docs.push(alloc.text(";"));
-            let next = block
-                .stmts
-                .get(i + 1)
-                .map(|s| s.span.start)
-                .or(tail.map(|t| t.span().start));
-            if let Some(next) = next {
-                docs.push(gap_hard(alloc, self.cursor.advance_to(next), style));
-            }
+            let doc = alloc.concat([doc, self.gap_before_semi(before_semi), alloc.text(";")]);
+            items.push((before.join(gap), doc));
         }
-        if let Some(tail) = tail {
-            docs.push(if relation {
-                self.format_relation_inner(tail)
-            } else {
-                self.format_body_inner(tail)
-            });
+        if let Some(tail) = block.tail.map(|t| expr.at(t)) {
+            let before = self.cursor.advance_to(tail.span().start);
+            let (gap, doc) = self.format_exp(tail);
+            items.push((before.join(gap), doc));
         }
-        alloc.concat(docs)
+        let mut items = items.into_iter();
+        let (first_gap, first) = items.next().expect("a block has an item");
+        let rest = items.flat_map(|(gap, doc)| [gap_hard(alloc, gap, style), doc]);
+        (first_gap, alloc.concat(std::iter::once(first).chain(rest)))
     }
 }
 
