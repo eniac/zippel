@@ -6,7 +6,7 @@ warning: unused variable `x`
    │
  1 │ proto p<F: Field>(instance a: F) where let x = a; a == a { }
    │                                            ┬  
-   │                                            ╰── `x` is bound but never used
+   │                                            ╰── `x` is never used
    │                                            │  
    │                                            ╰── help: if this is intentional, prefix it with an underscore
 ───╯

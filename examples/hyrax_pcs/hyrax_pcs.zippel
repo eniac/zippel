@@ -8,7 +8,7 @@ fn eq_weights<G: Group, F: Scalar<G>, L: Size, M: Size, K: 2..L + M + 1>(
     let x_lo = x[0..K - 1];
     let a = x[K - 1];
     let prev = eq_weights(x_lo);
-    (prev * (1 - a)) ++ (prev * a)
+    prev * (1 - a) ++ prev * a
 }
 
 proto hyrax_pcs<G: Group, F: Scalar<G>, L: Size, M: Size, NR: 2 ^ L, NC: 2 ^ M, NT: 2 ^ (L + M)>(

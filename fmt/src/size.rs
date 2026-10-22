@@ -2,12 +2,14 @@
 
 use lang::ast::{Range, Size, Spanned};
 use lang::parser::Token;
+use lang::stack_guard;
 use pretty::DocAllocator;
 
 use crate::ctx::{Doc, Formatter, parenthesize};
 use crate::trivia::{TriviaGap, gap_none, gap_space};
 
 impl<'doc> Formatter<'doc, '_> {
+    #[stack_guard]
     pub(crate) fn format_size(&mut self, size: &Size, end: usize) -> (TriviaGap, Doc<'doc>) {
         let alloc = self.alloc;
         match size {

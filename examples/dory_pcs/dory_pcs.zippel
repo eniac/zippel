@@ -16,7 +16,7 @@ fn eq_weights<F: Field, K: Size, J: 2..K + 1>(instance x: [F; J]) -> [F; 2 ^ J] 
     let x_lo = x[0..J - 1];
     let a = x[J - 1];
     let prev = eq_weights(x_lo);
-    (prev * (1 - a)) ++ (prev * a)
+    prev * (1 - a) ++ prev * a
 }
 
 // Setup precomputation (upstream `to_verifier_setup`): for k = 0..=K,

@@ -1972,11 +1972,11 @@ fn resolved_calls_keep_declaration_signature_and_substitution() {
     let mut types = TypeTable::new();
     tree.root().infer(&cx, &mut vctx, &mut types).unwrap();
     assert_eq!(
-        types.calls().len(),
+        types.calls().count(),
         1,
         "polynomial calls have no function resolution"
     );
-    let (id, call) = &types.calls()[0];
+    let (id, call) = types.calls().next().unwrap();
     assert_eq!(call.declaration, decls[0].sig);
     assert_eq!(
         call.signature.ret.as_ref().unwrap().node,
@@ -1985,8 +1985,8 @@ fn resolved_calls_keep_declaration_signature_and_substitution() {
     let mut body = decls[0].body.clone();
     call.instantiation.apply(&mut body).unwrap();
     assert!(matches!(body.body().unwrap().node(), Exp::Random(t, _) if t.node == Tid::from("F")));
-    assert_eq!(types.call(*id).unwrap().signature, call.signature);
+    assert_eq!(types.call(id).unwrap().signature, call.signature);
     // Cached inference neither resolves again nor creates duplicate records.
     tree.root().infer(&cx, &mut vctx, &mut types).unwrap();
-    assert_eq!(types.calls().len(), 1);
+    assert_eq!(types.calls().count(), 1);
 }

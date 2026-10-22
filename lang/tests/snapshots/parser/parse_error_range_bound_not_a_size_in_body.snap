@@ -1,0 +1,12 @@
+---
+source: lang/tests/parser.rs
+---
+error: a range bound is a size: names, literals, `+ - * / ^` and parentheses
+   ╭─[ test.zippel:1:57 ]
+   │
+ 1 │ fn f<F: Field, M: Size>(instance _x: [F; M]) -> F { 0..(M ++ M) }
+   │                                                     ─────┬─┬───  
+   │                                                          │ ╰───── a range bound is a size: names, literals, `+ - * / ^` and parentheses
+   │                                                          │       
+   │                                                          ╰─────── while parsing this expression
+───╯

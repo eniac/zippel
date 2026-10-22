@@ -508,23 +508,55 @@ impl Index<usize> for Exps {
     }
 }
 
+/// How tightly each operator of the expression grammar binds, loosest first: the parser's Pratt
+/// table reads it, and printers use it to parenthesize text so it parses back unchanged. Each
+/// level's result is the next looser level's operand: sizes form a range, vectors and ranges
+/// concatenate, and the results compare.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Precedence {
+    /// `&&`
+    And,
+    /// `==`
+    Equ,
+    /// `++`
+    Concat,
+    /// `..`, which does not chain
+    Range,
+    /// `+ -`
+    Additive,
+    /// `* / %`
+    Multiplicative,
+    /// prefix `-`: `-a * b` is `(-a) * b`, and `-a ^ 2` is `-(a ^ 2)`
+    Neg,
+    /// `^`, right-associative
+    Pow,
+    /// `.field`, `.set(field, value)`
+    Postfix,
+}
+
+impl Precedence {
+    /// The binding power a Pratt parser takes: higher binds tighter.
+    pub const fn power(self) -> u16 {
+        self as u16
+    }
+}
+
 impl BinOp {
-    /// Precedence matching the parser's Pratt table; lower binds looser. Printers use it to
-    /// produce text that parses back to the same AST.
-    pub fn precedence(&self) -> usize {
+    /// The row of [`Precedence`] this operator binds at.
+    pub const fn precedence(&self) -> Precedence {
         match self {
-            BinOp::And => 0, // lowest precedence
-            BinOp::Equ => 1,
-            BinOp::Add | BinOp::Sub => 2,
-            BinOp::Mul | BinOp::Div | BinOp::Rem => 3,
-            BinOp::Concat => 4,
-            BinOp::Pow => 5,
-            BinOp::Dot => 6, // not infix in grammar; programmatic-only
+            BinOp::And => Precedence::And,
+            BinOp::Equ => Precedence::Equ,
+            BinOp::Concat => Precedence::Concat,
+            BinOp::Add | BinOp::Sub => Precedence::Additive,
+            BinOp::Mul | BinOp::Div | BinOp::Rem => Precedence::Multiplicative,
+            BinOp::Pow => Precedence::Pow,
+            BinOp::Dot => Precedence::Postfix, // not infix in grammar; programmatic-only
         }
     }
 
     /// Right-associative? (Only Pow; all other infix binops are left-assoc.)
-    pub fn is_right_assoc(&self) -> bool {
+    pub const fn is_right_assoc(&self) -> bool {
         matches!(self, BinOp::Pow)
     }
 
@@ -532,9 +564,9 @@ impl BinOp {
     pub fn lhs_needs_paren<N: ExpLiteral>(&self, lhs: &Exp<N>) -> bool {
         match lhs {
             // `-x op y` parses as `(-x) op y` only when `op` binds looser than prefix minus.
-            Exp::Neg(_) => self.precedence() >= NEG_PRECEDENCE,
-            // `..` binds looser than every operator.
-            Exp::Range(_) => true,
+            Exp::Neg(_) => self.precedence() >= Precedence::Neg,
+            // `..` does not chain, and binds looser than arithmetic.
+            Exp::Range(_) => self.precedence() >= Precedence::Range,
             Exp::Bin(child, _, _) => {
                 child.precedence() < self.precedence()
                     || (child.precedence() == self.precedence() && self.is_right_assoc())
@@ -548,7 +580,7 @@ impl BinOp {
         match rhs {
             // Prefix minus is allowed in any operand position.
             Exp::Neg(_) => false,
-            Exp::Range(_) => true,
+            Exp::Range(_) => self.precedence() >= Precedence::Range,
             Exp::Bin(child, _, _) => {
                 child.precedence() < self.precedence()
                     || (child.precedence() == self.precedence() && !self.is_right_assoc())
@@ -562,13 +594,10 @@ impl<N: ExpLiteral> Exp<N> {
     /// Whether `self` must be parenthesized as the operand of prefix `-`: a binary operator
     /// that binds looser than `-`, or a range, would otherwise take `-` into its left operand.
     pub fn needs_paren_under_neg(&self) -> bool {
-        matches!(self, Exp::Bin(op, _, _) if op.precedence() < NEG_PRECEDENCE)
+        matches!(self, Exp::Bin(op, _, _) if op.precedence() < Precedence::Neg)
             || matches!(self, Exp::Range(_))
     }
 }
-
-/// Binding precedence of prefix `-`, on the scale of [`BinOp::precedence`].
-const NEG_PRECEDENCE: usize = 4;
 
 /// The operator as written in source, e.g. `+`.
 impl fmt::Display for BinOp {

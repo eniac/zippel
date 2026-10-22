@@ -213,6 +213,49 @@ fn parse_error_range_bound_not_a_size() {
     assert_snap!(SNAP_DIR, "parse_error_range_bound_not_a_size", rendered);
 }
 
+/// `exp` as the whole body of a function whose argument it need not read, in a file with a
+/// `proto`.
+fn whole_body(exp: &str) -> String {
+    format!(
+        "fn f<F: Field, M: Size>(instance _x: [F; M]) -> F {{ {exp} }}\n\
+         proto p<F: Field>(instance a: F) where a == a {{ verify(a == a) }}"
+    )
+}
+
+// A range directly in a body has no enclosing bracket: its errors must still be the range's own.
+#[test]
+fn parse_error_range_bound_not_a_size_in_body() {
+    let rendered = render_all(&whole_body("0..(M ++ M)"));
+    assert_snap!(
+        SNAP_DIR,
+        "parse_error_range_bound_not_a_size_in_body",
+        rendered
+    );
+}
+
+#[test]
+fn parse_error_range_chain() {
+    let rendered = render_all(&whole_body("0..M..M"));
+    assert_snap!(SNAP_DIR, "parse_error_range_chain", rendered);
+}
+
+/// A bound with an operator sizes lack, `%` included, is not a size; a range is not a bound.
+#[test]
+fn range_bound_errors() {
+    for (exp, expected) in [
+        ("0..(M ++ M)", "a range bound is a size"),
+        ("0..M % 2", "a range bound is a size"),
+        ("0..M..M", "`..` does not chain"),
+        ("(0..M)..M", "`..` does not chain"),
+    ] {
+        let errors = parse_errors(&whole_body(exp));
+        assert!(
+            errors.len() == 1 && errors[0].summary.starts_with(expected),
+            "{exp}: {errors:?}"
+        );
+    }
+}
+
 #[test]
 fn parse_error_comma_without_stepped_range() {
     let rendered = render_all(&indexed_body("x[0, 1]"));

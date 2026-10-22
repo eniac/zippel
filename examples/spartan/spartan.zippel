@@ -17,7 +17,7 @@ fn eq_weights<G: Group, F: Scalar<G>, M: Size, EK: 2..M + 1>(instance x: [F; EK]
     let x_lo = x[0..EK - 1];
     let a = x[EK - 1];
     let prev = eq_weights(x_lo);
-    (prev * (1 - a)) ++ (prev * a)
+    prev * (1 - a) ++ prev * a
 }
 
 fn draw_taus<G: Group, F: Scalar<G>>(instance _placeholder: [F; 1]) -> [F; 1] {
@@ -158,7 +158,7 @@ fn compute_s_vec<G: Group, F: Scalar<G>, M: Size, K: 2..M + 1>(
     let c_rest = c[1..K];
     let c_inv_rest = c_inv[1..K];
     let prev = compute_s_vec(c_rest, c_inv_rest);
-    (prev * curr_c_inv) ++ (prev * curr_c)
+    prev * curr_c_inv ++ prev * curr_c
 }
 
 fn bullet_collect<G: Group, F: Scalar<G>>(
