@@ -176,13 +176,13 @@ fn f<F: Field, N: Size>(instance x: [F; N]) -> [F; N] {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn range_concat_needs_paren() {
-    // `..` binds looser than every operator, so a range operand keeps its parens.
+fn range_concat_no_paren() {
+    // `..` binds tighter than `++`, so a range operand of `++` needs no parens.
     assert_ok(
         "fn f<F: Field>(instance a: [F; 4]) -> F { (0..3) ++ (0..2) }",
         "\
 fn f<F: Field>(instance a: [F; 4]) -> F {
-    (0..3) ++ (0..2)
+    0..3 ++ 0..2
 }
 ",
     );

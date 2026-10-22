@@ -1,0 +1,12 @@
+---
+source: lang/tests/parser.rs
+---
+error: `..` does not chain
+   ╭─[ test.zippel:1:53 ]
+   │
+ 1 │ fn f<F: Field, M: Size>(instance _x: [F; M]) -> F { 0..M..M }
+   │                                                     ───┬───  
+   │                                                        ╰───── `..` does not chain
+   │                                                        │     
+   │                                                        ╰───── while parsing this expression
+───╯

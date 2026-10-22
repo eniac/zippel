@@ -45,9 +45,8 @@ pub struct ResolvedCall {
 #[derive(Debug, Default, Clone)]
 pub struct TypeTable {
     types: Vec<Option<CTyp>>,
-    /// Resolved calls in typing order, with an index for lowering.
-    calls: Vec<(ExpId, ResolvedCall)>,
-    call_indices: HashMap<ExpId, usize>,
+    /// The resolution of each ordinary function call, by call node.
+    calls: HashMap<ExpId, ResolvedCall>,
 }
 
 impl TypeTable {
@@ -57,16 +56,14 @@ impl TypeTable {
         Self::default()
     }
 
-    /// The call nodes and their resolutions, in typing order.
-    pub fn calls(&self) -> &[(ExpId, ResolvedCall)] {
-        &self.calls
+    /// The call nodes and their resolutions, in no particular order.
+    pub fn calls(&self) -> impl Iterator<Item = (ExpId, &ResolvedCall)> {
+        self.calls.iter().map(|(&id, call)| (id, call))
     }
 
     /// The resolution of an ordinary function call. Polynomial applications have no record.
     pub fn call(&self, id: ExpId) -> Option<&ResolvedCall> {
-        self.call_indices
-            .get(&id)
-            .map(|&index| &self.calls[index].1)
+        self.calls.get(&id)
     }
 
     fn get(&self, id: ExpId) -> Option<&CTyp> {
@@ -212,8 +209,7 @@ impl CRef<'_> {
                         let mut call = None;
                         let typed = e.infer_node(&env!(), &mut call);
                         if let Some(sig) = call {
-                            types.call_indices.insert(e.id(), types.calls.len());
-                            types.calls.push((e.id(), sig));
+                            types.calls.insert(e.id(), sig);
                         }
                         match typed {
                             Ok(t) => types.insert(e.id(), t),

@@ -2,7 +2,7 @@ use num::{BigUint, One, ToPrimitive, Zero};
 use std::fmt;
 use thiserror::Error;
 
-use crate::ast::exp::ExpLiteral;
+use crate::ast::exp::{ExpLiteral, Precedence};
 use crate::ast::spanned::Spanned;
 use crate::id::Tid;
 use share::{Ctx, Set};
@@ -68,15 +68,14 @@ impl ExpLiteral for Size {
 }
 
 impl Size {
-    /// Precedence for parenthesization.
-    /// Non-binary variants (Var, Lit) return 4 — higher than any
-    /// binary op, so they never need parentheses.
-    pub fn precedence(&self) -> usize {
+    /// The row of [`Precedence`] this size's operator binds at; a name or literal has none and
+    /// never needs parentheses.
+    pub const fn precedence(&self) -> Option<Precedence> {
         match self {
-            Size::Add(_, _) | Size::Sub(_, _) => 1,
-            Size::Mul(_, _) | Size::Div(_, _) => 2,
-            Size::Pow(_, _) => 3,
-            Size::Var(_) | Size::Lit(_) => 4,
+            Size::Add(_, _) | Size::Sub(_, _) => Some(Precedence::Additive),
+            Size::Mul(_, _) | Size::Div(_, _) => Some(Precedence::Multiplicative),
+            Size::Pow(_, _) => Some(Precedence::Pow),
+            Size::Var(_) | Size::Lit(_) => None,
         }
     }
 
@@ -87,14 +86,22 @@ impl Size {
 
     /// Whether `lhs` needs parentheses as the left operand of `self` to parse back unchanged.
     pub fn lhs_needs_paren(&self, lhs: &Size) -> bool {
-        let (parent, child) = (self.precedence(), lhs.precedence());
-        child < parent || (child == parent && self.is_right_assoc())
+        match (self.precedence(), lhs.precedence()) {
+            (Some(parent), Some(child)) => {
+                child < parent || (child == parent && self.is_right_assoc())
+            }
+            _ => false,
+        }
     }
 
     /// Whether `rhs` needs parentheses as the right operand of `self` to parse back unchanged.
     pub fn rhs_needs_paren(&self, rhs: &Size) -> bool {
-        let (parent, child) = (self.precedence(), rhs.precedence());
-        child < parent || (child == parent && !self.is_right_assoc())
+        match (self.precedence(), rhs.precedence()) {
+            (Some(parent), Some(child)) => {
+                child < parent || (child == parent && !self.is_right_assoc())
+            }
+            _ => false,
+        }
     }
 
     /// Whether this is the literal `1`, the implicit dimension of `Uni`/`Mle` sugar.

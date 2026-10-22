@@ -6,7 +6,7 @@ warning: unused variable `a`
    │
  1 │ fn f<F: Field>(instance a: F) -> [F; 3] { [0 for x in 0..3] }
    │                         ┬  
-   │                         ╰── `a` is bound but never used
+   │                         ╰── `a` is never used
    │                         │  
    │                         ╰── help: if this is intentional, prefix it with an underscore
 ───╯
@@ -17,7 +17,7 @@ warning: unused variable `x`
    │
  1 │ fn f<F: Field>(instance a: F) -> [F; 3] { [0 for x in 0..3] }
    │                                                  ┬  
-   │                                                  ╰── `x` is bound but never used
+   │                                                  ╰── `x` is never used
    │                                                  │  
    │                                                  ╰── help: if this is intentional, prefix it with an underscore
 ───╯

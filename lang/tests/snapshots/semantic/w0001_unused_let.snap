@@ -6,7 +6,7 @@ warning: unused variable `x`
    │
  1 │ fn f<F: Field>(instance a: F) -> F { let x = a; a }
    │                                          ┬  
-   │                                          ╰── `x` is bound but never used
+   │                                          ╰── `x` is never used
    │                                          │  
    │                                          ╰── help: if this is intentional, prefix it with an underscore
 ───╯

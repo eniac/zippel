@@ -35,7 +35,7 @@ fn eq_mle<F: Field, N: Size, K: 2..N + 1>(instance z: [F; K]) -> [F; 2 ^ K] {
     let a = z[0]; // first variable = MSB (peeled first)
     let rest = z[1..K];
     let prev = eq_mle(rest); // [F; 2^(K-1)] over the K-1 low-bit variables
-    (prev * (1 - a)) ++ (prev * a)
+    prev * (1 - a) ++ prev * a
 }
 
 // =============================================================================

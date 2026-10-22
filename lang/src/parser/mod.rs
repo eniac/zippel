@@ -24,6 +24,7 @@ use num::{BigUint, ToPrimitive};
 
 use crate::ast::arg::Args;
 use crate::ast::decl::{Decl, UDecl};
+use crate::ast::exp::Precedence;
 use crate::ast::spanned::Spanned;
 use crate::ast::{BinOp, Block, Exclusion, ExpId, Exprs, Exps, GArg, Stmt, UExp};
 use crate::ast::{ExpLiteral, Size};
@@ -133,7 +134,7 @@ where
 
         atom.pratt((
             pratt::infix(
-                Associativity::Left(1),
+                Associativity::Left(Precedence::Additive.power()),
                 just(Token::Plus).ignored().labelled(Terminal::Operator),
                 |a, _, b, sp| {
                     let sp: SimpleSpan = sp.span();
@@ -141,7 +142,7 @@ where
                 },
             ),
             pratt::infix(
-                Associativity::Left(1),
+                Associativity::Left(Precedence::Additive.power()),
                 just(Token::Minus).ignored().labelled(Terminal::Operator),
                 |a, _, b, sp| {
                     let sp: SimpleSpan = sp.span();
@@ -149,7 +150,7 @@ where
                 },
             ),
             pratt::infix(
-                Associativity::Left(2),
+                Associativity::Left(Precedence::Multiplicative.power()),
                 just(Token::Star).ignored().labelled(Terminal::Operator),
                 |a, _, b, sp| {
                     let sp: SimpleSpan = sp.span();
@@ -157,7 +158,7 @@ where
                 },
             ),
             pratt::infix(
-                Associativity::Left(2),
+                Associativity::Left(Precedence::Multiplicative.power()),
                 just(Token::Slash).ignored().labelled(Terminal::Operator),
                 |a, _, b, sp| {
                     let sp: SimpleSpan = sp.span();
@@ -165,7 +166,7 @@ where
                 },
             ),
             pratt::infix(
-                Associativity::Right(3),
+                Associativity::Right(Precedence::Pow.power()),
                 just(Token::Caret).ignored().labelled(Terminal::Operator),
                 |a, _, b, sp| {
                     let sp: SimpleSpan = sp.span();
@@ -270,6 +271,55 @@ fn size_of<'src>(exprs: &Exprs<Size>, root: ExpId) -> Result<Spanned<Size>, Rich
         built.insert(e.id(), Spanned::new(size, e.span().clone()));
     }
     Ok(built.remove(&root).expect("the root is built"))
+}
+
+/// The infix operator `op`, written `token`, at its row of [`Precedence`].
+fn bin_op<'src, I>(
+    op: BinOp,
+    token: Token<'src>,
+) -> impl pratt::Operator<'src, I, ExpId, Extra<'src>> + Clone
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
+{
+    let power = op.precedence().power();
+    let associativity = if op.is_right_assoc() {
+        Associativity::Right(power)
+    } else {
+        Associativity::Left(power)
+    };
+    pratt::infix(
+        associativity,
+        just(token).ignored().labelled(Terminal::Operator),
+        move |a, _, b, sp| push(sp, UExp::Bin(op, a, b)),
+    )
+}
+
+/// Folds `start..end`. Arithmetic binds tighter than `..`, so a bound such as `x + 1` is parsed
+/// as an expression and then read as a size (`size_of`). On an error, it is reported and `start`
+/// kept so parsing goes on.
+fn range<'src, I>(start: ExpId, end: ExpId, e: &mut MapExtra<'src, '_, I, Extra<'src>>) -> ExpId
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
+{
+    let span: SimpleSpan = e.span();
+    let exprs = &e.state().exprs;
+    let error = if matches!(exprs[start], UExp::Range(_)) {
+        Rich::custom(span, "`..` does not chain")
+    } else {
+        match (size_of(exprs, start), size_of(exprs, end)) {
+            (Ok(start), Ok(end)) => {
+                let range = Range {
+                    start,
+                    step: None,
+                    end: Some(end),
+                };
+                return push(e, UExp::Range(range));
+            }
+            (Err(err), _) | (_, Err(err)) => err,
+        }
+    };
+    e.emit(error);
+    start
 }
 
 /// A range bound at `id` that is not a size.
@@ -985,121 +1035,67 @@ where
         let exp_items = exp_items_parser(exp_no_seq_rec.clone().boxed()).boxed();
         let atom = exp_atom(exp_no_seq_rec.clone().boxed(), exp_items);
 
-        let operand = atom
-            .pratt((
-                // Lowest precedence first (matches AEXP_PARSER order)
-                // && (logical AND) — precedence 0, left-associative
-                pratt::infix(
-                    Associativity::Left(0),
-                    just(Token::AmpAmp).ignored().labelled(Terminal::Operator),
-                    |a, _, b, sp| push(sp, UExp::Bin(BinOp::And, a, b)),
-                ),
-                // == (equality) — precedence 1, left-associative
-                pratt::infix(
-                    Associativity::Left(1),
-                    just(Token::EqEq).ignored().labelled(Terminal::Operator),
-                    |a, _, b, sp| push(sp, UExp::Bin(BinOp::Equ, a, b)),
-                ),
-                pratt::infix(
-                    Associativity::Left(2),
-                    just(Token::Plus).ignored().labelled(Terminal::Operator),
-                    |a, _, b, sp| push(sp, UExp::Bin(BinOp::Add, a, b)),
-                ),
-                pratt::infix(
-                    Associativity::Left(2),
-                    just(Token::Minus).ignored().labelled(Terminal::Operator),
-                    |a, _, b, sp| push(sp, UExp::Bin(BinOp::Sub, a, b)),
-                ),
-                pratt::infix(
-                    Associativity::Left(3),
-                    just(Token::Star).ignored().labelled(Terminal::Operator),
-                    |a, _, b, sp| push(sp, UExp::Bin(BinOp::Mul, a, b)),
-                ),
-                pratt::infix(
-                    Associativity::Left(3),
-                    just(Token::Slash).ignored().labelled(Terminal::Operator),
-                    |a, _, b, sp| push(sp, UExp::Bin(BinOp::Div, a, b)),
-                ),
-                pratt::infix(
-                    Associativity::Left(3),
-                    just(Token::Percent).ignored().labelled(Terminal::Operator),
-                    |a, _, b, sp| push(sp, UExp::Bin(BinOp::Rem, a, b)),
-                ),
-                pratt::infix(
-                    Associativity::Left(4),
-                    just(Token::PlusPlus).ignored().labelled(Terminal::Operator),
-                    |a, _, b, sp| push(sp, UExp::Bin(BinOp::Concat, a, b)),
-                ),
-                pratt::infix(
-                    Associativity::Right(5),
-                    just(Token::Caret).ignored().labelled(Terminal::Operator),
-                    |a, _, b, sp| push(sp, UExp::Bin(BinOp::Pow, a, b)),
-                ),
-                // Prefix: unary minus → Exp::Neg(x)
-                // Precedence 4 — tighter than `*`/`/`/`%` (3), looser than `^` (5).
-                // So `-a * b` = `(-a) * b` and `-a ^ 2` = `-(a ^ 2)`.
-                pratt::prefix(
-                    4,
-                    just(Token::Minus).ignored().labelled(Terminal::Operator),
-                    |_, rhs, sp| push(sp, UExp::Neg(rhs)),
-                ),
-                // Postfix: record set r.set(field, val) — must come before projection
-                // so that `.set(` is not consumed as projection `.set`.
-                // record_set_op = { "." ~ "set" ~ "(" ~ id ~ "," ~ exp_no_seq ~ ")" }
-                pratt::postfix(
-                    6,
-                    just(Token::Dot)
-                        .ignored()
-                        .labelled(Terminal::Operator)
-                        .ignore_then(
-                            select! { Token::Id(s) => s }
-                                .labelled(Terminal::Set)
-                                .filter(|s: &Cow<'_, str>| s == "set"),
-                        )
-                        .ignore_then(just(Token::LParen).ignored())
-                        .ignore_then(id_tok())
-                        .then_ignore(just(Token::Comma).ignored())
-                        .then(exp_no_seq_rec.clone().boxed())
-                        .then_ignore(just(Token::Comma).ignored().or_not())
-                        .then_ignore(just(Token::RParen).ignored()),
-                    |lhs, (field, val): (Spanned<Vid>, ExpId), sp| {
-                        let field_name = Spanned::new(field.node.0.clone(), field.span.clone());
-                        push(sp, UExp::SetRecord(lhs, field_name, val))
-                    },
-                ),
-                // Postfix: projection r.field
-                pratt::postfix(
-                    6,
-                    just(Token::Dot)
-                        .ignored()
-                        .labelled(Terminal::Operator)
-                        .ignore_then(id_tok()),
-                    |lhs, field: Spanned<Vid>, sp| {
-                        let field_name = Spanned::new(field.node.0.clone(), field.span.clone());
-                        push(sp, UExp::Proj(lhs, field_name))
-                    },
-                ),
-            ))
-            .boxed();
-
-        // `start..end`, looser than every operator. A bound such as `x + 1` cannot be told from
-        // arithmetic until `..` is reached, so both bounds are parsed as expressions and then
-        // read as sizes (`size_of`). This wraps the Pratt parser instead of being one of its
-        // operators because reading a size can fail, which a Pratt fold cannot report, and
-        // because `..` does not chain: a second `..` is left for the caller to reject.
-        operand
-            .clone()
-            .then(just(Token::DotDot).ignored().ignore_then(operand).or_not())
-            .try_map_with(|(start, end), e| {
-                let Some(end) = end else { return Ok(start) };
-                let exprs = &e.state().exprs;
-                let range = Range {
-                    start: size_of(exprs, start)?,
-                    step: None,
-                    end: Some(size_of(exprs, end)?),
-                };
-                Ok(push(e, UExp::Range(range)))
-            })
+        atom.pratt((
+            // Every operator binds at its row of `Precedence`, which gives the order and why.
+            bin_op(BinOp::And, Token::AmpAmp),
+            bin_op(BinOp::Equ, Token::EqEq),
+            bin_op(BinOp::Concat, Token::PlusPlus),
+            // `start..end`; see `range`.
+            pratt::infix(
+                Associativity::Left(Precedence::Range.power()),
+                just(Token::DotDot).ignored().labelled(Terminal::Operator),
+                |a, _, b, e| range(a, b, e),
+            ),
+            bin_op(BinOp::Add, Token::Plus),
+            bin_op(BinOp::Sub, Token::Minus),
+            bin_op(BinOp::Mul, Token::Star),
+            bin_op(BinOp::Div, Token::Slash),
+            bin_op(BinOp::Rem, Token::Percent),
+            bin_op(BinOp::Pow, Token::Caret),
+            // Prefix: unary minus → Exp::Neg(x)
+            pratt::prefix(
+                Precedence::Neg.power(),
+                just(Token::Minus).ignored().labelled(Terminal::Operator),
+                |_, rhs, sp| push(sp, UExp::Neg(rhs)),
+            ),
+            // Postfix: record set r.set(field, val) — must come before projection
+            // so that `.set(` is not consumed as projection `.set`.
+            // record_set_op = { "." ~ "set" ~ "(" ~ id ~ "," ~ exp_no_seq ~ ")" }
+            pratt::postfix(
+                Precedence::Postfix.power(),
+                just(Token::Dot)
+                    .ignored()
+                    .labelled(Terminal::Operator)
+                    .ignore_then(
+                        select! { Token::Id(s) => s }
+                            .labelled(Terminal::Set)
+                            .filter(|s: &Cow<'_, str>| s == "set"),
+                    )
+                    .ignore_then(just(Token::LParen).ignored())
+                    .ignore_then(id_tok())
+                    .then_ignore(just(Token::Comma).ignored())
+                    .then(exp_no_seq_rec.clone().boxed())
+                    .then_ignore(just(Token::Comma).ignored().or_not())
+                    .then_ignore(just(Token::RParen).ignored()),
+                |lhs, (field, val): (Spanned<Vid>, ExpId), sp| {
+                    let field_name = Spanned::new(field.node.0.clone(), field.span.clone());
+                    push(sp, UExp::SetRecord(lhs, field_name, val))
+                },
+            ),
+            // Postfix: projection r.field
+            pratt::postfix(
+                Precedence::Postfix.power(),
+                just(Token::Dot)
+                    .ignored()
+                    .labelled(Terminal::Operator)
+                    .ignore_then(id_tok()),
+                |lhs, field: Spanned<Vid>, sp| {
+                    let field_name = Spanned::new(field.node.0.clone(), field.span.clone());
+                    push(sp, UExp::Proj(lhs, field_name))
+                },
+            ),
+        ))
+        .boxed()
     })
     .labelled(Context::Expression)
     .as_context()
@@ -1578,6 +1574,29 @@ mod tests {
             panic!("expected an index");
         };
         assert!(matches!(tree.exprs[*index], UExp::Bin(..)));
+        // Arithmetic binds tighter than `..`, and `..` tighter than `++` and `==`.
+        let tree = body("0..M + 1");
+        assert!(
+            matches!(tree.node(), UExp::Range(r) if matches!(r.end.as_ref().unwrap().node, Size::Add(..)))
+        );
+        for (exp, op, range_on_left) in [
+            ("0..M ++ x", BinOp::Concat, true),
+            ("x ++ 0..M", BinOp::Concat, false),
+            ("x == 0..M", BinOp::Equ, false),
+        ] {
+            let tree = body(exp);
+            let UExp::Bin(found, l, r) = tree.node() else {
+                panic!("expected an operation: {exp}");
+            };
+            let range = if range_on_left { l } else { r };
+            assert!(
+                *found == op && matches!(tree.exprs[*range], UExp::Range(_)),
+                "{exp}"
+            );
+        }
+        let tree = body("x * 2 ++ x");
+        assert!(matches!(tree.node(), UExp::Bin(BinOp::Concat, l, _)
+            if matches!(tree.exprs[*l], UExp::Bin(BinOp::Mul, ..))));
         // Outside an index or a domain, `,` separates items: never a stepped range.
         for exp in [
             format!("[{long}, {long}]"),

@@ -3,6 +3,7 @@
 use lang::ast::{Size, Spanned};
 use lang::id::Tid;
 use lang::parser::Token;
+use lang::stack_guard;
 use lang::typ::{GTyp, Typ, TypeVar, TypeVars};
 use pretty::DocAllocator;
 
@@ -62,6 +63,7 @@ impl<'doc> Formatter<'doc, '_> {
         (id_gap, doc)
     }
 
+    #[stack_guard]
     pub(crate) fn format_typ(&mut self, typ: &GTyp<Size>, end: usize) -> (TriviaGap, Doc<'doc>) {
         let alloc = self.alloc;
         let style = self.style;

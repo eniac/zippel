@@ -24,7 +24,7 @@ fn eq_weights<F: Field, S: Size, K: 2..S + 1>(instance x: [F; K]) -> [F; 2 ^ K] 
     let x_lo = x[0..K - 1];
     let a = x[K - 1];
     let prev = eq_weights(x_lo);
-    (prev * (1 - a)) ++ (prev * a)
+    prev * (1 - a) ++ prev * a
 }
 
 // Draw S taus.

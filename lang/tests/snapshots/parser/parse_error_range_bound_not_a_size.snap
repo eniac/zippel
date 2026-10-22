@@ -5,8 +5,8 @@ error: a range bound is a size: names, literals, `+ - * / ^` and parentheses
    ╭─[ test.zippel:1:54 ]
    │
  1 │ fn f<F: Field, M: Size>(instance x: [F; M]) -> F { x[f(M)..M] }
-   │                                                    ─┬──┬─  
-   │                                                     │  ╰─── a range bound is a size: names, literals, `+ - * / ^` and parentheses
-   │                                                     │      
-   │                                                     ╰────── while parsing this expression
+   │                                                    ────┬┬────  
+   │                                                        ╰─────── a range bound is a size: names, literals, `+ - * / ^` and parentheses
+   │                                                         │      
+   │                                                         ╰────── while parsing this expression
 ───╯

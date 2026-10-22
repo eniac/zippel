@@ -6,7 +6,7 @@ warning: unused variable `b`
    │
  1 │ proto p<F: Field>(instance a: F, instance b: F) where a == a { }
    │                                           ┬  
-   │                                           ╰── `b` is bound but never used
+   │                                           ╰── `b` is never used
    │                                           │  
    │                                           ╰── help: if this is intentional, prefix it with an underscore
 ───╯

@@ -25,12 +25,12 @@ use crate::diagnostic::Diagnostic;
 use crate::id::{Tid, Vid};
 use lang_derive::Diagnostic as DiagnosticDerive;
 
-/// W0001: A variable is bound but never used.
+/// W0001: A variable is never used.
 #[derive(DiagnosticDerive)]
 #[diag("unused variable `{$name}`", code = "W0001", warning, Semantic)]
 struct UnusedVariable {
     name: Vid,
-    #[span(label = "`{$name}` is bound but never used")]
+    #[span(label = "`{$name}` is never used")]
     #[suggestion(
         "if this is intentional, prefix it with an underscore",
         replacement = "_{$name}",
