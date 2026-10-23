@@ -7,4 +7,5 @@ ignore = [
     "experiments/src/pst13_upstream",
     "experiments/src/hyrax_upstream",
     "experiments/src/ark_spartan_upstream",
+    "experiments/src/libspartan_upstream",
 ]

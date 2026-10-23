@@ -2137,7 +2137,7 @@ impl<C: Backend> Value<C> {
     /// optimization counters so the fusion rate stays observable.
     ///
     /// # Panics
-    /// Panics unless `free_range` is exactly one variable at index `0`,
+    /// Panics unless `free_range` is exactly one variable within the input shape,
     /// `shape.output_num_vars` is `1`, and `tail_num_vars` equals
     /// `shape.input_num_vars - 1`. Also panics if `self` is not a polynomial, if
     /// `tail_num_vars` exceeds the `usize` bit width, or if a hypercube evaluation
@@ -2154,11 +2154,6 @@ impl<C: Backend> Value<C> {
             free_range.len(),
             1,
             "hypercube reduce fusion currently requires a single free variable"
-        );
-        assert_eq!(
-            free_range.start(),
-            0,
-            "hypercube reduce fusion currently requires the free variable to be at index 0"
         );
         assert_eq!(
             shape.output_num_vars, 1,
@@ -2180,7 +2175,8 @@ impl<C: Backend> Value<C> {
             other => panic!("Hypercube reduce expects a polynomial, found {}", other),
         };
 
-        let round = poly.sum_over_hypercube_tail(tail_num_vars, shape.max_degree);
+        let round =
+            poly.sum_over_hypercube_except(free_range.start(), tail_num_vars, shape.max_degree);
         record_canonical_sumcheck_rows_fused();
         Value::poly(round)
     }
@@ -5552,20 +5548,24 @@ mod value_tests {
             (5, Fr::from(7u64)),
         ];
         let vp = VirtualPolynomial::from_poly(PolyVariant::SparseMle { num_vars: 3, evals });
-        let round = vp.sum_over_hypercube_tail(2, 1);
-        for t_u in [0u64, 1, 2, 3, 4] {
-            let t = Fr::from(t_u);
-            let mut expected = Fr::zero();
-            for tail in 0..4usize {
-                let b0 = if tail & 1 == 1 { Fr::one() } else { Fr::zero() };
-                let b1 = if (tail >> 1) & 1 == 1 {
-                    Fr::one()
-                } else {
-                    Fr::zero()
-                };
-                expected += vp.evaluate_mv(&[t, b0, b1]).unwrap();
+        for free_variable in 0..3 {
+            let round = vp.sum_over_hypercube_except(free_variable, 2, 1);
+            for t_u in [0u64, 1, 2, 3, 4] {
+                let t = Fr::from(t_u);
+                let mut expected = Fr::zero();
+                for tail in 0..4usize {
+                    let b0 = if tail & 1 == 1 { Fr::one() } else { Fr::zero() };
+                    let b1 = if (tail >> 1) & 1 == 1 {
+                        Fr::one()
+                    } else {
+                        Fr::zero()
+                    };
+                    let mut point = vec![b0, b1];
+                    point.insert(free_variable, t);
+                    expected += vp.evaluate_mv(&point).unwrap();
+                }
+                assert_eq!(round.evaluate_uv(&t), expected, "round mismatch at t={t_u}");
             }
-            assert_eq!(round.evaluate_uv(&t), expected, "round mismatch at t={t_u}");
         }
     }
 

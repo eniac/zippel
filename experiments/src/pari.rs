@@ -657,3 +657,154 @@ pub mod native_side {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Cross-verification: on the native keys and at the same challenge, each
+// verifier accepts the other's proof. (The native verifier panics on a bad
+// proof, so only Zippel's is checked against a wrong one.)
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod cross_tests {
+    use crate::cross::{Challenges, Direction};
+    use crate::pari_upstream::{Pari, data_structures::Proof};
+    use ark_bls12_381::{Bls12_381, Fr, G1Affine};
+    use ark_ec::{AffineRepr, CurveGroup};
+    use ark_ff::{Field, One};
+    use ark_poly::EvaluationDomain;
+    use ark_std::rand::{SeedableRng, rngs::StdRng};
+    use backend::{ArkBls12_381, Value};
+
+    type V = Value<ArkBls12_381>;
+
+    fn g1(v: &V) -> G1Affine {
+        match v {
+            Value::G1(g) => g.into_affine(),
+            Value::G1Affine(g) => **g,
+            _ => panic!("expected G1, got {v}"),
+        }
+    }
+    fn scalar(v: &V) -> Fr {
+        match v {
+            Value::Scalar(f) => *f,
+            _ => panic!("expected a scalar, got {v}"),
+        }
+    }
+
+    #[test]
+    fn native_prove_then_zippel_verify() {
+        cross_verify(Direction::NativeToZippel);
+    }
+
+    #[test]
+    fn zippel_prove_then_native_verify() {
+        cross_verify(Direction::ZippelToNative);
+    }
+
+    fn cross_verify(direction: Direction) {
+        let mut rng = StdRng::seed_from_u64(7);
+        for (m_log, n_pub, m_witness) in [(3usize, 1usize, 4usize), (4, 2, 6), (5, 3, 10)] {
+            let inst = super::inst_gen::build_random::<Fr, _>(m_log, n_pub, m_witness, &mut rng);
+            let (k, n) = (inst.k, inst.instance_len);
+            let (pk, vk) = Pari::<Bls12_381>::keygen_from_sr1cs(
+                &inst.a_mat,
+                &inst.b_mat,
+                n,
+                inst.num_vars,
+                &mut rng,
+            );
+            let (x, w) = inst.z.split_at(n);
+            let omega = vk.domain.group_gen();
+            // Zippel's quotient basis has K entries; the native's K - 1 are all it uses.
+            let sigma_q = [pk.sigma_q_comm.clone(), vec![G1Affine::zero()]].concat();
+            let minus = |z: &[Fr], x: &[Fr]| z.iter().zip(x).map(|(z, x)| *z - x).collect();
+            let (prover, verifier) = crate::cross::compile::<ArkBls12_381>(
+                "pari",
+                &[("M", m_log), ("N", n), ("KMN", inst.num_vars - n)],
+            );
+            let inputs = crate::harness_inputs([
+                ("z_a_evals", Value::vec_scalar(inst.z_a_evals.clone())),
+                ("z_b_evals", Value::vec_scalar(inst.z_b_evals.clone())),
+                (
+                    "w_a_evals",
+                    Value::vec_scalar(minus(&inst.z_a_evals, &inst.x_a_evals)),
+                ),
+                (
+                    "w_b_evals",
+                    Value::vec_scalar(minus(&inst.z_b_evals, &inst.x_b_evals)),
+                ),
+                ("w", Value::vec_scalar(w.to_vec())),
+                ("x", Value::vec_scalar(x.to_vec())),
+                (
+                    "omegas",
+                    Value::vec_scalar((0..n).map(|i| omega.pow([(k - n + i) as u64])).collect()),
+                ),
+                ("sigma_w", Value::vec_g1_affine(pk.sigma.clone())),
+                ("sigma_q", Value::vec_g1_affine(sigma_q)),
+                ("sigma_a", Value::vec_g1_affine(pk.sigma_a.clone())),
+                ("sigma_b", Value::vec_g1_affine(pk.sigma_b.clone())),
+                (
+                    "sigma_q_prime",
+                    Value::vec_g1_affine(pk.sigma_q_opening.clone()),
+                ),
+                ("alpha_g", Value::g1_affine(vk.alpha_g)),
+                ("beta_g", Value::g1_affine(vk.beta_g)),
+                ("g_g1", Value::g1_affine(vk.g)),
+                ("delta2_h", Value::g2_affine(vk.delta_two_h)),
+                ("tau_h", Value::g2_affine(vk.tau_h)),
+                ("h_g2", Value::g2_affine(vk.h)),
+                (
+                    "k_inv",
+                    Value::Scalar(Fr::from(k as u64).inverse().unwrap()),
+                ),
+            ]);
+
+            match direction {
+                Direction::NativeToZippel => {
+                    let native =
+                        Pari::<Bls12_381>::prove_from_sr1cs(&inst.a_mat, &inst.b_mat, x, w, &pk)
+                            .unwrap();
+                    let native = vec![
+                        Value::g1_affine(native.t_g),
+                        Value::Scalar(native.v_a),
+                        Value::Scalar(native.v_b),
+                        Value::g1_affine(native.u_g),
+                    ];
+                    assert!(
+                        verifier
+                            .verify_with(
+                                native.clone(),
+                                crate::lend(&inputs),
+                                &mut Challenges::default()
+                            )
+                            .unwrap(),
+                        "K = {k}: Zippel rejects the native proof"
+                    );
+                    let mut wrong = native;
+                    wrong[1] = Value::Scalar(scalar(&wrong[1]) + Fr::one());
+                    assert!(
+                        !verifier
+                            .verify_with(wrong, crate::lend(&inputs), &mut Challenges::default())
+                            .unwrap(),
+                        "K = {k}: Zippel accepts a wrong v_a"
+                    );
+                }
+                Direction::ZippelToNative => {
+                    let ours = prover
+                        .prove_with(crate::lend(&inputs), &mut Challenges::default())
+                        .unwrap();
+                    assert_eq!(ours.len(), 4, "K = {k}: Zippel's message count");
+                    let proof = Proof {
+                        t_g: g1(&ours[0]),
+                        u_g: g1(&ours[3]),
+                        v_a: scalar(&ours[1]),
+                        v_b: scalar(&ours[2]),
+                    };
+                    assert!(
+                        Pari::<Bls12_381>::verify(&proof, &vk, &x[1..]),
+                        "K = {k}: the native verifier rejects Zippel's proof"
+                    );
+                }
+            }
+        }
+    }
+}

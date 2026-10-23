@@ -21,21 +21,21 @@ use merlin::Transcript;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
 pub struct R1CSProof<G: CurveGroup> {
-  comm_vars: PolyCommitment<G>,
-  sc_proof_phase1: ZKSumcheckInstanceProof<G>,
-  claims_phase2: (G, G, G, G),
-  pok_claims_phase2: (KnowledgeProof<G>, ProductProof<G>),
-  proof_eq_sc_phase1: EqualityProof<G>,
-  sc_proof_phase2: ZKSumcheckInstanceProof<G>,
-  comm_vars_at_ry: G,
-  proof_eval_vars_at_ry: PolyEvalProof<G>,
-  proof_eq_sc_phase2: EqualityProof<G>,
+  pub(crate) comm_vars: PolyCommitment<G>,
+  pub(crate) sc_proof_phase1: ZKSumcheckInstanceProof<G>,
+  pub(crate) claims_phase2: (G, G, G, G),
+  pub(crate) pok_claims_phase2: (KnowledgeProof<G>, ProductProof<G>),
+  pub(crate) proof_eq_sc_phase1: EqualityProof<G>,
+  pub(crate) sc_proof_phase2: ZKSumcheckInstanceProof<G>,
+  pub(crate) comm_vars_at_ry: G,
+  pub(crate) proof_eval_vars_at_ry: PolyEvalProof<G>,
+  pub(crate) proof_eq_sc_phase2: EqualityProof<G>,
 }
 
 pub struct R1CSSumcheckGens<G> {
-  gens_1: MultiCommitGens<G>,
-  gens_3: MultiCommitGens<G>,
-  gens_4: MultiCommitGens<G>,
+  pub(crate) gens_1: MultiCommitGens<G>,
+  pub(crate) gens_3: MultiCommitGens<G>,
+  pub(crate) gens_4: MultiCommitGens<G>,
 }
 
 // TODO: fix passing gens_1_ref
@@ -54,8 +54,8 @@ impl<G: CurveGroup> R1CSSumcheckGens<G> {
 }
 
 pub struct R1CSGens<G> {
-  gens_sc: R1CSSumcheckGens<G>,
-  gens_pc: PolyCommitmentGens<G>,
+  pub(crate) gens_sc: R1CSSumcheckGens<G>,
+  pub(crate) gens_pc: PolyCommitmentGens<G>,
 }
 
 impl<G: CurveGroup> R1CSGens<G> {
@@ -76,7 +76,7 @@ impl<G: CurveGroup> R1CSProof<G> {
     evals_Bz: &mut DensePolynomial<G::ScalarField>,
     evals_Cz: &mut DensePolynomial<G::ScalarField>,
     gens: &R1CSSumcheckGens<G>,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
     random_tape: &mut RandomTape<G>,
   ) -> (
     ZKSumcheckInstanceProof<G>,
@@ -118,7 +118,7 @@ impl<G: CurveGroup> R1CSProof<G> {
     evals_z: &mut DensePolynomial<G::ScalarField>,
     evals_ABC: &mut DensePolynomial<G::ScalarField>,
     gens: &R1CSSumcheckGens<G>,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
     random_tape: &mut RandomTape<G>,
   ) -> (
     ZKSumcheckInstanceProof<G>,
@@ -154,18 +154,18 @@ impl<G: CurveGroup> R1CSProof<G> {
     vars: Vec<G::ScalarField>,
     input: &[G::ScalarField],
     gens: &R1CSGens<G>,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
     random_tape: &mut RandomTape<G>,
   ) -> (R1CSProof<G>, Vec<G::ScalarField>, Vec<G::ScalarField>) {
     let timer_prove = Timer::new("R1CSProof::prove");
-    <Transcript as ProofTranscript<G>>::append_protocol_name(
+    <_ as ProofTranscript<G>>::append_protocol_name(
       transcript,
       R1CSProof::<G>::protocol_name(),
     );
 
     // we currently require the number of |inputs| + 1 to be at most number of vars
     assert!(input.len() < vars.len());
-    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"input", input);
+    <_ as ProofTranscript<G>>::append_scalars(transcript, b"input", input);
     let timer_commit = Timer::new("polycommit");
     let (poly_vars, comm_vars, blinds_vars) = {
       // create a multilinear polynomial using the supplied assignment for variables
@@ -198,7 +198,7 @@ impl<G: CurveGroup> R1CSProof<G> {
       inst.get_num_cons().log_2() as usize,
       z.len().log_2() as usize,
     );
-    let tau = <Transcript as ProofTranscript<G>>::challenge_vector(
+    let tau = <_ as ProofTranscript<G>>::challenge_vector(
       transcript,
       b"challenge_tau",
       num_rounds_x,
@@ -259,10 +259,10 @@ impl<G: CurveGroup> R1CSProof<G> {
       )
     };
 
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_Az_claim", &comm_Az_claim);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_Bz_claim", &comm_Bz_claim);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_Cz_claim", &comm_Cz_claim);
-    <Transcript as ProofTranscript<G>>::append_point(
+    <_ as ProofTranscript<G>>::append_point(transcript, b"comm_Az_claim", &comm_Az_claim);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"comm_Bz_claim", &comm_Bz_claim);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"comm_Cz_claim", &comm_Cz_claim);
+    <_ as ProofTranscript<G>>::append_point(
       transcript,
       b"comm_prod_Az_Bz_claims",
       &comm_prod_Az_Bz_claims,
@@ -284,9 +284,9 @@ impl<G: CurveGroup> R1CSProof<G> {
 
     let timer_sc_proof_phase2 = Timer::new("prove_sc_phase_two");
     // combine the three claims into a single claim
-    let r_A = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenege_Az");
-    let r_B = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenege_Bz");
-    let r_C = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenege_Cz");
+    let r_A = <_ as ProofTranscript<G>>::challenge_scalar(transcript, b"challenege_Az");
+    let r_B = <_ as ProofTranscript<G>>::challenge_scalar(transcript, b"challenege_Bz");
+    let r_C = <_ as ProofTranscript<G>>::challenge_scalar(transcript, b"challenege_Cz");
     let claim_phase2 = r_A * Az_claim + r_B * Bz_claim + r_C * Cz_claim;
     let blind_claim_phase2 = r_A * Az_blind + r_B * Bz_blind + r_C * Cz_blind;
 
@@ -376,15 +376,15 @@ impl<G: CurveGroup> R1CSProof<G> {
     num_cons: usize,
     input: &[G::ScalarField],
     evals: &(G::ScalarField, G::ScalarField, G::ScalarField),
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
     gens: &R1CSGens<G>,
   ) -> Result<(Vec<G::ScalarField>, Vec<G::ScalarField>), ProofVerifyError> {
-    <Transcript as ProofTranscript<G>>::append_protocol_name(
+    <_ as ProofTranscript<G>>::append_protocol_name(
       transcript,
       R1CSProof::<G>::protocol_name(),
     );
 
-    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"input", input);
+    <_ as ProofTranscript<G>>::append_scalars(transcript, b"input", input);
 
     let n = num_vars;
     // add the commitment to the verifier's transcript
@@ -395,7 +395,7 @@ impl<G: CurveGroup> R1CSProof<G> {
     let (num_rounds_x, num_rounds_y) = (num_cons.log_2() as usize, (2 * num_vars).log_2() as usize);
 
     // derive the verifier's challenge tau
-    let tau = <Transcript as ProofTranscript<G>>::challenge_vector(
+    let tau = <_ as ProofTranscript<G>>::challenge_vector(
       transcript,
       b"challenge_tau",
       num_rounds_x,
@@ -425,10 +425,10 @@ impl<G: CurveGroup> R1CSProof<G> {
       comm_prod_Az_Bz_claims,
     )?;
 
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_Az_claim", comm_Az_claim);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_Bz_claim", comm_Bz_claim);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_Cz_claim", comm_Cz_claim);
-    <Transcript as ProofTranscript<G>>::append_point(
+    <_ as ProofTranscript<G>>::append_point(transcript, b"comm_Az_claim", comm_Az_claim);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"comm_Bz_claim", comm_Bz_claim);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"comm_Cz_claim", comm_Cz_claim);
+    <_ as ProofTranscript<G>>::append_point(
       transcript,
       b"comm_prod_Az_Bz_claims",
       comm_prod_Az_Bz_claims,
@@ -449,9 +449,9 @@ impl<G: CurveGroup> R1CSProof<G> {
     )?;
 
     // derive three public challenges and then derive a joint claim
-    let r_A = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenege_Az");
-    let r_B = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenege_Bz");
-    let r_C = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenege_Cz");
+    let r_A = <_ as ProofTranscript<G>>::challenge_scalar(transcript, b"challenege_Az");
+    let r_B = <_ as ProofTranscript<G>>::challenge_scalar(transcript, b"challenege_Bz");
+    let r_C = <_ as ProofTranscript<G>>::challenge_scalar(transcript, b"challenege_Cz");
 
     // r_A * comm_Az_claim + r_B * comm_Bz_claim + r_C * comm_Cz_claim;
     let scalars = vec![r_A.into_bigint(), r_B.into_bigint(), r_C.into_bigint()];

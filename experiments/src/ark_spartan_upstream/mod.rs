@@ -11,23 +11,23 @@
 
 // Parallel is now unconditional (workspace-wide `parallel` feature).
 
-mod commitments;
+pub(crate) mod commitments;
 // `pub` so `bin/commit_head_to_head.rs` can time ark-spartan's actual
 // `DensePolynomial::commit` in isolation against zippel's raw
 // per-row-MSM pattern (Phase-0 gap re-attribution experiment).
 pub mod dense_mlpoly;
 mod errors;
 mod math;
-mod nizk;
+pub(crate) mod nizk;
 mod product_tree;
 mod r1csinstance;
-mod r1csproof;
+pub(crate) mod r1csproof;
 // `pub` for the same head-to-head bin (blinds tape for `commit`).
 pub mod random;
 mod sparse_mlpoly;
-mod sumcheck;
+pub(crate) mod sumcheck;
 mod timer;
-mod transcript;
+pub(crate) mod transcript;
 mod unipoly;
 
 use ark_ec::CurveGroup;
@@ -325,14 +325,14 @@ impl<G: CurveGroup> SNARK<G> {
     vars: VarsAssignment<G::ScalarField>,
     inputs: &InputsAssignment<G::ScalarField>,
     gens: &SNARKGens<G>,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
   ) -> Self {
     let timer_prove = Timer::new("SNARK::prove");
 
     // we create a Transcript object seeded with a random F
     // to aid the prover produce its randomness
     let mut random_tape = RandomTape::<G>::new(b"proof");
-    <Transcript as ProofTranscript<G>>::append_protocol_name(
+    <_ as ProofTranscript<G>>::append_protocol_name(
       transcript,
       SNARK::<G>::protocol_name(),
     );
@@ -374,9 +374,9 @@ impl<G: CurveGroup> SNARK<G> {
     let timer_eval = Timer::new("eval_sparse_polys");
     let inst_evals = {
       let (Ar, Br, Cr) = inst.inst.evaluate(&rx, &ry);
-      <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"Ar_claim", &Ar);
-      <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"Ar_claim", &Br);
-      <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"Ar_claim", &Cr);
+      <_ as ProofTranscript<G>>::append_scalar(transcript, b"Ar_claim", &Ar);
+      <_ as ProofTranscript<G>>::append_scalar(transcript, b"Ar_claim", &Br);
+      <_ as ProofTranscript<G>>::append_scalar(transcript, b"Ar_claim", &Cr);
       (Ar, Br, Cr)
     };
     timer_eval.stop();
@@ -412,11 +412,11 @@ impl<G: CurveGroup> SNARK<G> {
     &self,
     comm: &ComputationCommitment<G>,
     input: &InputsAssignment<G::ScalarField>,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
     gens: &SNARKGens<G>,
   ) -> Result<(), ProofVerifyError> {
     let timer_verify = Timer::new("SNARK::verify");
-    <Transcript as ProofTranscript<G>>::append_protocol_name(
+    <_ as ProofTranscript<G>>::append_protocol_name(
       transcript,
       SNARK::<G>::protocol_name(),
     );
@@ -438,9 +438,9 @@ impl<G: CurveGroup> SNARK<G> {
 
     let timer_eval_proof = Timer::new("verify_eval_proof");
     let (Ar, Br, Cr) = &self.inst_evals;
-    <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"Ar_claim", Ar);
-    <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"Ar_claim", Br);
-    <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"Ar_claim", Cr);
+    <_ as ProofTranscript<G>>::append_scalar(transcript, b"Ar_claim", Ar);
+    <_ as ProofTranscript<G>>::append_scalar(transcript, b"Ar_claim", Br);
+    <_ as ProofTranscript<G>>::append_scalar(transcript, b"Ar_claim", Cr);
     self.r1cs_eval_proof.verify(
       &comm.comm,
       &rx,
@@ -457,7 +457,7 @@ impl<G: CurveGroup> SNARK<G> {
 
 /// `NIZKGens` holds public parameters for producing and verifying proofs with the Spartan NIZK
 pub struct NIZKGens<G> {
-  gens_r1cs_sat: R1CSGens<G>,
+  pub(crate) gens_r1cs_sat: R1CSGens<G>,
 }
 
 impl<G: CurveGroup> NIZKGens<G> {
@@ -479,8 +479,8 @@ impl<G: CurveGroup> NIZKGens<G> {
 /// `NIZK` holds a proof produced by Spartan NIZK
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
 pub struct NIZK<G: CurveGroup> {
-  r1cs_sat_proof: R1CSProof<G>,
-  r: (Vec<G::ScalarField>, Vec<G::ScalarField>),
+  pub(crate) r1cs_sat_proof: R1CSProof<G>,
+  pub(crate) r: (Vec<G::ScalarField>, Vec<G::ScalarField>),
 }
 
 impl<G: CurveGroup> NIZK<G> {
@@ -494,14 +494,14 @@ impl<G: CurveGroup> NIZK<G> {
     vars: VarsAssignment<G::ScalarField>,
     input: &InputsAssignment<G::ScalarField>,
     gens: &NIZKGens<G>,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
   ) -> Self {
     let timer_prove = Timer::new("NIZK::prove");
     // we create a Transcript object seeded with a random F
     // to aid the prover produce its randomness
     let mut random_tape = RandomTape::new(b"proof");
 
-    <Transcript as ProofTranscript<G>>::append_protocol_name(
+    <_ as ProofTranscript<G>>::append_protocol_name(
       transcript,
       NIZK::<G>::protocol_name(),
     );
@@ -549,12 +549,12 @@ impl<G: CurveGroup> NIZK<G> {
     &self,
     inst: &Instance<G::ScalarField>,
     input: &InputsAssignment<G::ScalarField>,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
     gens: &NIZKGens<G>,
   ) -> Result<(), ProofVerifyError> {
     let timer_verify = Timer::new("NIZK::verify");
 
-    <Transcript as ProofTranscript<G>>::append_protocol_name(
+    <_ as ProofTranscript<G>>::append_protocol_name(
       transcript,
       NIZK::<G>::protocol_name(),
     );

@@ -6,8 +6,6 @@ use backend::{ATyp, Backend, Field, SelectedEvalShape, Value};
 use error::EvalError;
 use lang::ast::{BinOp, Exclusion};
 use rand::RngCore;
-use rand::SeedableRng;
-use rand::rngs::StdRng;
 use rayon::prelude::*;
 use share::Ctx;
 use std::collections::HashMap;
@@ -266,7 +264,7 @@ fn verify_domain_is_canonical_coordinates<C: Backend>(
 fn try_match_canonical_hypercube_ast<C: Backend>(
     fixed: &HOp<C>,
     env: &HashMap<Ref, Value<C>>,
-    rng: &mut impl rand::RngCore,
+    rng: &mut impl Sampler<C>,
     loop_params: &[Value<C>],
     check_sink: &mut Vec<bool>,
 ) -> Result<bool, EvalError> {
@@ -312,7 +310,7 @@ fn try_match_canonical_hypercube_ast<C: Backend>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn verify_hypercube_coordinates<C: Backend, R: RngCore>(
+fn verify_hypercube_coordinates<C: Backend, R: Sampler<C>>(
     fixed: &HOp<C>,
     env: &HashMap<Ref, Value<C>>,
     rng: &mut R,
@@ -347,14 +345,14 @@ fn verify_hypercube_coordinates<C: Backend, R: RngCore>(
     Ok(true)
 }
 
-/// Sumcheck fast path: detect `reduce(+, [eval<0>(poly, loop_param) for _ in hypercube])`
+/// Sumcheck fast path: detect `reduce(+, [eval<k>(poly, loop_param) for _ in hypercube])`
 /// and route to the fused hypercube reduction kernel.
 ///
 /// Pattern requirements (all checked structurally on the Op tree, not on values):
 ///   1. op == BinOp::Add
 ///   2. body == Op::Evaluate(poly, Some(range), Some(fixed))
 ///   3. fixed must reference this ReduceMap's own loop parameter
-///   4. range.len() == 1 && range.start == 0  (canonical eval<0>)
+///   4. range.len() == 1 (one free variable)
 ///   5. domain type is Vec(_, n) where n == 2^k for some k  (complete hypercube)
 ///
 /// Returns `Ok(None)` if the structural pattern is not matched (the caller
@@ -374,7 +372,7 @@ fn try_eval_reduce_map_fused_hypercube<C, R>(
 ) -> Result<Option<Value<C>>, EvalError>
 where
     C: Backend,
-    R: RngCore,
+    R: Sampler<C>,
 {
     // (1) Must be additive reduction
     if op != BinOp::Add {
@@ -405,8 +403,8 @@ where
         return Ok(None);
     }
 
-    // (4) Canonical eval<0>: single free variable at position 0
-    if range.len() != 1 || range.start() != 0 {
+    // (4) Single free variable
+    if range.len() != 1 {
         return Ok(None);
     }
 
@@ -495,6 +493,49 @@ fn is_vector_value<C: Backend>(v: &Value<C>) -> bool {
     )
 }
 
+/// Where `Op::Random` (and, outside a run, `Op::Challenge`) draws from: any RNG,
+/// or [`PureBody`] where nothing may sample.
+pub trait Sampler<C: Backend> {
+    /// A uniformly random value of type `typ`, resampled while `exclusion`
+    /// excludes it.
+    ///
+    /// # Errors
+    /// None for an RNG; the result leaves room for a sampler that can fail.
+    fn sample(
+        &mut self,
+        typ: &ATyp,
+        exclusion: Option<&Exclusion<Value<C>, usize>>,
+    ) -> Result<Value<C>, EvalError>;
+}
+
+impl<C: Backend, R: RngCore> Sampler<C> for R {
+    fn sample(
+        &mut self,
+        typ: &ATyp,
+        exclusion: Option<&Exclusion<Value<C>, usize>>,
+    ) -> Result<Value<C>, EvalError> {
+        let mut value = Value::random(self, typ);
+        while exclusion.is_some_and(|x| value.is_excluded_by(x)) {
+            value = Value::random(self, typ);
+        }
+        Ok(value)
+    }
+}
+
+/// The sampler of what never samples (a loop body, which lowering keeps pure;
+/// a challenge's exclusion, a lookup): drawing is a bug.
+pub(crate) struct PureBody;
+
+impl<C: Backend> Sampler<C> for PureBody {
+    fn sample(
+        &mut self,
+        _: &ATyp,
+        _: Option<&Exclusion<Value<C>, usize>>,
+    ) -> Result<Value<C>, EvalError> {
+        unreachable!("a loop body or an exclusion samples")
+    }
+}
+
 /// Evaluate a closed `GOp` in `env`, drawing randomness from `rng`.
 ///
 /// Thin wrapper over [`eval_op_with_loop_params`] with an empty loop-parameter
@@ -519,7 +560,7 @@ pub fn eval_op<C, R>(
 ) -> Result<Value<C>, EvalError>
 where
     C: Backend,
-    R: RngCore,
+    R: Sampler<C>,
 {
     eval_op_with_loop_params(op, env, rng, &[], check_sink)
 }
@@ -536,7 +577,7 @@ pub fn eval_op_with_loop_params<C, R>(
 ) -> Result<Value<C>, EvalError>
 where
     C: Backend,
-    R: RngCore,
+    R: Sampler<C>,
 {
     match op {
         Op::Value(v) => Ok(v.clone()),
@@ -600,11 +641,7 @@ where
                     })
                 })
                 .transpose()?;
-            let mut value = Value::random(rng, typ);
-            while exclusion.as_ref().is_some_and(|x| value.is_excluded_by(x)) {
-                value = Value::random(rng, typ);
-            }
-            Ok(value)
+            rng.sample(typ, exclusion.as_ref())
         }
         Op::Evaluate(p, None, None) => {
             let p_val = eval_op_with_loop_params(p, env, rng, loop_params, check_sink)?;
@@ -737,11 +774,10 @@ fn eval_loop_body_each<C: Backend>(
         .map(|elem| {
             let mut params: Vec<Value<C>> = loop_params.to_vec();
             params.push(elem);
-            let mut rng = StdRng::seed_from_u64(0);
-            // Loop bodies are pure templates — no Check nodes — so the
-            // check_sink is a throwaway.
+            // Loop bodies are pure templates — no samples, no Check nodes —
+            // so neither draws nor checks have anywhere to go.
             let mut check_sink = Vec::new();
-            eval_op_with_loop_params(body, env, &mut rng, &params, &mut check_sink)
+            eval_op_with_loop_params(body, env, &mut PureBody, &params, &mut check_sink)
         })
         .collect()
 }

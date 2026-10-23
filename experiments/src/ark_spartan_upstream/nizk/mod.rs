@@ -8,15 +8,15 @@ use ark_ec::CurveGroup;
 use ark_serialize::*;
 use bullet::BulletReductionProof;
 use merlin::Transcript;
-mod bullet;
+pub(crate) mod bullet;
 use ark_ff::PrimeField;
 use ark_std::Zero;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
 pub struct KnowledgeProof<G: CurveGroup> {
-  alpha: G,
-  z1: G::ScalarField,
-  z2: G::ScalarField,
+  pub(crate) alpha: G,
+  pub(crate) z1: G::ScalarField,
+  pub(crate) z2: G::ScalarField,
 }
 
 impl<G: CurveGroup> KnowledgeProof<G> {
@@ -26,12 +26,12 @@ impl<G: CurveGroup> KnowledgeProof<G> {
 
   pub fn prove(
     gens_n: &MultiCommitGens<G>,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
     random_tape: &mut RandomTape<G>,
     x: &G::ScalarField,
     r: &G::ScalarField,
   ) -> (KnowledgeProof<G>, G) {
-    <Transcript as ProofTranscript<G>>::append_protocol_name(
+    <_ as ProofTranscript<G>>::append_protocol_name(
       transcript,
       KnowledgeProof::<G>::protocol_name(),
     );
@@ -41,12 +41,12 @@ impl<G: CurveGroup> KnowledgeProof<G> {
     let t2 = random_tape.random_scalar(b"t2");
 
     let C = x.commit(r, gens_n);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"C", &C);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"C", &C);
 
     let alpha = t1.commit(&t2, gens_n);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"alpha", &alpha);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"alpha", &alpha);
 
-    let c = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
+    let c = <_ as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
 
     let z1 = *x * c + t1;
     let z2 = *r * c + t2;
@@ -57,18 +57,18 @@ impl<G: CurveGroup> KnowledgeProof<G> {
   pub fn verify(
     &self,
     gens_n: &MultiCommitGens<G>,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
     C: &G,
   ) -> Result<(), ProofVerifyError> {
-    <Transcript as ProofTranscript<G>>::append_protocol_name(
+    <_ as ProofTranscript<G>>::append_protocol_name(
       transcript,
       KnowledgeProof::<G>::protocol_name(),
     );
 
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"C", C);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"alpha", &self.alpha);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"C", C);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"alpha", &self.alpha);
 
-    let c = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
+    let c = <_ as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
 
     let lhs = self.z1.commit(&self.z2, gens_n);
     let rhs = C.mul_bigint(c.into_bigint()) + self.alpha;
@@ -83,8 +83,8 @@ impl<G: CurveGroup> KnowledgeProof<G> {
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
 pub struct EqualityProof<G: CurveGroup> {
-  alpha: G,
-  z: G::ScalarField,
+  pub(crate) alpha: G,
+  pub(crate) z: G::ScalarField,
 }
 
 impl<G: CurveGroup> EqualityProof<G> {
@@ -94,14 +94,14 @@ impl<G: CurveGroup> EqualityProof<G> {
 
   pub fn prove(
     gens_n: &MultiCommitGens<G>,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
     random_tape: &mut RandomTape<G>,
     v1: &G::ScalarField,
     s1: &G::ScalarField,
     v2: &G::ScalarField,
     s2: &G::ScalarField,
   ) -> (Self, G, G) {
-    <Transcript as ProofTranscript<G>>::append_protocol_name(
+    <_ as ProofTranscript<G>>::append_protocol_name(
       transcript,
       EqualityProof::<G>::protocol_name(),
     );
@@ -110,16 +110,16 @@ impl<G: CurveGroup> EqualityProof<G> {
     let r = random_tape.random_scalar(b"r");
 
     let C1 = v1.commit(s1, gens_n);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"C1", &C1);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"C1", &C1);
 
     let C2 = v2.commit(s2, gens_n);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"C2", &C2);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"C2", &C2);
 
     let alpha = gens_n.h.mul_bigint(r.into_bigint());
 
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"alpha", &alpha);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"alpha", &alpha);
 
-    let c = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
+    let c = <_ as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
 
     let z = c * (*s1 - *s2) + r;
 
@@ -129,20 +129,20 @@ impl<G: CurveGroup> EqualityProof<G> {
   pub fn verify(
     &self,
     gens_n: &MultiCommitGens<G>,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
     C1: &G,
     C2: &G,
   ) -> Result<(), ProofVerifyError> {
-    <Transcript as ProofTranscript<G>>::append_protocol_name(
+    <_ as ProofTranscript<G>>::append_protocol_name(
       transcript,
       EqualityProof::<G>::protocol_name(),
     );
 
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"C1", C1);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"C2", C2);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"alpha", &self.alpha);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"C1", C1);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"C2", C2);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"alpha", &self.alpha);
 
-    let c = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
+    let c = <_ as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
 
     let rhs = {
       let C = *C1 - *C2;
@@ -161,10 +161,10 @@ impl<G: CurveGroup> EqualityProof<G> {
 
 #[derive(Debug)]
 pub struct ProductProof<G: CurveGroup> {
-  alpha: G,
-  beta: G,
-  delta: G,
-  z: [G::ScalarField; 5],
+  pub(crate) alpha: G,
+  pub(crate) beta: G,
+  pub(crate) delta: G,
+  pub(crate) z: [G::ScalarField; 5],
 }
 
 // Ported to arkworks 0.6 CanonicalSerialize/Deserialize API:
@@ -236,7 +236,7 @@ impl<G: CurveGroup> ProductProof<G> {
 
   pub fn prove(
     gens_n: &MultiCommitGens<G>,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
     random_tape: &mut RandomTape<G>,
     x: &G::ScalarField,
     rX: &G::ScalarField,
@@ -245,7 +245,7 @@ impl<G: CurveGroup> ProductProof<G> {
     z: &G::ScalarField,
     rZ: &G::ScalarField,
   ) -> (Self, G, G, G) {
-    <Transcript as ProofTranscript<G>>::append_protocol_name(
+    <_ as ProofTranscript<G>>::append_protocol_name(
       transcript,
       ProductProof::<G>::protocol_name(),
     );
@@ -258,19 +258,19 @@ impl<G: CurveGroup> ProductProof<G> {
     let b5 = random_tape.random_scalar(b"b5");
 
     let X = x.commit(rX, gens_n);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"X", &X);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"X", &X);
 
     let Y = y.commit(rY, gens_n);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"Y", &Y);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"Y", &Y);
 
     let Z = z.commit(rZ, gens_n);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"Z", &Z);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"Z", &Z);
 
     let alpha = b1.commit(&b2, gens_n);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"alpha", &alpha);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"alpha", &alpha);
 
     let beta = b3.commit(&b4, gens_n);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"beta", &beta);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"beta", &beta);
 
     let delta = {
       let gens_X = &MultiCommitGens {
@@ -280,9 +280,9 @@ impl<G: CurveGroup> ProductProof<G> {
       };
       b3.commit(&b5, gens_X)
     };
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"delta", &delta);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"delta", &delta);
 
-    let c = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
+    let c = <_ as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
 
     let z1 = b1 + c * x;
     let z2 = b2 + c * rX;
@@ -321,22 +321,22 @@ impl<G: CurveGroup> ProductProof<G> {
   pub fn verify(
     &self,
     gens_n: &MultiCommitGens<G>,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
     X: &G,
     Y: &G,
     Z: &G,
   ) -> Result<(), ProofVerifyError> {
-    <Transcript as ProofTranscript<G>>::append_protocol_name(
+    <_ as ProofTranscript<G>>::append_protocol_name(
       transcript,
       ProductProof::<G>::protocol_name(),
     );
 
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"X", X);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"Y", Y);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"Z", Z);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"alpha", &self.alpha);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"beta", &self.beta);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"delta", &self.delta);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"X", X);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"Y", Y);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"Z", Z);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"alpha", &self.alpha);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"beta", &self.beta);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"delta", &self.delta);
 
     let z1 = self.z[0];
     let z2 = self.z[1];
@@ -344,7 +344,7 @@ impl<G: CurveGroup> ProductProof<G> {
     let z4 = self.z[3];
     let z5 = self.z[4];
 
-    let c = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
+    let c = <_ as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
 
     if ProductProof::check_equality(&self.alpha, X, &c, gens_n, &z1, &z2)
       && ProductProof::check_equality(&self.beta, Y, &c, gens_n, &z3, &z4)
@@ -370,11 +370,11 @@ impl<G: CurveGroup> ProductProof<G> {
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DotProductProof<G: CurveGroup> {
-  delta: G,
-  beta: G,
-  z: Vec<G::ScalarField>,
-  z_delta: G::ScalarField,
-  z_beta: G::ScalarField,
+  pub(crate) delta: G,
+  pub(crate) beta: G,
+  pub(crate) z: Vec<G::ScalarField>,
+  pub(crate) z_delta: G::ScalarField,
+  pub(crate) z_beta: G::ScalarField,
 }
 
 impl<G: CurveGroup> DotProductProof<G> {
@@ -390,7 +390,7 @@ impl<G: CurveGroup> DotProductProof<G> {
   pub fn prove(
     gens_1: &MultiCommitGens<G>,
     gens_n: &MultiCommitGens<G>,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
     random_tape: &mut RandomTape<G>,
     x_vec: &[G::ScalarField],
     blind_x: &G::ScalarField,
@@ -398,7 +398,7 @@ impl<G: CurveGroup> DotProductProof<G> {
     y: &G::ScalarField,
     blind_y: &G::ScalarField,
   ) -> (Self, G, G) {
-    <Transcript as ProofTranscript<G>>::append_protocol_name(
+    <_ as ProofTranscript<G>>::append_protocol_name(
       transcript,
       DotProductProof::<G>::protocol_name(),
     );
@@ -414,22 +414,22 @@ impl<G: CurveGroup> DotProductProof<G> {
     let r_beta = random_tape.random_scalar(b"r_beta");
 
     let Cx = Commitments::batch_commit(x_vec, blind_x, gens_n);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"Cx", &Cx);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"Cx", &Cx);
 
     let Cy = y.commit(blind_y, gens_1);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"Cy", &Cy);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"Cy", &Cy);
 
-    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"a", a_vec);
+    <_ as ProofTranscript<G>>::append_scalars(transcript, b"a", a_vec);
 
     let delta = Commitments::batch_commit(&d_vec, &r_delta, gens_n);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"delta", &delta);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"delta", &delta);
 
     let dotproduct_a_d = DotProductProof::<G>::compute_dotproduct(a_vec, &d_vec);
 
     let beta = dotproduct_a_d.commit(&r_beta, gens_1);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"beta", &beta);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"beta", &beta);
 
-    let c = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
+    let c = <_ as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
 
     let z = (0..d_vec.len())
       .map(|i| c * x_vec[i] + d_vec[i])
@@ -455,7 +455,7 @@ impl<G: CurveGroup> DotProductProof<G> {
     &self,
     gens_1: &MultiCommitGens<G>,
     gens_n: &MultiCommitGens<G>,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
     a: &[G::ScalarField],
     Cx: &G,
     Cy: &G,
@@ -463,19 +463,19 @@ impl<G: CurveGroup> DotProductProof<G> {
     assert_eq!(gens_n.n, a.len());
     assert_eq!(gens_1.n, 1);
 
-    <Transcript as ProofTranscript<G>>::append_protocol_name(
+    <_ as ProofTranscript<G>>::append_protocol_name(
       transcript,
       DotProductProof::<G>::protocol_name(),
     );
 
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"Cx", Cx);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"Cy", Cy);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"Cx", Cx);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"Cy", Cy);
 
-    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"a", a);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"delta", &self.delta);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"beta", &self.beta);
+    <_ as ProofTranscript<G>>::append_scalars(transcript, b"a", a);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"delta", &self.delta);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"beta", &self.beta);
 
-    let c = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
+    let c = <_ as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
 
     let mut result = Cx.mul_bigint(c.into_bigint()) + self.delta
       == Commitments::batch_commit(self.z.as_ref(), &self.z_delta, gens_n);
@@ -506,11 +506,11 @@ impl<G: CurveGroup> DotProductProofGens<G> {
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DotProductProofLog<G: CurveGroup> {
-  bullet_reduction_proof: BulletReductionProof<G>,
-  delta: G,
-  beta: G,
-  z1: G::ScalarField,
-  z2: G::ScalarField,
+  pub(crate) bullet_reduction_proof: BulletReductionProof<G>,
+  pub(crate) delta: G,
+  pub(crate) beta: G,
+  pub(crate) z1: G::ScalarField,
+  pub(crate) z2: G::ScalarField,
 }
 
 impl<G: CurveGroup> DotProductProofLog<G> {
@@ -525,7 +525,7 @@ impl<G: CurveGroup> DotProductProofLog<G> {
 
   pub fn prove(
     gens: &DotProductProofGens<G>,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
     random_tape: &mut RandomTape<G>,
     x_vec: &[G::ScalarField],
     blind_x: &G::ScalarField,
@@ -533,7 +533,7 @@ impl<G: CurveGroup> DotProductProofLog<G> {
     y: &G::ScalarField,
     blind_y: &G::ScalarField,
   ) -> (Self, G, G) {
-    <Transcript as ProofTranscript<G>>::append_protocol_name(
+    <_ as ProofTranscript<G>>::append_protocol_name(
       transcript,
       DotProductProofLog::<G>::protocol_name(),
     );
@@ -555,12 +555,12 @@ impl<G: CurveGroup> DotProductProofLog<G> {
     };
 
     let Cx = Commitments::batch_commit(x_vec, blind_x, &gens.gens_n);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"Cx", &Cx);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"Cx", &Cx);
 
     let Cy = y.commit(blind_y, &gens.gens_1);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"Cy", &Cy);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"Cy", &Cy);
 
-    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"a", a_vec);
+    <_ as ProofTranscript<G>>::append_scalars(transcript, b"a", a_vec);
 
     let blind_Gamma = *blind_x + *blind_y;
     let (bullet_reduction_proof, _Gamma_hat, x_hat, a_hat, g_hat, rhat_Gamma) =
@@ -584,12 +584,12 @@ impl<G: CurveGroup> DotProductProofLog<G> {
       };
       d.commit(&r_delta, &gens_hat)
     };
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"delta", &delta);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"delta", &delta);
 
     let beta = d.commit(&r_beta, &gens.gens_1);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"beta", &beta);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"beta", &beta);
 
-    let c = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
+    let c = <_ as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
 
     let z1 = d + c * y_hat;
     let z2 = a_hat * (c * rhat_Gamma + r_beta) + r_delta;
@@ -611,7 +611,7 @@ impl<G: CurveGroup> DotProductProofLog<G> {
     &self,
     n: usize,
     gens: &DotProductProofGens<G>,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
     a: &[G::ScalarField],
     Cx: &G,
     Cy: &G,
@@ -619,13 +619,13 @@ impl<G: CurveGroup> DotProductProofLog<G> {
     assert_eq!(gens.n, n);
     assert_eq!(a.len(), n);
 
-    <Transcript as ProofTranscript<G>>::append_protocol_name(
+    <_ as ProofTranscript<G>>::append_protocol_name(
       transcript,
       DotProductProofLog::<G>::protocol_name(),
     );
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"Cx", Cx);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"Cy", Cy);
-    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"a", a);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"Cx", Cx);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"Cy", Cy);
+    <_ as ProofTranscript<G>>::append_scalars(transcript, b"a", a);
 
     let Gamma = *Cx + *Cy;
 
@@ -634,10 +634,10 @@ impl<G: CurveGroup> DotProductProofLog<G> {
         .bullet_reduction_proof
         .verify(n, a, transcript, &Gamma, &gens.gens_n.G)?;
 
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"delta", &self.delta);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"beta", &self.beta);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"delta", &self.delta);
+    <_ as ProofTranscript<G>>::append_point(transcript, b"beta", &self.beta);
 
-    let c = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
+    let c = <_ as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
 
     let c_s = &c;
     let beta_s = self.beta;

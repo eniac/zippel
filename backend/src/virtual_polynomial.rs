@@ -246,11 +246,11 @@ fn trim_trailing_zero_coeffs<F: Field>(coeffs: &mut Vec<F>) {
 }
 
 /// Tails at or above this count are summed in parallel by
-/// [`VirtualPolynomial::sum_over_hypercube_tail`].
+/// [`VirtualPolynomial::sum_over_hypercube_except`].
 const PARALLEL_TAIL_THRESHOLD: usize = 1024;
 
-/// A multilinear factor's evaluation table, read in pairs `(f(0, b), f(1, b))`
-/// for a tail `b` (the first variable is the low bit of an index).
+/// A multilinear factor's evaluation table, read at paired indices that differ
+/// only in the selected variable's bit.
 #[derive(Clone, Copy)]
 enum MleTable<'a, F> {
     Dense(&'a [F]),
@@ -273,13 +273,12 @@ fn sparse_mle_map<F: Field>(poly: &PolyVariant<F>) -> Option<HashMap<usize, F>> 
 
 impl<F: Field> MleTable<'_, F> {
     #[inline]
-    fn pair(&self, tail: usize) -> (F, F) {
-        let base = tail << 1;
+    fn pair(&self, (zero, one): (usize, usize)) -> (F, F) {
         match self {
-            MleTable::Dense(evals) => (evals[base], evals[base | 1]),
+            MleTable::Dense(evals) => (evals[zero], evals[one]),
             MleTable::Sparse(map) => {
                 let at = |i| map.get(&i).copied().unwrap_or_else(F::zero);
-                (at(base), at(base | 1))
+                (at(zero), at(one))
             }
         }
     }
@@ -308,14 +307,14 @@ fn product_coeffs_at_tail<F: Field>(
     coefficient: F,
     coefficient_is_one: bool,
     factors: &[MleTable<F>],
-    tail: usize,
+    pair: (usize, usize),
     cap: usize,
 ) -> usize {
     // With a unit coefficient, start from the first factor rather than
     // multiplying it into `[1]`.
     let (mut len, rest) = match factors.split_first() {
         Some((first, rest)) if coefficient_is_one && cap >= 2 => {
-            let (v0, v1) = first.pair(tail);
+            let (v0, v1) = first.pair(pair);
             term[0] = v0;
             term[1] = v1 - v0;
             (2, rest)
@@ -326,7 +325,7 @@ fn product_coeffs_at_tail<F: Field>(
         }
     };
     for f in rest {
-        let (v0, v1) = f.pair(tail);
+        let (v0, v1) = f.pair(pair);
         len = mul_linear_assign(term, len, v0, v1 - v0, cap);
     }
     len
@@ -612,8 +611,8 @@ impl<F: Field> VirtualPolynomial<F> {
         result
     }
 
-    /// The sumcheck round polynomial over the first variable,
-    /// `g(t) = Σ_{b ∈ {0,1}^tail_num_vars} self(t, b)`, for `self` in
+    /// The sumcheck round polynomial over `free_variable`, summing over the
+    /// Boolean assignments to all other variables, for `self` in
     /// `tail_num_vars + 1` variables; `max_degree` is the declared degree
     /// bound, raised to [`Self::degree_bound`] if that is larger.
     ///
@@ -622,25 +621,34 @@ impl<F: Field> VirtualPolynomial<F> {
     /// and interpolated.
     ///
     /// # Panics
-    /// Panics if `tail_num_vars` exceeds the `usize` bit width, or if an
-    /// evaluation fails because a factor has the wrong arity.
-    pub fn sum_over_hypercube_tail(&self, tail_num_vars: usize, max_degree: usize) -> Self {
+    /// Panics if `free_variable > tail_num_vars`, if `tail_num_vars` exceeds
+    /// the `usize` bit width, or if a factor has the wrong arity.
+    pub fn sum_over_hypercube_except(
+        &self,
+        free_variable: usize,
+        tail_num_vars: usize,
+        max_degree: usize,
+    ) -> Self {
+        assert!(free_variable <= tail_num_vars);
         let tail_count = 1usize
             .checked_shl(tail_num_vars as u32)
             .expect("hypercube tail arity exceeds usize bit width");
         let degree = max_degree.max(self.degree_bound());
         let coeffs = self
-            .tail_sum_of_mle_products(tail_num_vars, tail_count, degree)
-            .unwrap_or_else(|| self.tail_sum_by_interpolation(tail_num_vars, tail_count, degree));
+            .tail_sum_of_mle_products(free_variable, tail_num_vars, tail_count, degree)
+            .unwrap_or_else(|| {
+                self.tail_sum_by_interpolation(free_variable, tail_num_vars, tail_count, degree)
+            });
         Self::univariate(coeffs)
     }
 
-    /// [`Self::sum_over_hypercube_tail`] when every factor is a multilinear
+    /// [`Self::sum_over_hypercube_except`] when every factor is a multilinear
     /// extension in `tail_num_vars + 1` variables: each product contributes
     /// `c · Π ((1 - t)·f(0, b) + t·f(1, b))` for every tail `b`, kept to
     /// `degree + 1` coefficients. `None` for any other factor.
     fn tail_sum_of_mle_products(
         &self,
+        free_variable: usize,
         tail_num_vars: usize,
         tail_count: usize,
         degree: usize,
@@ -658,6 +666,8 @@ impl<F: Field> VirtualPolynomial<F> {
             .map(|poly| sparse_mle_map(poly))
             .collect();
         let cap = degree + 1;
+        let free_bit = 1usize << free_variable;
+        let low_mask = free_bit - 1;
         let mut total = vec![F::zero(); cap];
         for (coefficient, indices) in &self.products {
             let factors: Vec<MleTable<F>> = indices
@@ -672,12 +682,13 @@ impl<F: Field> VirtualPolynomial<F> {
                 .collect();
             let coefficient_is_one = coefficient.is_one();
             let add_tail = |(mut acc, mut term): (Vec<F>, Vec<F>), tail: usize| {
+                let base = (tail & low_mask) | ((tail & !low_mask) << 1);
                 let n = product_coeffs_at_tail(
                     &mut term,
                     *coefficient,
                     coefficient_is_one,
                     &factors,
-                    tail,
+                    (base, base | free_bit),
                     cap,
                 );
                 add_coeffs_assign(&mut acc, &term[..n]);
@@ -705,10 +716,11 @@ impl<F: Field> VirtualPolynomial<F> {
         Some(total)
     }
 
-    /// [`Self::sum_over_hypercube_tail`] for any polynomial: evaluate the sum
+    /// [`Self::sum_over_hypercube_except`] for any polynomial: evaluate the sum
     /// at `t = 0..=degree` and interpolate.
     fn tail_sum_by_interpolation(
         &self,
+        free_variable: usize,
         tail_num_vars: usize,
         tail_count: usize,
         degree: usize,
@@ -720,9 +732,10 @@ impl<F: Field> VirtualPolynomial<F> {
                 (0..tail_count)
                     .into_par_iter()
                     .map(|tail| {
-                        let point: Vec<F> = std::iter::once(t)
-                            .chain((0..tail_num_vars).map(|j| F::from(((tail >> j) & 1) as u64)))
+                        let mut point: Vec<F> = (0..tail_num_vars)
+                            .map(|j| F::from(((tail >> j) & 1) as u64))
                             .collect();
+                        point.insert(free_variable, t);
                         self.evaluate_mv(&point)
                             .expect("hypercube tail evaluation failed")
                     })
@@ -763,6 +776,9 @@ impl<F: Field> VirtualPolynomial<F> {
                         univariate_factor_coeffs(p).map(|c| (std::ptr::from_ref(p), c))
                     })
                     .collect::<Option<Vec<_>>>()?;
+                if factors.iter().any(|(_, coeffs)| coeffs.is_empty()) {
+                    continue;
+                }
                 let product_len = factors.iter().map(|(_, c)| c.len() - 1).sum::<usize>() + 1;
                 // A field without an FFT domain this large multiplies schoolbook.
                 if factors.len() >= 2
@@ -1613,6 +1629,26 @@ mod tests {
                 }
                 other => panic!("expected DenseUni, got {other:?}"),
             }
+        }
+    }
+
+    #[test]
+    fn sum_univariate_products_dense_accepts_zero_factor() {
+        let mut product = VirtualPolynomial::<Fr>::new();
+        product.add_poly_list(
+            [
+                Arc::new(PolyVariant::DenseUni(DenseUni::new(vec![]))),
+                Arc::new(PolyVariant::DenseUni(DenseUni::new(vec![
+                    Fr::one(),
+                    Fr::one(),
+                ]))),
+            ],
+            Fr::one(),
+        );
+        let one = VirtualPolynomial::from_scalar(Fr::one());
+        let sum = VirtualPolynomial::sum_univariate_products_dense(&[&product, &one]).unwrap();
+        for x in [Fr::zero(), Fr::one(), Fr::from(7u64)] {
+            assert_eq!(sum.evaluate_uv(&x), Fr::one());
         }
     }
 

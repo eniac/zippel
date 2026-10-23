@@ -310,6 +310,8 @@ pub static SAMPLES: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
 #[allow(warnings)]
 pub mod ark_spartan_upstream;
 pub mod cache;
+#[cfg(test)]
+pub mod cross;
 pub mod dekart;
 #[allow(warnings)]
 pub mod dekart_upstream;
@@ -328,6 +330,9 @@ pub mod kzg;
 pub mod kzh;
 #[allow(warnings)]
 pub mod kzh_upstream;
+#[cfg(test)]
+#[allow(warnings)]
+mod libspartan_upstream;
 pub mod ncloc;
 pub mod pari;
 #[allow(warnings)]

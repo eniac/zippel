@@ -2,7 +2,7 @@
 use backend::{ATyp, Backend, Value};
 use graph::{ArgKind, Node, UDag, domain_separator::ZippelDomainSeparator};
 use lang::id::Vid;
-use runtime::{MutexGraph, ResultKind, RunResult, RuntimeError};
+use runtime::{Challenger, MutexGraph, ResultKind, RunResult, RuntimeError};
 use std::{collections::HashMap, sync::Arc};
 
 /// An owned prover graph and transcript identity, ready for repeated proof generation.
@@ -59,6 +59,24 @@ impl<C: Backend> CompiledProver<C> {
         &self,
         inputs: impl IntoIterator<Item = (K, Value<C>)>,
     ) -> Result<Vec<Value<C>>, RuntimeError> {
+        let separator = ZippelDomainSeparator::new_zippel_domain_separator(
+            &self.domain_separator_session,
+            &self.graph.clone(),
+        );
+        self.prove_with(inputs, &mut separator.prover_state())
+    }
+
+    /// [`Self::prove`], with the challenges from `challenger` in place of
+    /// Zippel's transcript: driving another implementation's transcript makes
+    /// the proof checkable by that implementation's verifier.
+    ///
+    /// # Errors
+    /// As [`Self::prove`].
+    pub fn prove_with<K: Into<Vid>>(
+        &self,
+        inputs: impl IntoIterator<Item = (K, Value<C>)>,
+        challenger: &mut (impl Challenger<C> + Send),
+    ) -> Result<Vec<Value<C>>, RuntimeError> {
         let inputs: HashMap<Vid, Value<C>> =
             inputs.into_iter().map(|(k, v)| (k.into(), v)).collect();
         let prover = &self.graph;
@@ -96,17 +114,10 @@ impl<C: Backend> CompiledProver<C> {
         }
         check_input_types(caller_args, &inputs)?;
 
-        let domain_separator_session = &self.domain_separator_session;
-        let prover_separator = ZippelDomainSeparator::new_zippel_domain_separator(
-            domain_separator_session,
-            &prover.clone(),
-        );
-
-        let mut prover_state = prover_separator.prover_state();
         let result = MutexGraph::run_graph(
             Arc::new(MutexGraph::new(prover.clone())),
             inputs,
-            &mut prover_state,
+            challenger,
             ResultKind::Prover,
         )?;
         match result {
@@ -137,6 +148,27 @@ impl<C: Backend> CompiledVerifier<C> {
         &self,
         proof: impl IntoIterator<Item = Value<C>>,
         inputs: impl IntoIterator<Item = (K, Value<C>)>,
+    ) -> Result<bool, RuntimeError> {
+        // For now, use prover state since we don't have narg_string yet
+        // TODO: Fix this to use proper verifier state when narg_string is available
+        let separator = ZippelDomainSeparator::new_zippel_domain_separator(
+            &self.domain_separator_session,
+            &self.graph.clone(),
+        );
+        self.verify_with(proof, inputs, &mut separator.prover_state())
+    }
+
+    /// [`Self::verify`], with the challenges from `challenger` in place of
+    /// Zippel's transcript: driving another implementation's transcript checks
+    /// that implementation's proofs.
+    ///
+    /// # Errors
+    /// As [`Self::verify`].
+    pub fn verify_with<K: Into<Vid>>(
+        &self,
+        proof: impl IntoIterator<Item = Value<C>>,
+        inputs: impl IntoIterator<Item = (K, Value<C>)>,
+        challenger: &mut (impl Challenger<C> + Send),
     ) -> Result<bool, RuntimeError> {
         let verifier = &self.graph;
 
@@ -194,18 +226,10 @@ impl<C: Backend> CompiledVerifier<C> {
         let mut all_inputs = instance_inputs;
         all_inputs.extend(transcript_inputs);
 
-        let domain_separator_session = &self.domain_separator_session;
-        let verifier_separator = ZippelDomainSeparator::new_zippel_domain_separator(
-            domain_separator_session,
-            &verifier.clone(),
-        );
-        // For now, use prover state since we don't have narg_string yet
-        // TODO: Fix this to use proper verifier state when narg_string is available
-        let mut verifier_state = verifier_separator.prover_state();
         let result = MutexGraph::run_graph(
             Arc::new(MutexGraph::new(verifier.clone())),
             all_inputs,
-            &mut verifier_state,
+            challenger,
             ResultKind::Verifier,
         )?;
         match result {

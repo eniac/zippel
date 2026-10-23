@@ -253,68 +253,73 @@ fn map_eval_doubles_each_element() {
 #[test]
 #[serial]
 fn test_reduce_map_fused_optimization_fires() {
-    use crate::eval::graph_tests::helpers::execute_graph;
-    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
+    for free_variable in 0..3 {
+        use crate::eval::graph_tests::helpers::execute_graph;
+        use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
 
-    // A helper function returning the computed round polynomial
-    let src = r#"
-        fn test_opt<F: Field>(witness p: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
-            let zero: F = 0;
-            let one = zero + 1;
-            reduce(+, [
-                eval<0>(p, tail)
-                for tail in [
-                    [(((i / (2^j)) % 2) * one) for j in 0..2]
-                    for i in 0..4
-                ]
-            ])
+        // A helper function returning the computed round polynomial
+        let src = r#"
+            fn test_opt<F: Field>(witness p: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
+                let zero: F = 0;
+                let one = zero + 1;
+                reduce(+, [
+                    eval<0>(p, tail)
+                    for tail in [
+                        [(((i / (2^j)) % 2) * one) for j in 0..2]
+                        for i in 0..4
+                    ]
+                ])
+            }
+        "#;
+        let src = src.replace("eval<0>", &format!("eval<{free_variable}>"));
+        let graphs = parse_and_build(&src);
+        let dag = &graphs[0];
+
+        let mut inputs = Ctx::new();
+        let mut rng = StdRng::seed_from_u64(0);
+        let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
+        inputs.insert(&lang::id::Vid::from("p"), &poly_val.clone());
+
+        reset_optimization_stats();
+        let before = optimization_stats_snapshot();
+        assert_eq!(before.canonical_sumcheck_rows_seen, 0);
+        assert_eq!(before.canonical_sumcheck_rows_fused, 0);
+
+        let result = execute_graph(dag, inputs).unwrap();
+        let Value::Poly(got_poly) = result else {
+            panic!("Expected a polynomial result, found {:?}", result);
+        };
+
+        let after = optimization_stats_snapshot();
+        // Optimization must fire
+        assert_eq!(after.canonical_sumcheck_rows_seen, 1);
+        assert_eq!(after.canonical_sumcheck_rows_fused, 1);
+
+        // Verify mathematical correctness of the optimized result:
+        // Sum all Boolean assignments outside the selected variable.
+        let Value::Poly(ref orig_poly) = poly_val else {
+            unreachable!()
+        };
+        for t_idx in 0..4 {
+            let t = <B as backend::Backend>::F::from(t_idx);
+            let mut expected = <B as backend::Backend>::F::zero();
+            for tail_index in 0..4 {
+                let b0 = if tail_index & 1 == 1 {
+                    <B as backend::Backend>::F::one()
+                } else {
+                    <B as backend::Backend>::F::zero()
+                };
+                let b1 = if (tail_index >> 1) & 1 == 1 {
+                    <B as backend::Backend>::F::one()
+                } else {
+                    <B as backend::Backend>::F::zero()
+                };
+                let mut point = vec![b0, b1];
+                point.insert(free_variable, t);
+                expected += orig_poly.evaluate_mv(&point).unwrap();
+            }
+            assert_eq!(got_poly.evaluate_uv(&t), expected);
         }
-    "#;
-    let graphs = parse_and_build(src);
-    let dag = &graphs[0];
-
-    let mut inputs = Ctx::new();
-    let mut rng = StdRng::seed_from_u64(0);
-    let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
-    inputs.insert(&lang::id::Vid::from("p"), &poly_val.clone());
-
-    reset_optimization_stats();
-    let before = optimization_stats_snapshot();
-    assert_eq!(before.canonical_sumcheck_rows_seen, 0);
-    assert_eq!(before.canonical_sumcheck_rows_fused, 0);
-
-    let result = execute_graph(dag, inputs).unwrap();
-    let Value::Poly(got_poly) = result else {
-        panic!("Expected a polynomial result, found {:?}", result);
-    };
-
-    let after = optimization_stats_snapshot();
-    // Optimization must fire
-    assert_eq!(after.canonical_sumcheck_rows_seen, 1);
-    assert_eq!(after.canonical_sumcheck_rows_fused, 1);
-
-    // Verify mathematical correctness of the optimized result:
-    // R(t) = Sum_{b ∈ {0,1}^2} P(t, b)
-    let Value::Poly(ref orig_poly) = poly_val else {
-        unreachable!()
-    };
-    for t_idx in 0..4 {
-        let t = <B as backend::Backend>::F::from(t_idx);
-        let mut expected = <B as backend::Backend>::F::zero();
-        for tail_index in 0..4 {
-            let b0 = if tail_index & 1 == 1 {
-                <B as backend::Backend>::F::one()
-            } else {
-                <B as backend::Backend>::F::zero()
-            };
-            let b1 = if (tail_index >> 1) & 1 == 1 {
-                <B as backend::Backend>::F::one()
-            } else {
-                <B as backend::Backend>::F::zero()
-            };
-            expected += orig_poly.evaluate_mv(&[t, b0, b1]).unwrap();
-        }
-        assert_eq!(got_poly.evaluate_uv(&t), expected);
     }
 }
 

@@ -42,7 +42,7 @@ pub struct PolyCommitmentBlinds<F> {
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct PolyCommitment<G: CurveGroup> {
-  C: Vec<G>,
+  pub(crate) C: Vec<G>,
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
@@ -312,7 +312,7 @@ impl<F> Index<usize> for DensePolynomial<F> {
 }
 
 impl<G: CurveGroup> AppendToTranscript<G> for PolyCommitment<G> {
-  fn append_to_transcript(&self, label: &'static [u8], transcript: &mut Transcript) {
+  fn append_to_transcript(&self, label: &'static [u8], transcript: &mut impl ProofTranscript<G>) {
     transcript.append_message(label, b"poly_commitment_begin");
     for i in 0..self.C.len() {
       transcript.append_point(b"poly_commitment_share", &self.C[i]);
@@ -323,7 +323,7 @@ impl<G: CurveGroup> AppendToTranscript<G> for PolyCommitment<G> {
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct PolyEvalProof<G: CurveGroup> {
-  proof: DotProductProofLog<G>,
+  pub(crate) proof: DotProductProofLog<G>,
 }
 
 impl<G: CurveGroup> PolyEvalProof<G> {
@@ -338,10 +338,10 @@ impl<G: CurveGroup> PolyEvalProof<G> {
     Zr: &G::ScalarField,  // evaluation of \widetilde{Z}(r)
     blind_Zr_opt: Option<&G::ScalarField>, // specifies a blind for Zr
     gens: &PolyCommitmentGens<G>,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
     random_tape: &mut RandomTape<G>,
   ) -> (PolyEvalProof<G>, G) {
-    <Transcript as ProofTranscript<G>>::append_protocol_name(
+    <_ as ProofTranscript<G>>::append_protocol_name(
       transcript,
       PolyEvalProof::<G>::protocol_name(),
     );
@@ -393,12 +393,12 @@ impl<G: CurveGroup> PolyEvalProof<G> {
   pub fn verify(
     &self,
     gens: &PolyCommitmentGens<G>,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
     r: &[G::ScalarField], // point at which the polynomial is evaluated
     C_Zr: &G,             // commitment to \widetilde{Z}(r)
     comm: &PolyCommitment<G>,
   ) -> Result<(), ProofVerifyError> {
-    <Transcript as ProofTranscript<G>>::append_protocol_name(
+    <_ as ProofTranscript<G>>::append_protocol_name(
       transcript,
       PolyEvalProof::<G>::protocol_name(),
     );
@@ -421,7 +421,7 @@ impl<G: CurveGroup> PolyEvalProof<G> {
   pub fn verify_plain(
     &self,
     gens: &PolyCommitmentGens<G>,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
     r: &[G::ScalarField], // point at which the polynomial is evaluated
     Zr: &G::ScalarField,  // evaluation \widetilde{Z}(r)
     comm: &PolyCommitment<G>,
