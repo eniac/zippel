@@ -122,6 +122,11 @@ libc = "0.2"
 
 [dev-dependencies]
 criterion = "0.5"
+# The test-only copy of spartan 0.9 retains its original hashing and instance digest.
+digest_08 = { package = "digest", version = "0.8" }
+sha3_08 = { package = "sha3", version = "0.8" }
+flate2 = "1"
+curve25519-dalek-5 = { package = "curve25519-dalek", version = "5", features = ["group"] }
 
 [build-dependencies]
 # build.rs parses `cargo metadata` to find the native baseline crates' sources.

@@ -553,3 +553,100 @@ fn schnorr_runs_on_ff_group_backends() {
     run::<backend::DalekRistretto>();
     run::<backend::PastaPallas>();
 }
+
+mod challenger {
+    use super::*;
+    use backend::{Backend, Group};
+    use runtime::Challenger;
+
+    type C = ArkBls12_381;
+    type F = <C as Backend>::F;
+
+    /// A transcript that hands out fixed challenges and keeps what it absorbs.
+    #[derive(Default)]
+    struct Scripted {
+        challenges: Vec<F>,
+        absorbed: Vec<Value<C>>,
+    }
+
+    impl Scripted {
+        fn new(challenges: &[u64]) -> Self {
+            Self {
+                challenges: challenges.iter().rev().map(|&c| F::from(c)).collect(),
+                absorbed: Vec::new(),
+            }
+        }
+    }
+
+    impl Challenger<C> for Scripted {
+        fn instance(&mut self, value: &Value<C>) {
+            self.absorbed.push(value.clone());
+        }
+
+        fn message(&mut self, value: &Value<C>) {
+            self.absorbed.push(value.clone());
+        }
+
+        fn challenge(&mut self) -> Value<C> {
+            Value::Scalar(self.challenges.pop().expect("a scripted challenge"))
+        }
+    }
+
+    /// Schnorr under another transcript: Zippel absorbs the instance and the
+    /// commitment before the challenge, the proof satisfies the verifier's
+    /// equation for that challenge, and it verifies under that transcript only.
+    #[test]
+    fn a_challenger_drives_schnorr() {
+        let protocol = schnorr();
+        let x = F::from(5u64);
+        let g = <C as Backend>::G1::generator();
+        let h = g * x;
+        let inputs = || {
+            Ctx::from_iter([
+                (Vid::from("x"), Value::Scalar(x)),
+                (Vid::from("g"), Value::g1(g)),
+                (Vid::from("h"), Value::g1(h)),
+            ])
+        };
+        let mut transcript = Scripted::new(&[11]);
+        let proof = protocol
+            .project_prover()
+            .prove_with(inputs(), &mut transcript)
+            .unwrap();
+        assert_eq!(transcript.absorbed.len(), 3, "g, h, then u");
+        assert!(Value::equ(&transcript.absorbed[2], &proof[0]));
+        let Value::Scalar(z) = proof[1] else {
+            panic!("z is a scalar")
+        };
+        let rhs = proof[0].clone() + Value::g1(h * F::from(11u64));
+        assert!(Value::equ(&Value::g1(g * z), &rhs), "g·z = u + h·c");
+        let verifier = protocol.project_verifier().unwrap();
+        assert!(
+            verifier
+                .verify_with(proof.clone(), inputs(), &mut Scripted::new(&[11]))
+                .unwrap()
+        );
+        assert!(!verifier.verify(proof, inputs()).unwrap());
+    }
+
+    /// An excluded challenge is replaced by the transcript's next one.
+    #[test]
+    fn an_excluded_challenge_is_drawn_again() {
+        let src = "proto p<G: Group, F: Scalar<G>>(instance g: G) where g == g {
+    c <- challenge<F - [0]>;
+    echo <- c;
+    verify(g == g)
+}
+";
+        let protocol = ParsedModule::parse("t.zippel", src)
+            .unwrap()
+            .compile::<C>(&Ctx::new(), CompileOptions::default())
+            .unwrap();
+        let inputs = Ctx::from_iter([(Vid::from("g"), Value::g1(<C as Backend>::G1::generator()))]);
+        let proof = protocol
+            .project_prover()
+            .prove_with(inputs, &mut Scripted::new(&[0, 5]))
+            .unwrap();
+        assert_eq!(proof, [Value::Scalar(F::from(5u64))]);
+    }
+}

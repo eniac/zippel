@@ -66,7 +66,7 @@ pub struct Setup<C: Backend> {
 }
 
 /// The R1CS matrices (as `(row, col, value)` triples) and the assignment
-/// `z = (w, io, 1)` they multiply.
+/// `z = (w, 1, io)` they multiply.
 struct MatVec<F> {
     mats: [Vec<(usize, usize, F)>; 3],
     z: Vec<F>,
@@ -214,10 +214,10 @@ where
 
     let mut z = Vec::with_capacity(m);
     z.extend_from_slice(w);
-    z.extend_from_slice(io);
     z.push(F::from(1u64));
+    z.extend_from_slice(io);
 
-    let const_col = m - 1;
+    let const_col = w.len();
     const K_NNZ_PER_ROW: usize = 1;
     let pick_k_cols = |rng: &mut R, force_include: Option<usize>| -> Vec<usize> {
         let mut cols: Vec<usize> = Vec::with_capacity(K_NNZ_PER_ROW);
@@ -309,8 +309,8 @@ fn make_inputs<C: Backend>(m: usize) -> (HashMap<Vid, Value<C>>, MatVec<C::F>) {
 
     let mut z: Vec<C::F> = Vec::with_capacity(num_cons);
     z.extend_from_slice(&witness);
-    z.extend_from_slice(&instance);
     z.push(one);
+    z.extend_from_slice(&instance);
 
     let products = MatVec {
         mats: [r1cs.mat_a.clone(), r1cs.mat_b.clone(), r1cs.mat_c.clone()],
@@ -345,14 +345,17 @@ fn make_inputs<C: Backend>(m: usize) -> (HashMap<Vid, Value<C>>, MatVec<C::F>) {
 
     let g_vec_proj: Vec<C::G1> = (0..ncols).map(|_| C::G1::rand(&mut rng)).collect();
     let g_vec_aff = C::G1::normalize_batch(&g_vec_proj);
-    let g_base_w = C::G1::rand(&mut rng);
-    let h_base_w = C::G1::rand(&mut rng);
-
-    let g_evs_d3_proj: Vec<C::G1> = (0..4).map(|_| C::G1::rand(&mut rng)).collect();
-    let g_evs_d3_aff = C::G1::normalize_batch(&g_evs_d3_proj);
-    let g_evs_d2_proj: Vec<C::G1> = (0..3).map(|_| C::G1::rand(&mut rng)).collect();
-    let g_evs_d2_aff = C::G1::normalize_batch(&g_evs_d2_proj);
-    let h_evs = C::G1::rand(&mut rng);
+    // libspartan's generators: `gens_1` (g_1, h_1, shared by the PCS and the
+    // sumchecks), and `gens_4`, `gens_3` for the round polynomials, each with its
+    // own blinding base.
+    let g_1 = C::G1::rand(&mut rng);
+    let h_1 = C::G1::rand(&mut rng);
+    let g_4_proj: Vec<C::G1> = (0..4).map(|_| C::G1::rand(&mut rng)).collect();
+    let g_4 = C::G1::normalize_batch(&g_4_proj);
+    let h_4 = C::G1::rand(&mut rng);
+    let g_3_proj: Vec<C::G1> = (0..3).map(|_| C::G1::rand(&mut rng)).collect();
+    let g_3 = C::G1::normalize_batch(&g_3_proj);
+    let h_3 = C::G1::rand(&mut rng);
 
     let placeholder_tau: Vec<C::F> = vec![C::F::zero(); m];
 
@@ -363,17 +366,12 @@ fn make_inputs<C: Backend>(m: usize) -> (HashMap<Vid, Value<C>>, MatVec<C::F>) {
         (Vid("io".to_string()), Value::vec_scalar(r1cs.io)),
         (Vid("w".to_string()), Value::vec_scalar(r1cs.w)),
         (Vid("g_vec_w".to_string()), Value::vec_g1_affine(g_vec_aff)),
-        (Vid("g_base_w".to_string()), Value::g1(g_base_w)),
-        (Vid("h_base_w".to_string()), Value::g1(h_base_w)),
-        (
-            Vid("g_evs_d3".to_string()),
-            Value::vec_g1_affine(g_evs_d3_aff),
-        ),
-        (
-            Vid("g_evs_d2".to_string()),
-            Value::vec_g1_affine(g_evs_d2_aff),
-        ),
-        (Vid("h_evs".to_string()), Value::g1(h_evs)),
+        (Vid("g_1".to_string()), Value::g1(g_1)),
+        (Vid("h_1".to_string()), Value::g1(h_1)),
+        (Vid("g_4".to_string()), Value::vec_g1_affine(g_4)),
+        (Vid("h_4".to_string()), Value::g1(h_4)),
+        (Vid("g_3".to_string()), Value::vec_g1_affine(g_3)),
+        (Vid("h_3".to_string()), Value::g1(h_3)),
         (
             Vid("placeholder_tau".to_string()),
             Value::vec_scalar(placeholder_tau),
@@ -381,3 +379,62 @@ fn make_inputs<C: Backend>(m: usize) -> (HashMap<Vid, Value<C>>, MatVec<C::F>) {
     ]);
     (inputs, products)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    /// `v` changed: one added to a scalar or index, the generator added to a group
+    /// element, the first entry of a vector changed.
+    pub(super) fn tampered<C: Backend>(v: &Value<C>) -> Value<C> {
+        match v {
+            Value::Scalar(x) => Value::Scalar(*x + C::F::one()),
+            Value::G1(g) => Value::g1(**g + C::G1::generator()),
+            Value::G1Affine(g) => Value::g1(Into::<C::G1>::into(**g) + C::G1::generator()),
+            Value::VecScalar(xs) => {
+                let mut xs = xs.to_vec();
+                xs[0] += C::F::one();
+                Value::vec_scalar(xs)
+            }
+            Value::VecG1(gs) => {
+                let mut gs = gs.to_vec();
+                gs[0] += C::G1::generator();
+                Value::vec_g1(gs)
+            }
+            Value::VecG1Affine(gs) => {
+                let mut gs: Vec<C::G1> = gs.iter().map(|g| (*g).into()).collect();
+                gs[0] += C::G1::generator();
+                Value::vec_g1(gs)
+            }
+            other => panic!("no tampering for {other}"),
+        }
+    }
+
+    /// The verifier rejects the proof with any one element changed, including the
+    /// last messages, which no later challenge depends on.
+    #[test]
+    fn every_proof_element_is_checked() {
+        let setup = Setup::<backend::ArkCurve25519>::new(4);
+        let [az, bz, cz] = setup.products.products();
+        let computed = [("az", az), ("bz", bz), ("cz", cz)]
+            .map(|(name, v)| (Vid::from(name), Value::vec_scalar(v)));
+        let proof = setup
+            .prover
+            .prove(crate::lend(&setup.inputs).chain(computed))
+            .unwrap();
+        let verify = |proof: Vec<Value<backend::ArkCurve25519>>| {
+            setup
+                .verifier
+                .verify(proof, crate::lend(&setup.inputs))
+                .unwrap()
+        };
+        assert!(verify(proof.clone()));
+        for i in 0..proof.len() {
+            let mut bad = proof.clone();
+            bad[i] = tampered(&proof[i]);
+            assert!(!verify(bad), "element {i} ({}) is unchecked", proof[i]);
+        }
+    }
+}
+
+#[cfg(test)]
+mod cross_tests;

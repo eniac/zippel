@@ -4,16 +4,13 @@ use ark_serialize::CanonicalSerialize;
 use merlin::Transcript;
 
 pub trait ProofTranscript<G: CurveGroup> {
-  fn append_protocol_name(&mut self, protocol_name: &'static [u8]);
-  fn append_scalar(&mut self, label: &'static [u8], scalar: &G::ScalarField);
-  fn append_scalars(&mut self, label: &'static [u8], scalars: &[G::ScalarField]);
-  fn append_point(&mut self, label: &'static [u8], point: &G);
-  fn append_points(&mut self, label: &'static [u8], points: &[G]);
+  fn append_message(&mut self, label: &'static [u8], message: &[u8]);
   fn challenge_scalar(&mut self, label: &'static [u8]) -> G::ScalarField;
-  fn challenge_vector(&mut self, label: &'static [u8], len: usize) -> Vec<G::ScalarField>;
-}
 
-impl<G: CurveGroup> ProofTranscript<G> for Transcript {
+  fn append_u64(&mut self, label: &'static [u8], value: u64) {
+    self.append_message(label, &value.to_le_bytes());
+  }
+
   fn append_protocol_name(&mut self, protocol_name: &'static [u8]) {
     self.append_message(b"protocol-name", protocol_name);
   }
@@ -46,12 +43,6 @@ impl<G: CurveGroup> ProofTranscript<G> for Transcript {
     self.append_message(label, b"end_append_vector");
   }
 
-  fn challenge_scalar(&mut self, label: &'static [u8]) -> G::ScalarField {
-    let mut buf = [0u8; 64];
-    self.challenge_bytes(label, &mut buf);
-    G::ScalarField::from_le_bytes_mod_order(&buf)
-  }
-
   fn challenge_vector(&mut self, label: &'static [u8], len: usize) -> Vec<G::ScalarField> {
     (0..len)
       .map(|_i| <Self as ProofTranscript<G>>::challenge_scalar(self, label))
@@ -59,8 +50,20 @@ impl<G: CurveGroup> ProofTranscript<G> for Transcript {
   }
 }
 
+impl<G: CurveGroup> ProofTranscript<G> for Transcript {
+  fn append_message(&mut self, label: &'static [u8], message: &[u8]) {
+    Transcript::append_message(self, label, message);
+  }
+
+  fn challenge_scalar(&mut self, label: &'static [u8]) -> G::ScalarField {
+    let mut buf = [0u8; 64];
+    self.challenge_bytes(label, &mut buf);
+    G::ScalarField::from_le_bytes_mod_order(&buf)
+  }
+}
+
 pub trait AppendToTranscript<G: CurveGroup> {
-  fn append_to_transcript(&self, label: &'static [u8], transcript: &mut Transcript);
+  fn append_to_transcript(&self, label: &'static [u8], transcript: &mut impl ProofTranscript<G>);
 }
 
 // // impl<G:CurveGroup> AppendToTranscript<G> for G::ScalarField {

@@ -336,10 +336,10 @@ fn pair(p: &G1, q: &G2) -> GT {
 #[derive(Clone)]
 pub struct Blake2bTranscript {
     hasher: Blake2b512,
-    /// Test hook (not upstream): challenges handed out in order instead of
-    /// hashing, so a proof can be recomputed under another prover's
-    /// challenges.
-    replay: Option<std::collections::VecDeque<Fr>>,
+    /// Not upstream: in test builds, challenges come from `Challenges::default()`
+    /// instead of the hash, for cross-verification against Zippel.
+    #[cfg(test)]
+    challenges: crate::cross::Challenges,
 }
 
 impl Blake2bTranscript {
@@ -348,15 +348,8 @@ impl Blake2bTranscript {
         hasher.update(domain_label);
         Self {
             hasher,
-            replay: None,
-        }
-    }
-
-    /// A transcript whose challenges are `challenges`, in order.
-    pub fn replay(challenges: Vec<Fr>) -> Self {
-        Self {
-            replay: Some(challenges.into()),
-            ..Self::new(b"replay")
+            #[cfg(test)]
+            challenges: crate::cross::Challenges::default(),
         }
     }
 
@@ -379,17 +372,17 @@ impl Blake2bTranscript {
     }
 
     pub fn challenge_scalar(&mut self, label: &[u8]) -> Fr {
-        if let Some(queue) = self.replay.as_mut() {
-            return queue
-                .pop_front()
-                .expect("replay transcript ran out of challenges");
+        #[cfg(test)]
+        return self.challenges.next_scalar();
+        #[cfg(not(test))]
+        {
+            self.hasher.update(label);
+            let repr = self.hasher.clone().finalize().to_vec();
+            let fe = Fr::from_le_bytes_mod_order(&repr);
+            assert!(!fe.is_zero(), "Challenge scalar cannot be zero");
+            self.hasher.update(&repr);
+            fe
         }
-        self.hasher.update(label);
-        let repr = self.hasher.clone().finalize().to_vec();
-        let fe = Fr::from_le_bytes_mod_order(&repr);
-        assert!(!fe.is_zero(), "Challenge scalar cannot be zero");
-        self.hasher.update(&repr);
-        fe
     }
 }
 

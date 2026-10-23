@@ -30,6 +30,10 @@ use std::marker::PhantomData;
 pub struct IOPTranscript<F: PrimeField> {
     transcript: Transcript,
     is_empty: bool,
+    /// Not upstream: in test builds, challenges come from `Challenges::default()`
+    /// instead of the transcript, for cross-verification against Zippel.
+    #[cfg(test)]
+    challenges: crate::cross::Challenges,
     #[doc(hidden)]
     phantom: PhantomData<F>,
 }
@@ -41,6 +45,8 @@ impl<F: PrimeField> IOPTranscript<F> {
         Self {
             transcript: Transcript::new(label),
             is_empty: true,
+            #[cfg(test)]
+            challenges: crate::cross::Challenges::default(),
             phantom: PhantomData::default(),
         }
     }
@@ -87,9 +93,14 @@ impl<F: PrimeField> IOPTranscript<F> {
             ));
         }
 
-        let mut buf = [0u8; 24];
-        self.transcript.challenge_bytes(label, &mut buf);
-        let challenge = F::from_le_bytes_mod_order(&buf);
+        #[cfg(test)]
+        let challenge = self.challenges.next_scalar();
+        #[cfg(not(test))]
+        let challenge = {
+            let mut buf = [0u8; 24];
+            self.transcript.challenge_bytes(label, &mut buf);
+            F::from_le_bytes_mod_order(&buf)
+        };
         self.append_serializable_element(label, &challenge)?;
         Ok(challenge)
     }

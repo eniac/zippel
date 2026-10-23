@@ -1,10 +1,10 @@
 //! The Fiat-Shamir transcript of one run, shared by prover and verifier.
 //!
 //! Instance inputs and prover messages are queued as they are produced and
-//! absorbed, in order, when the next challenge is squeezed. Instance inputs
-//! are absorbed whole, however large (an R1CS instance's matrices are tens of
-//! megabytes); the sponge is BLAKE3 (`graph::domain_separator::Sponge`) so
-//! that stays cheap.
+//! absorbed, in order, when the next challenge is drawn. Instance inputs are
+//! absorbed whole, however large (an R1CS instance's matrices are tens of
+//! megabytes); Zippel's sponge is BLAKE3 (`graph::domain_separator::Sponge`)
+//! so that stays cheap.
 
 use backend::{Backend, Value, value_to_bytes};
 use lang::ast::Exclusion;
@@ -12,23 +12,62 @@ use petgraph::graph::NodeIndex;
 use spongefish::{DuplexSpongeInterface, ProverState};
 use std::collections::HashMap;
 
-/// A value queued for the sponge, absorbed before the next challenge.
+/// Where a run's Fiat-Shamir challenges come from: a transcript that binds public
+/// values and derives challenges from them.
+///
+/// A run's default is Zippel's own, a spongefish [`ProverState`] opened with the
+/// protocol's domain separator. Any other transcript can stand in for it (see
+/// `CompiledProver::prove_with`): driving another implementation's transcript
+/// makes a Zippel proof checkable by that implementation's verifier, and lets
+/// Zippel's verifier check that implementation's proofs.
+pub trait Challenger<C: Backend> {
+    /// Binds instance input `value`. Every instance input comes first, in argument
+    /// order; only values before a challenge are bound.
+    fn instance(&mut self, value: &Value<C>);
+
+    /// Binds prover message `value`, in transcript order.
+    fn message(&mut self, value: &Value<C>);
+
+    /// The next challenge, bound to every value absorbed so far. An excluded
+    /// challenge is replaced by the next one.
+    fn challenge(&mut self) -> Value<C>;
+}
+
+/// Zippel's transcript: each value's canonical bytes absorbed into the sponge, and
+/// each challenge squeezed from it.
+impl<C: Backend, H: DuplexSpongeInterface<U = u8>> Challenger<C> for ProverState<H> {
+    fn instance(&mut self, value: &Value<C>) {
+        self.public_message(value_to_bytes(value).as_slice());
+    }
+
+    fn message(&mut self, value: &Value<C>) {
+        self.public_message(value_to_bytes(value).as_slice());
+    }
+
+    fn challenge(&mut self) -> Value<C> {
+        Value::challenge(self)
+    }
+}
+
+/// A value queued for the transcript, bound before the next challenge.
 enum PendingAbsorb<C: Backend> {
-    /// An instance input, or a verifier's copy of a prover message.
-    Owned(Value<C>),
+    /// An instance input.
+    Instance(Value<C>),
+    /// A verifier's copy of a prover message.
+    Message(Value<C>),
     /// A prover message the transcript also keeps for the proof: queued by
     /// node, so the message is held once.
     Kept(NodeIndex),
 }
 
-/// The Fiat-Shamir side of one run: the sponge, the values queued for it,
+/// The Fiat-Shamir side of one run: the challenger, the values queued for it,
 /// and, for the prover, the messages that form the proof.
 ///
 /// Transcript nodes use it one at a time: the graph chains them in
 /// transcript order, so only one is ever ready.
-pub(crate) struct Transcript<'a, C: Backend, H: DuplexSpongeInterface<U = u8>> {
-    sponge: &'a mut ProverState<H>,
-    /// Absorbed, in order, only when a challenge is squeezed: the sponge's
+pub(crate) struct Transcript<'a, C: Backend, Ch: Challenger<C>> {
+    challenger: &'a mut Ch,
+    /// Absorbed, in order, only when a challenge is drawn: the transcript's
     /// only output is challenges, so values after the last challenge (every
     /// value, in a protocol with no challenges) never need serializing.
     pending: Vec<PendingAbsorb<C>>,
@@ -36,47 +75,48 @@ pub(crate) struct Transcript<'a, C: Backend, H: DuplexSpongeInterface<U = u8>> {
     messages: Option<HashMap<NodeIndex, Value<C>>>,
 }
 
-impl<'a, C: Backend, H: DuplexSpongeInterface<U = u8>> Transcript<'a, C, H> {
-    /// A transcript over `sponge`; `keep_messages` for the prover, whose
+impl<'a, C: Backend, Ch: Challenger<C>> Transcript<'a, C, Ch> {
+    /// A transcript over `challenger`; `keep_messages` for the prover, whose
     /// messages form the proof.
-    pub(crate) fn new(sponge: &'a mut ProverState<H>, keep_messages: bool) -> Self {
+    pub(crate) fn new(challenger: &'a mut Ch, keep_messages: bool) -> Self {
         Self {
-            sponge,
+            challenger,
             pending: Vec::new(),
             messages: keep_messages.then(HashMap::new),
         }
     }
 
-    /// Queues an instance input for the sponge.
+    /// Queues an instance input for the transcript.
     pub(crate) fn instance(&mut self, value: Value<C>) {
-        self.pending.push(PendingAbsorb::Owned(value));
+        self.pending.push(PendingAbsorb::Instance(value));
     }
 
-    /// Queues the message of transcript node `node` for the sponge, and
+    /// Queues the message of transcript node `node` for the transcript, and
     /// keeps it for the proof.
     pub(crate) fn message(&mut self, node: NodeIndex, value: &Value<C>) {
         if let Some(messages) = &mut self.messages {
             messages.insert(node, value.clone());
             self.pending.push(PendingAbsorb::Kept(node));
         } else {
-            self.pending.push(PendingAbsorb::Owned(value.clone()));
+            self.pending.push(PendingAbsorb::Message(value.clone()));
         }
     }
 
-    /// Absorbs everything queued, then squeezes a challenge, resampled while
+    /// Absorbs everything queued, then draws a challenge, drawn again while
     /// `exclusion` excludes it, as prover and verifier both do.
     pub(crate) fn challenge(&mut self, exclusion: Option<&Exclusion<Value<C>, usize>>) -> Value<C> {
         for p in self.pending.drain(..) {
-            let value = match &p {
-                PendingAbsorb::Owned(v) => v,
-                PendingAbsorb::Kept(node) => &self.messages.as_ref().expect("kept messages")[node],
-            };
-            let bytes = value_to_bytes(value);
-            self.sponge.public_message(bytes.as_slice());
+            match &p {
+                PendingAbsorb::Instance(v) => self.challenger.instance(v),
+                PendingAbsorb::Message(v) => self.challenger.message(v),
+                PendingAbsorb::Kept(node) => self
+                    .challenger
+                    .message(&self.messages.as_ref().expect("kept messages")[node]),
+            }
         }
-        let mut value = Value::<C>::challenge(self.sponge);
+        let mut value = self.challenger.challenge();
         while exclusion.is_some_and(|x| value.is_excluded_by(x)) {
-            value = Value::<C>::challenge(self.sponge);
+            value = self.challenger.challenge();
         }
         value
     }

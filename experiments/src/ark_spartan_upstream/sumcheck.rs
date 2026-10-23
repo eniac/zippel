@@ -31,7 +31,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     claim: F,
     num_rounds: usize,
     degree_bound: usize,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
   ) -> Result<(F, Vec<F>), ProofVerifyError>
   where
     G: CurveGroup<ScalarField = F>,
@@ -55,7 +55,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
       //derive the verifier's challenge for the next round
       let r_i =
-        <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
+        <_ as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
 
       r.push(r_i);
 
@@ -69,9 +69,9 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
 pub struct ZKSumcheckInstanceProof<G: CurveGroup> {
-  comm_polys: Vec<G>,
-  comm_evals: Vec<G>,
-  proofs: Vec<DotProductProof<G>>,
+  pub(crate) comm_polys: Vec<G>,
+  pub(crate) comm_evals: Vec<G>,
+  pub(crate) proofs: Vec<DotProductProof<G>>,
 }
 
 impl<G: CurveGroup> ZKSumcheckInstanceProof<G> {
@@ -90,7 +90,7 @@ impl<G: CurveGroup> ZKSumcheckInstanceProof<G> {
     degree_bound: usize,
     gens_1: &MultiCommitGens<G>,
     gens_n: &MultiCommitGens<G>,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
   ) -> Result<(G, Vec<G::ScalarField>), ProofVerifyError> {
     // verify degree bound
     assert_eq!(gens_n.n, degree_bound + 1);
@@ -104,11 +104,11 @@ impl<G: CurveGroup> ZKSumcheckInstanceProof<G> {
       let comm_poly = &self.comm_polys[i];
 
       // append the prover's polynomial to the transcript
-      <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_poly", comm_poly);
+      <_ as ProofTranscript<G>>::append_point(transcript, b"comm_poly", comm_poly);
 
       //derive the verifier's challenge for the next round
       let r_i =
-        <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
+        <_ as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
 
       // verify the proof of sum-check and evals
       let res = {
@@ -120,15 +120,15 @@ impl<G: CurveGroup> ZKSumcheckInstanceProof<G> {
         let comm_eval = &self.comm_evals[i];
 
         // add two claims to transcript
-        <Transcript as ProofTranscript<G>>::append_point(
+        <_ as ProofTranscript<G>>::append_point(
           transcript,
           b"comm_claim_per_round",
           comm_claim_per_round,
         );
-        <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_eval", comm_eval);
+        <_ as ProofTranscript<G>>::append_point(transcript, b"comm_eval", comm_eval);
 
         // produce two weights
-        let w = <Transcript as ProofTranscript<G>>::challenge_vector(
+        let w = <_ as ProofTranscript<G>>::challenge_vector(
           transcript,
           b"combine_two_claims_to_one",
           2,
@@ -194,7 +194,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     poly_B: &mut DensePolynomial<F>,
     poly_C: &mut DensePolynomial<F>,
     comb_func: Func,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
   ) -> (Self, Vec<F>, Vec<F>)
   where
     Func: Fn(&F, &F, &F) -> F,
@@ -243,7 +243,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
       //derive the verifier's challenge for the next round
       let r_j =
-        <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
+        <_ as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
 
       r.push(r_j);
       // bound all tables to the verifier's challenege
@@ -276,7 +276,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     ),
     coeffs: &[F],
     comb_func: Func,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
   ) -> (Self, Vec<F>, (Vec<F>, Vec<F>, F), (Vec<F>, Vec<F>, Vec<F>))
   where
     Func: Fn(&F, &F, &F) -> F,
@@ -379,7 +379,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
       //derive the verifier's challenge for the next round
       let r_j =
-        <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
+        <_ as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
       r.push(r_j);
 
       // bound all tables to the verifier's challenege
@@ -441,7 +441,7 @@ impl<G: CurveGroup> ZKSumcheckInstanceProof<G> {
     comb_func: Func,
     gens_1: &MultiCommitGens<G>,
     gens_n: &MultiCommitGens<G>,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
     random_tape: &mut RandomTape<G>,
   ) -> (
     Self,
@@ -487,12 +487,12 @@ impl<G: CurveGroup> ZKSumcheckInstanceProof<G> {
       };
 
       // append the prover's message to the transcript
-      <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_poly", &comm_poly);
+      <_ as ProofTranscript<G>>::append_point(transcript, b"comm_poly", &comm_poly);
       comm_polys.push(comm_poly);
 
       //derive the verifier's challenge for the next round
       let r_j =
-        <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
+        <_ as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
 
       // bound all tables to the verifier's challenege
       poly_A.bound_poly_var_top(&r_j);
@@ -513,15 +513,15 @@ impl<G: CurveGroup> ZKSumcheckInstanceProof<G> {
         // for efficiency we batch them using random weights
 
         // add two claims to transcript
-        <Transcript as ProofTranscript<G>>::append_point(
+        <_ as ProofTranscript<G>>::append_point(
           transcript,
           b"comm_claim_per_round",
           &comm_claim_per_round,
         );
-        <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_eval", &comm_eval);
+        <_ as ProofTranscript<G>>::append_point(transcript, b"comm_eval", &comm_eval);
 
         // produce two weights
-        let w = <Transcript as ProofTranscript<G>>::challenge_vector(
+        let w = <_ as ProofTranscript<G>>::challenge_vector(
           transcript,
           b"combine_two_claims_to_one",
           2,
@@ -613,7 +613,7 @@ impl<G: CurveGroup> ZKSumcheckInstanceProof<G> {
     comb_func: Func,
     gens_1: &MultiCommitGens<G>,
     gens_n: &MultiCommitGens<G>,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
     random_tape: &mut RandomTape<G>,
   ) -> (
     Self,
@@ -685,12 +685,12 @@ impl<G: CurveGroup> ZKSumcheckInstanceProof<G> {
       };
 
       // append the prover's message to the transcript
-      <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_poly", &comm_poly);
+      <_ as ProofTranscript<G>>::append_point(transcript, b"comm_poly", &comm_poly);
       comm_polys.push(comm_poly);
 
       //derive the verifier's challenge for the next round
       let r_j =
-        <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
+        <_ as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
 
       // bound all tables to the verifier's challenege
       poly_A.bound_poly_var_top(&r_j);
@@ -713,15 +713,15 @@ impl<G: CurveGroup> ZKSumcheckInstanceProof<G> {
         // for efficiency we batch them using random weights
 
         // add two claims to transcript
-        <Transcript as ProofTranscript<G>>::append_point(
+        <_ as ProofTranscript<G>>::append_point(
           transcript,
           b"comm_claim_per_round",
           &comm_claim_per_round,
         );
-        <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_eval", &comm_eval);
+        <_ as ProofTranscript<G>>::append_point(transcript, b"comm_eval", &comm_eval);
 
         // produce two weights
-        let w = <Transcript as ProofTranscript<G>>::challenge_vector(
+        let w = <_ as ProofTranscript<G>>::challenge_vector(
           transcript,
           b"combine_two_claims_to_one",
           2,

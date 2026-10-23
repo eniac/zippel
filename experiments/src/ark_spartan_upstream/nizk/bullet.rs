@@ -15,8 +15,8 @@ use merlin::Transcript;
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BulletReductionProof<G: CurveGroup> {
-  L_vec: Vec<G>,
-  R_vec: Vec<G>,
+  pub(crate) L_vec: Vec<G>,
+  pub(crate) R_vec: Vec<G>,
 }
 
 impl<G: CurveGroup> BulletReductionProof<G> {
@@ -31,7 +31,7 @@ impl<G: CurveGroup> BulletReductionProof<G> {
   /// The lengths of the vectors must all be the same, and must all be
   /// either 0 or a power of 2.
   pub fn prove(
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
     Q: &G,
     G_vec: &[G],
     H: &G,
@@ -110,10 +110,10 @@ impl<G: CurveGroup> BulletReductionProof<G> {
 
       let R = <G as VariableBaseMSM>::msm_bigint(bases.as_ref(), scalars.as_ref());
 
-      <Transcript as ProofTranscript<G>>::append_point(transcript, b"L", &L);
-      <Transcript as ProofTranscript<G>>::append_point(transcript, b"R", &R);
+      <_ as ProofTranscript<G>>::append_point(transcript, b"L", &L);
+      <_ as ProofTranscript<G>>::append_point(transcript, b"R", &R);
 
-      let u = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"u");
+      let u = <_ as ProofTranscript<G>>::challenge_scalar(transcript, b"u");
 
       let u_inv = u.inverse().unwrap();
 
@@ -153,7 +153,7 @@ impl<G: CurveGroup> BulletReductionProof<G> {
   fn verification_scalars(
     &self,
     n: usize,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
   ) -> Result<
     (
       Vec<G::ScalarField>,
@@ -175,9 +175,9 @@ impl<G: CurveGroup> BulletReductionProof<G> {
     // 1. Recompute x_k,...,x_1 based on the proof transcript
     let mut challenges = Vec::with_capacity(lg_n);
     for (L, R) in self.L_vec.iter().zip(self.R_vec.iter()) {
-      <Transcript as ProofTranscript<G>>::append_point(transcript, b"L", L);
-      <Transcript as ProofTranscript<G>>::append_point(transcript, b"R", R);
-      challenges.push(<Transcript as ProofTranscript<G>>::challenge_scalar(
+      <_ as ProofTranscript<G>>::append_point(transcript, b"L", L);
+      <_ as ProofTranscript<G>>::append_point(transcript, b"R", R);
+      challenges.push(<_ as ProofTranscript<G>>::challenge_scalar(
         transcript, b"u",
       ));
     }
@@ -221,7 +221,7 @@ impl<G: CurveGroup> BulletReductionProof<G> {
     &self,
     n: usize,
     a: &[G::ScalarField],
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
     Gamma: &G,
     G: &[G],
   ) -> Result<(G, G, G::ScalarField), ProofVerifyError> {

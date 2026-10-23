@@ -7,7 +7,7 @@ use super::sparse_mlpoly::{
   SparseMatPolyCommitmentGens, SparseMatPolyEvalProof, SparseMatPolynomial,
 };
 use super::timer::Timer;
-use super::transcript::AppendToTranscript;
+use super::transcript::{AppendToTranscript, ProofTranscript};
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::*;
@@ -25,7 +25,7 @@ pub struct R1CSInstance<F: PrimeField> {
 }
 
 impl<G: CurveGroup> AppendToTranscript<G> for R1CSInstance<G::ScalarField> {
-  fn append_to_transcript(&self, _label: &'static [u8], transcript: &mut Transcript) {
+  fn append_to_transcript(&self, _label: &'static [u8], transcript: &mut impl ProofTranscript<G>) {
     let mut data = vec![];
     self.serialize_compressed(&mut data).unwrap();
 
@@ -63,7 +63,7 @@ pub struct R1CSCommitment<G: CurveGroup> {
 }
 
 impl<G: CurveGroup> AppendToTranscript<G> for R1CSCommitment<G> {
-  fn append_to_transcript(&self, _label: &'static [u8], transcript: &mut Transcript) {
+  fn append_to_transcript(&self, _label: &'static [u8], transcript: &mut impl ProofTranscript<G>) {
     transcript.append_u64(b"num_cons", self.num_cons as u64);
     transcript.append_u64(b"num_vars", self.num_vars as u64);
     transcript.append_u64(b"num_inputs", self.num_inputs as u64);
@@ -331,7 +331,7 @@ impl<G: CurveGroup> R1CSEvalProof<G> {
     ry: &[G::ScalarField],
     evals: &(G::ScalarField, G::ScalarField, G::ScalarField),
     gens: &R1CSCommitmentGens<G>,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
     random_tape: &mut RandomTape<G>,
   ) -> R1CSEvalProof<G> {
     let timer = Timer::new("R1CSEvalProof::prove");
@@ -356,7 +356,7 @@ impl<G: CurveGroup> R1CSEvalProof<G> {
     ry: &[G::ScalarField],
     evals: &(G::ScalarField, G::ScalarField, G::ScalarField),
     gens: &R1CSCommitmentGens<G>,
-    transcript: &mut Transcript,
+    transcript: &mut impl ProofTranscript<G>,
   ) -> Result<(), ProofVerifyError> {
     self.proof.verify(
       &comm.comm,

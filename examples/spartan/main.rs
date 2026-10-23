@@ -30,14 +30,14 @@ where
 {
     const K_NNZ_PER_ROW: usize = 1;
     let num_vars = w.len() + io.len() + 1;
-    assert_eq!(num_vars, m, "z = w ++ io ++ [1] must have length m");
+    assert_eq!(num_vars, m, "z = w ++ [1] ++ io must have length m");
 
     let mut z = Vec::with_capacity(m);
     z.extend_from_slice(w);
-    z.extend_from_slice(io);
     z.push(F::from(1u64));
+    z.extend_from_slice(io);
 
-    let const_col = m - 1;
+    let const_col = w.len();
     let pick_k_cols = |rng: &mut R, force_include: Option<usize>| -> Vec<usize> {
         let mut cols: Vec<usize> = Vec::with_capacity(K_NNZ_PER_ROW);
         if let Some(c) = force_include {
@@ -131,8 +131,8 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkCurve2551
 
     let mut z: Vec<F> = Vec::with_capacity(num_cons);
     z.extend_from_slice(&witness);
-    z.extend_from_slice(&instance);
     z.push(one);
+    z.extend_from_slice(&instance);
 
     let mut az: Vec<F> = vec![F::from(0u64); num_cons];
     let mut bz: Vec<F> = vec![F::from(0u64); num_cons];
@@ -174,14 +174,17 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkCurve2551
 
     let g_vec_proj: Vec<G1> = (0..ncols).map(|_| G1::rand(&mut rng)).collect();
     let g_vec_aff = G1::normalize_batch(&g_vec_proj);
-    let g_base_w = G1::rand(&mut rng);
-    let h_base_w = G1::rand(&mut rng);
-
-    let g_evs_d3_proj: Vec<G1> = (0..4).map(|_| G1::rand(&mut rng)).collect();
-    let g_evs_d3_aff = G1::normalize_batch(&g_evs_d3_proj);
-    let g_evs_d2_proj: Vec<G1> = (0..3).map(|_| G1::rand(&mut rng)).collect();
-    let g_evs_d2_aff = G1::normalize_batch(&g_evs_d2_proj);
-    let h_evs = G1::rand(&mut rng);
+    // libspartan's generators: `gens_1` (g_1, h_1, shared by the PCS and the
+    // sumchecks), and `gens_4`, `gens_3` for the round polynomials, each with its
+    // own blinding base.
+    let g_1 = G1::rand(&mut rng);
+    let h_1 = G1::rand(&mut rng);
+    let g_4_proj: Vec<G1> = (0..4).map(|_| G1::rand(&mut rng)).collect();
+    let g_4 = G1::normalize_batch(&g_4_proj);
+    let h_4 = G1::rand(&mut rng);
+    let g_3_proj: Vec<G1> = (0..3).map(|_| G1::rand(&mut rng)).collect();
+    let g_3 = G1::normalize_batch(&g_3_proj);
+    let h_3 = G1::rand(&mut rng);
 
     let placeholder_tau: Vec<F> = vec![F::from(0u64); m];
 
@@ -195,17 +198,12 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkCurve2551
         (Vid("bz".to_string()), Value::vec_scalar(bz)),
         (Vid("cz".to_string()), Value::vec_scalar(cz)),
         (Vid("g_vec_w".to_string()), Value::vec_g1_affine(g_vec_aff)),
-        (Vid("g_base_w".to_string()), Value::g1(g_base_w)),
-        (Vid("h_base_w".to_string()), Value::g1(h_base_w)),
-        (
-            Vid("g_evs_d3".to_string()),
-            Value::vec_g1_affine(g_evs_d3_aff),
-        ),
-        (
-            Vid("g_evs_d2".to_string()),
-            Value::vec_g1_affine(g_evs_d2_aff),
-        ),
-        (Vid("h_evs".to_string()), Value::g1(h_evs)),
+        (Vid("g_1".to_string()), Value::g1(g_1)),
+        (Vid("h_1".to_string()), Value::g1(h_1)),
+        (Vid("g_4".to_string()), Value::vec_g1_affine(g_4)),
+        (Vid("h_4".to_string()), Value::g1(h_4)),
+        (Vid("g_3".to_string()), Value::vec_g1_affine(g_3)),
+        (Vid("h_3".to_string()), Value::g1(h_3)),
         (
             Vid("placeholder_tau".to_string()),
             Value::vec_scalar(placeholder_tau),

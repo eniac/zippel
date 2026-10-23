@@ -2,8 +2,8 @@
 //! values) or sparse (`(index, value)` entries, an index listed twice taking the sum and an
 //! unlisted one zero). Variable `i` is bit `i` of an index.
 //!
-//! Each operation reads the table alone. A result that may or may not stay sparse is encoded
-//! by its density ([`from_entries`]); the rest of the module never builds a table itself.
+//! Each operation reads the table alone. Sparse-input results are encoded by their actual
+//! density, with dense scratch tables bounded by the number of stored input entries.
 
 use crate::Field;
 use lang::typ::CRange;
@@ -166,6 +166,25 @@ pub(super) fn fix_low<F: Field>(
                 .collect(),
         ),
         Table::Sparse(evals) => {
+            let remaining = num_vars - k;
+            if let Some(len) = 1usize.checked_shl(u32::try_from(remaining).unwrap_or(u32::MAX))
+                && len <= evals.len().saturating_mul(SPARSE_MAX_FILL)
+            {
+                let values = fix_sparse_into_dense(evals, point, len);
+                let nonzero = values.iter().filter(|v| !v.is_zero()).count();
+                return if nonzero.saturating_mul(SPARSE_MAX_FILL) > len {
+                    dense_mle(remaining, values)
+                } else {
+                    PolyVariant::SparseMle {
+                        num_vars: remaining,
+                        evals: values
+                            .into_iter()
+                            .enumerate()
+                            .filter(|(_, v)| !v.is_zero())
+                            .collect(),
+                    }
+                };
+            }
             let one_minus: Vec<F> = point.iter().map(|r| F::one() - r).collect();
             from_entries(
                 num_vars - k,
@@ -175,6 +194,27 @@ pub(super) fn fix_low<F: Field>(
             )
         }
     }
+}
+
+/// Accumulate directly when the output table is bounded by the stored input size.
+/// Keep the arithmetic loop separate from representation selection: inlining it into
+/// the dispatch regresses the sparse matrix partial evaluations used by Spartan.
+#[inline(never)]
+fn fix_sparse_into_dense<F: Field>(evals: &[(usize, F)], point: &[F], len: usize) -> Vec<F> {
+    let k = point.len();
+    let one_minus: Vec<F> = point.iter().map(|r| F::one() - r).collect();
+    let mut out = vec![F::zero(); len];
+    for &(i, v) in evals {
+        let weighted = (0..k).fold(v, |acc, j| {
+            acc * if (i >> j) & 1 == 1 {
+                point[j]
+            } else {
+                one_minus[j]
+            }
+        });
+        out[i >> k] += weighted;
+    }
+    out
 }
 
 /// The extension over `input_num_vars` variables with every variable outside `free_range`

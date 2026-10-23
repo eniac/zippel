@@ -166,6 +166,40 @@ fn fixing_a_large_sparse_mle_stays_sparse() {
     );
 }
 
+/// Direct accumulation still selects the output encoding after collisions, cancellation
+/// and zero weights, including the quarter-full boundary.
+#[test]
+fn fixing_sparse_mles_preserves_sparsity_after_accumulation() {
+    let one = Fr::one();
+    let cases = [
+        (
+            vec![
+                (0, one),
+                (0, -one),
+                (2, Fr::from(3)),
+                (3, Fr::from(6)),
+                (8, one),
+                (8, -one),
+                (24, one),
+                (24, -one),
+            ],
+            Fr::from(2),
+        ),
+        ((0..8).map(|i| (2 * i + 1, one)).collect(), Fr::zero()),
+        ((0..8).map(|i| (2 * i + 1, one)).collect(), Fr::from(2)),
+        ((0..9).map(|i| (2 * i + 1, one)).collect(), Fr::from(2)),
+    ];
+    for (evals, point) in cases {
+        let poly = PolyVariant::SparseMle { num_vars: 6, evals };
+        let fixed = poly.evaluate_or_fix(&[point]).unwrap();
+        assert_encoded_by_density(&fixed, 5);
+        assert_eq!(
+            fixed.to_dense(),
+            poly.to_dense().evaluate_or_fix(&[point]).unwrap()
+        );
+    }
+}
+
 /// A selected evaluation (`eval<range>`) of a sparse MLE matches its dense table's and is
 /// encoded by density: few fixed variables leave a sparse result, many a dense one.
 #[test]

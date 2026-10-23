@@ -3,13 +3,13 @@
 //! scheduler reads on every step, computed once here: each node's distinct
 //! successors, the nodes ready at the start, the input marker and the checks.
 
+use crate::eval::Sampler;
 use crate::eval::error::EvalError;
 use backend::{Backend, Value};
 use graph::{Dag, GOp, Node, Op, UDag};
 use lang::ast::Exclusion;
 use petgraph::Direction;
 use petgraph::graph::NodeIndex;
-use rand::rngs::ThreadRng;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -185,13 +185,14 @@ impl<C: Backend> MutexGraph<C> {
     pub(crate) fn evaluate(
         &self,
         node: NodeIndex,
+        sampler: &mut impl Sampler<C>,
     ) -> Result<(Value<C>, Option<bool>), RuntimeError> {
         let (Node::Op(op, state) | Node::Transcr(op, state)) = &self.dag[node] else {
             unreachable!("node {node:?} has nothing to compute")
         };
         let env = state.inbox.take_all();
         let mut checks = Vec::new();
-        let value = match crate::eval::eval_op(op, &env, &mut ThreadRng::default(), &mut checks) {
+        let value = match crate::eval::eval_op(op, &env, sampler, &mut checks) {
             Err(EvalError::DivisionByZero) => return Err(RuntimeError::DivisionByZero),
             value => {
                 value.expect("runtime invariant violation: eval_op failed on a scheduled node")
@@ -219,7 +220,7 @@ impl<C: Backend> MutexGraph<C> {
         let env = state.inbox.take_all();
         exclusion.clone().map(|x| {
             x.map_order(|n| n.node).map_values(|v| {
-                crate::eval::eval_op(&v, &env, &mut ThreadRng::default(), &mut Vec::new())
+                crate::eval::eval_op(&v, &env, &mut crate::eval::PureBody, &mut Vec::new())
                     .expect("runtime invariant violation: an exclusion failed to evaluate")
             })
         })
