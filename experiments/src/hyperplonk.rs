@@ -1,6 +1,6 @@
 //! HyperPlonk comparison, end to end (PIOP + PCS): zippel-compiled
 //! `examples/hyperplonk_snark/hyperplonk_snark.zippel` vs. Espresso's
-//! HyperPlonk (ported to arkworks 0.6 in `src/hyperplonk_upstream/`), both on
+//! HyperPlonk (ported to arkworks 0.6 in `src/upstream/hyperplonk/`), both on
 //! BLS12-381 with multilinear KZG.
 //!
 //! Statement on both sides: a vanilla-Plonk circuit of 2^N gates (three
@@ -23,7 +23,7 @@
 use crate::Timing;
 
 pub mod shared {
-    use crate::hyperplonk_upstream::{
+    use crate::upstream::hyperplonk::{
         CustomizedGates, HyperPlonkProvingKey, HyperPlonkVerifyingKey, MockCircuit,
         MultilinearUniversalParams, preprocess,
     };
@@ -68,8 +68,8 @@ pub mod shared {
                 selectors: c.index.selectors,
             }
         });
-        let index = crate::hyperplonk_upstream::snark::HyperPlonkIndex {
-            params: crate::hyperplonk_upstream::snark::HyperPlonkParams {
+        let index = crate::upstream::hyperplonk::snark::HyperPlonkIndex {
+            params: crate::upstream::hyperplonk::snark::HyperPlonkParams {
                 num_constraints: 1 << nv,
                 num_pub_input: stored.public_inputs.len(),
                 gate_func: gate,
@@ -239,7 +239,7 @@ pub mod zippel_side {
 
 pub mod native_side {
     use super::*;
-    use crate::hyperplonk_upstream::{IOPTranscript, prove, verify};
+    use crate::upstream::hyperplonk::{IOPTranscript, prove, verify};
 
     pub struct Setup<'a> {
         sh: &'a shared::Shared,
@@ -291,10 +291,10 @@ pub mod native_side {
 mod cross_tests {
     use super::{shared, zippel_side};
     use crate::cross::{Challenges, Direction};
-    use crate::hyperplonk_upstream::pcs::{BatchProof, Commitment, MultilinearKzgProof};
-    use crate::hyperplonk_upstream::piop::ProductCheckProof;
-    use crate::hyperplonk_upstream::{HyperPlonkProof, IOPTranscript, prove, verify};
-    use crate::sumcheck_upstream::poly_iop::structs::{IOPProof, IOPProverMessage};
+    use crate::upstream::hyperplonk::pcs::{BatchProof, Commitment, MultilinearKzgProof};
+    use crate::upstream::hyperplonk::piop::ProductCheckProof;
+    use crate::upstream::hyperplonk::{HyperPlonkProof, IOPTranscript, prove, verify};
+    use crate::upstream::sumcheck::poly_iop::structs::{IOPProof, IOPProverMessage};
     use ark_bls12_381::{Bls12_381, Fr, G1Affine};
     use ark_ec::CurveGroup;
     use backend::{ArkBls12_381, Value};

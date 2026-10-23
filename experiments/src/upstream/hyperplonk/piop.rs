@@ -2,16 +2,16 @@
 //!
 //! The `ZeroCheck` / `ProductCheck` / `PermutationCheck` traits on `PolyIOP`
 //! are flattened into free functions with upstream's bodies; the sumcheck
-//! they sit on is `crate::sumcheck_upstream`.
+//! they sit on is `crate::upstream::sumcheck`.
 
 use super::PolyIOPErrors;
 use super::pcs::{self, Commitment, MultilinearProverParam};
-use crate::sumcheck_upstream::arithmetic::{
+use crate::upstream::sumcheck::arithmetic::{
     VPAuxInfo, VirtualPolynomial, eq_eval, get_index, identity_permutation_mles,
 };
-use crate::sumcheck_upstream::poly_iop::structs::IOPProof;
-use crate::sumcheck_upstream::poly_iop::{PolyIOP, SumCheck};
-use crate::sumcheck_upstream::transcript::IOPTranscript;
+use crate::upstream::sumcheck::poly_iop::structs::IOPProof;
+use crate::upstream::sumcheck::poly_iop::{PolyIOP, SumCheck};
+use crate::upstream::sumcheck::transcript::IOPTranscript;
 use ark_ec::pairing::Pairing;
 use ark_ff::{One, PrimeField, Zero, batch_inversion};
 use ark_poly::DenseMultilinearExtension;

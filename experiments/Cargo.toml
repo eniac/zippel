@@ -23,7 +23,7 @@ needless_range_loop = "allow"
 default = ["parallel", "multicore"]
 parallel = ["ark-std/parallel", "ark-ff/parallel", "ark-ec/parallel", "ark-poly/parallel"]
 # `multicore` is a no-op feature that just unlocks the `#[cfg(feature =
-# "multicore")]` branches inside the vendored `ark_spartan_upstream`
+# "multicore")]` branches inside the vendored `upstream::ark_spartan`
 # module. It doesn't gate any dep — rayon is unconditional workspace-wide.
 multicore = []
 sol = []
@@ -42,7 +42,7 @@ lang = { path = "../lang" }
 # otherwise `DenseMultilinearExtension` from this crate is a different
 # type than the one backend's PolyVariant accepts. Used everywhere now
 # that the hyperplonk sumcheck stack has been vendored under
-# `src/sumcheck_upstream/`.
+# `src/upstream/sumcheck/`.
 ark-ff = "0.6"
 ark-poly = "0.6"
 ark-ec = "0.6"
@@ -73,7 +73,7 @@ bincode = "1.3"
 serde = { version = "1", features = ["derive"] }
 
 # Second native Spartan baseline: ark-spartan (Zhang's arkworks port of
-# Setty's Spartan), vendored under `src/ark_spartan_upstream/` and
+# Setty's Spartan), vendored under `src/upstream/ark_spartan/` and
 # hand-ported from arkworks 0.3 → 0.6 in-place. Runs on the SAME
 # `ark-curve25519 0.6` scalar/group types as the zippel side, so the
 # zippel-vs-ark-spartan comparison is same-curve, same-ark-version —
@@ -88,7 +88,7 @@ subtle = "2"
 zeroize = "1"
 
 # Native PARI baseline: code vendored from alireza-shirzad/garuda-pari
-# (see experiments/src/pari_upstream/). Uses the workspace's crates.io
+# (see experiments/src/upstream/pari/). Uses the workspace's crates.io
 # 0.6 arkworks set. `ark-relations` (with the gr1cs API) comes from
 # crates.io 0.6. `displaydoc` is for transcript errors.
 #
@@ -121,7 +121,6 @@ dhat = { version = "0.3", optional = true }
 libc = "0.2"
 
 [dev-dependencies]
-criterion = "0.5"
 # The test-only copy of spartan 0.9 retains its original hashing and instance digest.
 digest_08 = { package = "digest", version = "0.8" }
 sha3_08 = { package = "sha3", version = "0.8" }
@@ -139,10 +138,6 @@ path = "src/bin/sumcheck.rs"
 [[bin]]
 name = "dalek_msm"
 path = "src/bin/dalek_msm.rs"
-
-[[bin]]
-name = "schnorr"
-path = "src/bin/schnorr.rs"
 
 [[bin]]
 name = "ipa"
@@ -192,41 +187,7 @@ name = "spartan_bench"
 path = "src/bin/spartan_bench.rs"
 
 [[bin]]
-name = "spartan_compare"
-path = "src/bin/spartan_compare.rs"
-
-[[bin]]
-# Phase-0 ceiling test for a dot_batch primitive: does a shared-setup
-# batched Pippenger beat K independent arkworks msm calls at the
-# Spartan row-commit shapes? See the bin's doc comment for the
-# decision rule.
-name = "msm_batch_ceiling"
-path = "src/bin/msm_batch_ceiling.rs"
-
-[[bin]]
 # One MSM and three independent MSMs: native arkworks against zippel's
 # backend call and a zippel protocol, under RAYON_NUM_THREADS.
 name = "msm_micro"
 path = "src/bin/msm_micro.rs"
-
-[[bin]]
-# Same-binary head-to-head of zippel's c_rows loop vs ark-spartan's
-# DensePolynomial::commit — re-attribution of the M=17->18 "MSM cliff".
-name = "commit_head_to_head"
-path = "src/bin/commit_head_to_head.rs"
-
-[[bench]]
-name = "sumcheck"
-harness = false
-
-[[bench]]
-name = "schnorr"
-harness = false
-
-[[bench]]
-name = "ipa"
-harness = false
-
-[[bench]]
-name = "kzg"
-harness = false

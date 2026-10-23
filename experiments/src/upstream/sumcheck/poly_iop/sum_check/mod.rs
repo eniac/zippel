@@ -11,8 +11,8 @@ use super::{
     structs::{IOPProof, IOPProverState, IOPVerifierState},
     PolyIOP,
 };
-use crate::sumcheck_upstream::arithmetic::{VPAuxInfo, VirtualPolynomial};
-use crate::sumcheck_upstream::transcript::IOPTranscript;
+use crate::upstream::sumcheck::arithmetic::{VPAuxInfo, VirtualPolynomial};
+use crate::upstream::sumcheck::transcript::IOPTranscript;
 use ark_ff::PrimeField;
 use ark_poly::DenseMultilinearExtension;
 use ark_std::{end_timer, start_timer};

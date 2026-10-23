@@ -7,8 +7,8 @@
 //! Prover subroutines for a SumCheck protocol.
 
 use super::SumCheckProver;
-use crate::sumcheck_upstream::arithmetic::{fix_variables, VirtualPolynomial};
-use crate::sumcheck_upstream::poly_iop::{
+use crate::upstream::sumcheck::arithmetic::{fix_variables, VirtualPolynomial};
+use crate::upstream::sumcheck::poly_iop::{
     errors::PolyIOPErrors,
     structs::{IOPProverMessage, IOPProverState},
 };

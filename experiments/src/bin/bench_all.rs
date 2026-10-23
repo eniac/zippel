@@ -23,7 +23,7 @@
 //!   spartan  : M           (num_constraints = 2^M)
 //!
 //! Thread sweeping is done by running this binary multiple times with
-//! different `RAYON_NUM_THREADS`. The wrapper script `run_sweep.sh` does that
+//! different `RAYON_NUM_THREADS`. The wrapper script `run_all.sh` does that
 //! and concatenates the CSVs. We tried `rayon::ThreadPool::install` to vary
 //! threads in-process, but arkworks' `parallel` feature hangs on a
 //! single-thread pool installed mid-process — running with the global pool
@@ -715,7 +715,7 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
             // as libspartan above.
             let ark_native = {
                 use ark_curve25519::EdwardsProjective as C25519;
-                use experiments::ark_spartan_upstream::{
+                use experiments::upstream::ark_spartan::{
                     Instance as ArkInstance, NIZK as ArkNIZK, NIZKGens as ArkNIZKGens,
                 };
 
@@ -884,7 +884,7 @@ fn setup_pool() -> &'static rayon::ThreadPool {
 // `R1CSProof`). Rationale: a rayon `par_iter` issued from a thread
 // OUTSIDE the pool recruits extra effective compute beyond the
 // RAYON_NUM_THREADS=1 worker (measured ~1.5x on the M=18 Hyrax
-// row-commit block — see `bin/commit_head_to_head.rs`), so at
+// row-commit block — see the retired same-process commitment probe), so at
 // "threads=1" an unconfined native prover runs on ~1.5 cores while
 // the zippel runtime — whose compute is `rayon::spawn`ed onto the
 // global pool with the main thread only coordinating — runs on 1.

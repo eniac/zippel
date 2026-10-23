@@ -7,12 +7,12 @@
 //! Verifier subroutines for a SumCheck protocol.
 
 use super::{SumCheckSubClaim, SumCheckVerifier};
-use crate::sumcheck_upstream::arithmetic::VPAuxInfo;
-use crate::sumcheck_upstream::poly_iop::{
+use crate::upstream::sumcheck::arithmetic::VPAuxInfo;
+use crate::upstream::sumcheck::poly_iop::{
     errors::PolyIOPErrors,
     structs::{IOPProverMessage, IOPVerifierState},
 };
-use crate::sumcheck_upstream::transcript::IOPTranscript;
+use crate::upstream::sumcheck::transcript::IOPTranscript;
 use ark_ff::PrimeField;
 use ark_std::{end_timer, start_timer};
 
@@ -318,7 +318,7 @@ fn u64_factorial(a: usize) -> u64 {
 #[cfg(test)]
 mod test {
     use super::interpolate_uni_poly;
-    use crate::sumcheck_upstream::poly_iop::errors::PolyIOPErrors;
+    use crate::upstream::sumcheck::poly_iop::errors::PolyIOPErrors;
     use ark_bls12_381::Fr;
     use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, Polynomial};
     use ark_std::{vec::Vec, UniformRand};

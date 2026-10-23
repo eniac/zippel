@@ -195,7 +195,7 @@ pub mod shared {
 // ---------------------------------------------------------------------------
 
 /// Native PST13 baseline: VENDORED + PATCHED `MultilinearPC` from
-/// ark-poly-commit-0.6 (see `crate::pst13_upstream`). Two algorithmic
+/// ark-poly-commit-0.6 (see `crate::upstream::pst13`). Two algorithmic
 /// fixes vs upstream:
 ///   1. `open()` collapses each round's MSM from 2^k → 2^(k-1) by
 ///      pre-summing adjacent base pairs (upstream silently does an
@@ -217,8 +217,8 @@ pub mod native_side {
     use ark_poly::{DenseMultilinearExtension, MultilinearExtension, Polynomial};
     use ark_std::rand::SeedableRng;
 
-    use crate::pst13_upstream::MultilinearPC;
-    use crate::pst13_upstream::data_structures::{CommitterKey, VerifierKey};
+    use crate::upstream::pst13::MultilinearPC;
+    use crate::upstream::pst13::data_structures::{CommitterKey, VerifierKey};
 
     type Pcs = MultilinearPC<Bls12_381>;
 
@@ -245,7 +245,7 @@ pub mod native_side {
             // per call (cheap slice over cached params). Seed is fixed
             // per `n` so the cache key is well-defined.
             let pp = crate::cache::load_or_build_canonical::<
-                crate::pst13_upstream::data_structures::UniversalParams<Bls12_381>,
+                crate::upstream::pst13::data_structures::UniversalParams<Bls12_381>,
             >("pst13_universal_params", n, || {
                 let mut seed_bytes = [0u8; 32];
                 seed_bytes[..8].copy_from_slice(&(0xC0FFEE_u64 ^ n as u64).to_le_bytes());
@@ -294,7 +294,7 @@ pub mod native_side {
             // up SLOWER than t=4 (broken scaling) when commit and open
             // ran concurrently. Sequential dispatch lets each phase
             // own the worker pool exclusively; open's internal
-            // pipelining (in `pst13_upstream::open`) is preserved and
+            // pipelining (in `pst13::open`) is preserved and
             // still gives the t=1,2,4 wins.
             let (prove, prove_peak, (comm, proof)) = crate::sample(|| {
                 let comm = Pcs::commit(&self.ck, &poly);

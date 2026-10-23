@@ -7,12 +7,12 @@
 //! by 0.6's `ScalarMul::batch_mul`, which is the same fixed-base method.
 
 use super::PolyIOPErrors;
-use crate::sumcheck_upstream::arithmetic::{
+use crate::upstream::sumcheck::arithmetic::{
     VPAuxInfo, VirtualPolynomial, build_eq_x_r_vec, eq_eval, evaluate_opt,
 };
-use crate::sumcheck_upstream::poly_iop::structs::IOPProof;
-use crate::sumcheck_upstream::poly_iop::{PolyIOP, SumCheck};
-use crate::sumcheck_upstream::transcript::IOPTranscript;
+use crate::upstream::sumcheck::poly_iop::structs::IOPProof;
+use crate::upstream::sumcheck::poly_iop::{PolyIOP, SumCheck};
+use crate::upstream::sumcheck::transcript::IOPTranscript;
 use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_ec::scalar_mul::{ScalarMul, variable_base::VariableBaseMSM};
 use ark_ec::{AffineRepr, CurveGroup};

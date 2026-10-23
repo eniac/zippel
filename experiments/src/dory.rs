@@ -1,6 +1,6 @@
 //! Dory PCS comparison: zippel-compiled `examples/dory_pcs/dory_pcs.zippel`
 //! vs. a16z's `dory-pcs` transparent mode (ported to arkworks 0.6 in
-//! `src/dory_upstream/`), both on BLS12-381.
+//! `src/upstream/dory/`), both on BLS12-381.
 //!
 //! Statement on both sides: the prover knows a multilinear f with 2^(2K)
 //! coefficients (a 2^K × 2^K matrix); it commits and proves f(point) = y.
@@ -20,7 +20,7 @@
 use crate::Timing;
 
 pub mod shared {
-    use crate::dory_upstream::{self as dory, ProverSetup, VerifierSetup};
+    use crate::upstream::dory::{self as dory, ProverSetup, VerifierSetup};
     use ark_bls12_381::Fr;
     use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
     use ark_std::UniformRand;
@@ -217,7 +217,7 @@ pub mod zippel_side {
 
 pub mod native_side {
     use super::*;
-    use crate::dory_upstream::{self as dory, Blake2bTranscript, PreparedCache};
+    use crate::upstream::dory::{self as dory, Blake2bTranscript, PreparedCache};
 
     pub struct Setup<'a> {
         sh: &'a shared::Shared,
@@ -281,7 +281,7 @@ pub mod native_side {
 mod cross_tests {
     use super::{shared, zippel_side};
     use crate::cross::{Challenges, Direction};
-    use crate::dory_upstream::{
+    use crate::upstream::dory::{
         self as dory, Blake2bTranscript, DoryProof, FirstReduceMessage, GT, PreparedCache,
         ScalarProductMessage, SecondReduceMessage, VMVMessage,
     };

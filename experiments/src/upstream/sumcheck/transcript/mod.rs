@@ -131,7 +131,7 @@ impl<F: PrimeField> IOPTranscript<F> {
 }
 
 // Note: the upstream defined a `#[macro_export] to_bytes_local!` here, but
-// `pari_upstream` already exports a sibling macro of the same name and
+// `pari` already exports a sibling macro of the same name and
 // `#[macro_export]` is whole-crate scope. The two call sites above use
 // `to_bytes_local` instead — a module-scoped, non-exported equivalent.
 macro_rules! to_bytes_local {

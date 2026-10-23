@@ -58,7 +58,7 @@
 //! parallelizes each individual MSM. Matches the zippel side's dataflow
 //! advantage observed in earlier benches.
 
-use crate::pst13_upstream::data_structures::{
+use crate::upstream::pst13::data_structures::{
     Commitment, CommitterKey, Proof, UniversalParams, VerifierKey,
 };
 use ark_ec::{
