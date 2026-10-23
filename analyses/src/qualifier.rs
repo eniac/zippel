@@ -204,7 +204,7 @@ mod tests {
     use super::*;
     use crate::tests::lowered;
     use backend::ArkBls12_381;
-    use backend::op::mk;
+    use backend::ir::op::mk;
     use graph::Node;
     use lang::typ::Qualifier;
     use share::unwrap;

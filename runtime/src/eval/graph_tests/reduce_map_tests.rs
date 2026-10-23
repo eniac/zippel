@@ -9,7 +9,6 @@ use graph::{GOp, Op, Ref, UDags, mk};
 use lang::ast::BinOp;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
-use serial_test::serial;
 use share::Ctx;
 use std::collections::HashMap;
 
@@ -251,11 +250,9 @@ fn map_eval_doubles_each_element() {
 }
 
 #[test]
-#[serial]
-fn test_reduce_map_fused_optimization_fires() {
+fn reduce_map_over_the_hypercube_sums_the_round() {
     for free_variable in 0..3 {
         use crate::eval::graph_tests::helpers::execute_graph;
-        use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
 
         // A helper function returning the computed round polynomial
         let src = r#"
@@ -280,20 +277,10 @@ fn test_reduce_map_fused_optimization_fires() {
         let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
         inputs.insert(&lang::id::Vid::from("p"), &poly_val.clone());
 
-        reset_optimization_stats();
-        let before = optimization_stats_snapshot();
-        assert_eq!(before.canonical_sumcheck_rows_seen, 0);
-        assert_eq!(before.canonical_sumcheck_rows_fused, 0);
-
         let result = execute_graph(dag, inputs).unwrap();
         let Value::Poly(got_poly) = result else {
             panic!("Expected a polynomial result, found {:?}", result);
         };
-
-        let after = optimization_stats_snapshot();
-        // Optimization must fire
-        assert_eq!(after.canonical_sumcheck_rows_seen, 1);
-        assert_eq!(after.canonical_sumcheck_rows_fused, 1);
 
         // Verify mathematical correctness of the optimized result:
         // Sum all Boolean assignments outside the selected variable.
@@ -324,13 +311,11 @@ fn test_reduce_map_fused_optimization_fires() {
 }
 
 #[test]
-#[serial]
-fn test_reduce_map_fused_optimization_skips_non_pow_two() {
+fn reduce_map_over_a_non_power_of_two_domain_sums_it() {
     use crate::eval::graph_tests::helpers::execute_graph;
-    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
 
-    // Domain size 3 is not a power of 2, so the optimization must be skipped,
-    // but the fallback path should execute correctly and return the correct polynomial.
+    // Domain size 3 is not a power of 2, so this is not a hypercube sum; the result is
+    // still the sum of the mapped polynomials.
     let src = r#"
         fn test_no_opt<F: Field>(witness p: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
             let zero: F = 0;
@@ -352,20 +337,12 @@ fn test_reduce_map_fused_optimization_skips_non_pow_two() {
     let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
     inputs.insert(&lang::id::Vid::from("p"), &poly_val.clone());
 
-    reset_optimization_stats();
-    let before = optimization_stats_snapshot();
-    assert_eq!(before.canonical_sumcheck_rows_seen, 0);
-    assert_eq!(before.canonical_sumcheck_rows_fused, 0);
-
     let result = execute_graph(dag, inputs).unwrap();
     let Value::Poly(got_poly) = result else {
         panic!("Expected a polynomial result, found {:?}", result);
     };
 
-    let after = optimization_stats_snapshot();
     // Optimization does not fire
-    assert_eq!(after.canonical_sumcheck_rows_seen, 0);
-    assert_eq!(after.canonical_sumcheck_rows_fused, 0);
 
     // Verify mathematical correctness of the fallback result:
     // R(t) = Sum_{i ∈ 0..3} P(t, tail_i)
@@ -393,13 +370,11 @@ fn test_reduce_map_fused_optimization_skips_non_pow_two() {
 }
 
 #[test]
-#[serial]
-fn test_reduce_map_fused_optimization_skips_multiplicative() {
+fn multiplicative_reduce_map_multiplies() {
     use crate::eval::graph_tests::helpers::execute_graph;
-    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
 
-    // Multiplicative reduction should not match, so optimization must be skipped,
-    // but the fallback path should execute correctly and return the correct polynomial.
+    // A multiplicative reduction is not a sumcheck round; the result is the product of
+    // the mapped polynomials.
     let src = r#"
         fn test_mul_no_opt<F: Field>(witness p: Poly<F, 3, 1>) -> Poly<F, 1, 4> {
             let zero: F = 0;
@@ -421,20 +396,12 @@ fn test_reduce_map_fused_optimization_skips_multiplicative() {
     let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
     inputs.insert(&lang::id::Vid::from("p"), &poly_val.clone());
 
-    reset_optimization_stats();
-    let before = optimization_stats_snapshot();
-    assert_eq!(before.canonical_sumcheck_rows_seen, 0);
-    assert_eq!(before.canonical_sumcheck_rows_fused, 0);
-
     let result = execute_graph(dag, inputs).unwrap();
     let Value::Poly(got_poly) = result else {
         panic!("Expected a polynomial result, found {:?}", result);
     };
 
-    let after = optimization_stats_snapshot();
     // Optimization does not fire
-    assert_eq!(after.canonical_sumcheck_rows_seen, 0);
-    assert_eq!(after.canonical_sumcheck_rows_fused, 0);
 
     // Verify mathematical correctness of the fallback result:
     // R(t) = Product_{b ∈ {0,1}^2} P(t, b)
@@ -462,17 +429,14 @@ fn test_reduce_map_fused_optimization_skips_multiplicative() {
 }
 
 #[test]
-#[serial]
-fn test_reduce_map_fused_optimization_fallback_on_non_mle() {
+fn reduce_map_over_a_non_mle_sums_the_round() {
     use crate::eval::graph_tests::helpers::execute_graph;
-    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
-    use backend::poly_variant::{Multivariate, Term};
+    use backend::poly::variant::{Multivariate, Term};
     use backend::{PolyVariant, VirtualPolynomial};
 
     // Poly<F, 3, 2> is a polynomial of 3 variables and max degree 2 (non-MLE).
-    // The optimization should still match at graph level (additive, canonical range, domain size 4),
-    // and route to value_hypercube_reduce_selected, which should detect it's not MLE and
-    // fallback to generic evaluation, computing the correct polynomial and not triggering errors.
+    // A hypercube sum of a polynomial that is not multilinear: the round is still the
+    // sum over the hypercube.
     let src = r#"
         fn test_non_mle<F: Field>(witness p: Poly<F, 3, 2>) -> Poly<F, 1, 2> {
             let zero: F = 0;
@@ -502,21 +466,13 @@ fn test_reduce_map_fused_optimization_fallback_on_non_mle() {
     let poly_val = Value::poly(VirtualPolynomial::from_poly(poly_variant));
     inputs.insert(&lang::id::Vid::from("p"), &poly_val);
 
-    reset_optimization_stats();
-    let before = optimization_stats_snapshot();
-    assert_eq!(before.canonical_sumcheck_rows_seen, 0);
-    assert_eq!(before.canonical_sumcheck_rows_fused, 0);
-
     let result = execute_graph(dag, inputs).unwrap();
     let Value::Poly(got_poly) = result else {
         panic!("Expected a polynomial result, found {:?}", result);
     };
 
-    let after = optimization_stats_snapshot();
     // Optimization kernel is entered (seen is incremented),
     // and completes with fused counter incremented as well.
-    assert_eq!(after.canonical_sumcheck_rows_seen, 1);
-    assert_eq!(after.canonical_sumcheck_rows_fused, 1);
 
     // Verify mathematical correctness of the result:
     // R(t) = Sum_{b ∈ {0,1}^2} P(t, b)
@@ -530,13 +486,11 @@ fn test_reduce_map_fused_optimization_fallback_on_non_mle() {
 }
 
 #[test]
-#[serial]
-fn test_reduce_map_fused_optimization_skips_modified_loop_param() {
+fn reduce_map_with_a_modified_loop_param_sums_it() {
     use crate::eval::graph_tests::helpers::execute_graph;
-    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
 
     // The loop parameter is modified inside the eval call: eval<0>(p, [t + one for t in tail]).
-    // The optimization must skip because the evaluation points are not the exact loop parameter tail coordinates.
+    // The evaluation points are not the loop parameter's tail coordinates.
     let src = r#"
         fn test_modified<F: Field>(witness p: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
             let zero: F = 0;
@@ -558,20 +512,12 @@ fn test_reduce_map_fused_optimization_skips_modified_loop_param() {
     let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
     inputs.insert(&lang::id::Vid::from("p"), &poly_val.clone());
 
-    reset_optimization_stats();
-    let before = optimization_stats_snapshot();
-    assert_eq!(before.canonical_sumcheck_rows_seen, 0);
-    assert_eq!(before.canonical_sumcheck_rows_fused, 0);
-
     let result = execute_graph(dag, inputs).unwrap();
     let Value::Poly(got_poly) = result else {
         panic!("Expected a polynomial result, found {:?}", result);
     };
 
-    let after = optimization_stats_snapshot();
     // Optimization does not fire because fixed is modified (not exactly the loop parameter)
-    assert_eq!(after.canonical_sumcheck_rows_seen, 0);
-    assert_eq!(after.canonical_sumcheck_rows_fused, 0);
 
     // Verify mathematical correctness of the non-optimized result:
     // R(t) = Sum_{b ∈ {0,1}^2} P(t, b0+1, b1+1)
@@ -605,15 +551,14 @@ fn test_reduce_map_fused_optimization_skips_modified_loop_param() {
 }
 
 #[test]
-#[serial]
-fn test_reduce_map_fused_optimization_skips_poly_depending_on_loop_param() {
+fn reduce_map_with_a_loop_dependent_poly_sums_it() {
     use crate::eval::graph_tests::helpers::execute_graph;
-    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
 
     // Here, the polynomial being evaluated (which is `p` in the eval expression)
     // actually depends on `tail` (the loop parameter).
     // Specifically: eval<0>(eval(poly_factory, [tail[0]]), [tail[1]])
-    // The optimization must decline to fire because `p` is not loop-invariant.
+    // `p` depends on the loop parameter, so it is not one polynomial summed over a
+    // hypercube.
     let src = r#"
         fn test_dependent<F: Field>(witness poly_factory: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
             let zero: F = 0;
@@ -636,29 +581,18 @@ fn test_reduce_map_fused_optimization_skips_poly_depending_on_loop_param() {
     let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
     inputs.insert(&lang::id::Vid::from("poly_factory"), &poly_val.clone());
 
-    reset_optimization_stats();
-    let before = optimization_stats_snapshot();
-    assert_eq!(before.canonical_sumcheck_rows_seen, 0);
-    assert_eq!(before.canonical_sumcheck_rows_fused, 0);
-
     let result = execute_graph(dag, inputs).unwrap();
     let Value::Poly(_got_poly) = result else {
         panic!("Expected a polynomial result, found {:?}", result);
     };
 
-    let after = optimization_stats_snapshot();
     // Optimization does not fire because the evaluated polynomial is not loop-invariant
-    assert_eq!(after.canonical_sumcheck_rows_seen, 0);
-    assert_eq!(after.canonical_sumcheck_rows_fused, 0);
 }
 
 #[test]
-#[serial]
-fn test_reduce_map_fused_optimization_skips_non_vec_domain() {
-    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
-
+fn reduce_map_over_a_non_vector_domain_sums_it() {
     // In this case, the domain of the ReduceMap is NOT a vector (e.g. it is a polynomial type, Uni(3)).
-    // The optimization must skip (because domain typ is not Vec), falling back to evaluation which returns a type mismatch error.
+    // The domain is not a vector, so evaluating the map reports a type mismatch.
     let scalar_t = ATyp::scalar();
     let domain = Op::Value(Value::poly(
         backend::VirtualPolynomial::constant_with_num_vars(<B as backend::Backend>::F::one(), 1),
@@ -673,26 +607,16 @@ fn test_reduce_map_fused_optimization_skips_non_vec_domain() {
 
     let rm = GOp::reduce_map(BinOp::Add, domain, body);
 
-    reset_optimization_stats();
-    let before = optimization_stats_snapshot();
-    assert_eq!(before.canonical_sumcheck_rows_seen, 0);
-    assert_eq!(before.canonical_sumcheck_rows_fused, 0);
-
     let env: HashMap<Ref, Value<B>> = HashMap::new();
     let mut rng = StdRng::seed_from_u64(0);
     let _res = eval_op(&rm, &env, &mut rng, &mut Vec::new());
 
-    let after = optimization_stats_snapshot();
     // Optimization does not fire because the domain type is ATyp::Uni, not ATyp::Vec
-    assert_eq!(after.canonical_sumcheck_rows_seen, 0);
-    assert_eq!(after.canonical_sumcheck_rows_fused, 0);
 }
 
 #[test]
-#[serial]
-fn test_reduce_map_fused_optimization_skips_non_canonical_hypercube_domain_with_loop_param() {
+fn reduce_map_over_a_non_canonical_hypercube_sums_it() {
     use crate::eval::graph_tests::helpers::execute_graph;
-    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
 
     let src = r#"
         fn test_non_canonical<F: Field>(
@@ -727,20 +651,12 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_hypercube_domain_with_
     );
     inputs.insert(&lang::id::Vid::from("domain"), &domain_val);
 
-    reset_optimization_stats();
-    let before = optimization_stats_snapshot();
-    assert_eq!(before.canonical_sumcheck_rows_seen, 0);
-    assert_eq!(before.canonical_sumcheck_rows_fused, 0);
-
     let result = execute_graph(dag, inputs).unwrap();
     let Value::Poly(got_poly) = result else {
         panic!("Expected a polynomial result, found {:?}", result);
     };
 
-    let after = optimization_stats_snapshot();
     // Optimization does NOT fire because the domain is non-canonical coordinates!
-    assert_eq!(after.canonical_sumcheck_rows_seen, 0);
-    assert_eq!(after.canonical_sumcheck_rows_fused, 0);
 
     // Verify correct unoptimized math result: R(t) = 4 * P(t, 1, 1)
     let Value::Poly(ref orig_poly) = poly_val else {
@@ -755,10 +671,8 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_hypercube_domain_with_
 }
 
 #[test]
-#[serial]
-fn test_reduce_map_fused_optimization_skips_non_canonical_indices_domain_with_map() {
+fn reduce_map_over_non_canonical_indices_sums_it() {
     use crate::eval::graph_tests::helpers::execute_graph;
-    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
 
     let src = r#"
         fn test_non_canonical_indices<F: Field>(
@@ -789,20 +703,12 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_indices_domain_with_ma
     let domain_val = Value::VecIndex(vec![three, two, one, zero].into());
     inputs.insert(&lang::id::Vid::from("domain"), &domain_val);
 
-    reset_optimization_stats();
-    let before = optimization_stats_snapshot();
-    assert_eq!(before.canonical_sumcheck_rows_seen, 0);
-    assert_eq!(before.canonical_sumcheck_rows_fused, 0);
-
     let result = execute_graph(dag, inputs).unwrap();
     let Value::Poly(got_poly) = result else {
         panic!("Expected a polynomial result, found {:?}", result);
     };
 
-    let after = optimization_stats_snapshot();
     // Optimization does NOT fire because the domain is not canonical 0..3 indices!
-    assert_eq!(after.canonical_sumcheck_rows_seen, 0);
-    assert_eq!(after.canonical_sumcheck_rows_fused, 0);
 
     // Verify correctness of unoptimized result:
     // For each i in [3, 2, 1, 0], bit j is (i / 2^j) % 2.
@@ -822,10 +728,8 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_indices_domain_with_ma
 }
 
 #[test]
-#[serial]
-fn test_reduce_map_fused_optimization_skips_arity_mismatch() {
+fn reduce_map_with_an_arity_mismatch_sums_it() {
     use crate::eval::graph_tests::helpers::execute_graph;
-    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
 
     // Poly has 3 variables (so 2 tail variables needed).
     // The domain has length 8 (implying 3 tail variables).
@@ -852,20 +756,10 @@ fn test_reduce_map_fused_optimization_skips_arity_mismatch() {
     let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
     inputs.insert(&lang::id::Vid::from("p"), &poly_val.clone());
 
-    reset_optimization_stats();
-    let before = optimization_stats_snapshot();
-    assert_eq!(before.canonical_sumcheck_rows_seen, 0);
-    assert_eq!(before.canonical_sumcheck_rows_fused, 0);
-
     let result = execute_graph(dag, inputs).unwrap();
     let Value::Poly(got_poly) = result else {
         panic!("Expected a polynomial result, found {:?}", result);
     };
-
-    let after = optimization_stats_snapshot();
-    // Optimization must be skipped
-    assert_eq!(after.canonical_sumcheck_rows_seen, 0);
-    assert_eq!(after.canonical_sumcheck_rows_fused, 0);
 
     // Verify mathematical correctness of the fallback result
     let Value::Poly(ref orig_poly) = poly_val else {
@@ -888,5 +782,48 @@ fn test_reduce_map_fused_optimization_skips_arity_mismatch() {
             expected += orig_poly.evaluate_mv(&[t, b0, b1]).unwrap();
         }
         assert_eq!(got_poly.evaluate_uv(&t), expected);
+    }
+}
+
+/// `[w[s·x + t] for x in 0..n]` with `w` loop-invariant is one native gather, equal to
+/// the element-by-element loop: a contiguous row, a strided column reading the outer
+/// loop's element, and a non-affine index (`x·x`) that keeps the loop.
+#[test]
+fn affine_gather_matches_elementwise_map() {
+    use crate::eval::{eval_loop_body_each, try_eval_affine_gather};
+    use lang::typ::CRange;
+    let idx_t = ATyp::fin(CRange::from_raw(0, 1, 12));
+    let w: Vec<_> = (0..12u64).map(|n| scalar::<B>(n * 7 + 1)).collect();
+    let w = mk::<B>(Op::Value(Value::value_vec(w)));
+    let index = |n: usize| mk::<B>(Op::Value(Value::Index(n)));
+    let outer = mk::<B>(Op::LoopParam(0, idx_t.clone()));
+    let inner = mk::<B>(Op::LoopParam(1, idx_t.clone()));
+    let bin = |op, a, b| mk::<B>(Op::Bin(op, a, b, idx_t.clone()));
+    let row = bin(
+        BinOp::Add,
+        bin(BinOp::Mul, outer.clone(), index(4)),
+        inner.clone(),
+    );
+    let column = bin(
+        BinOp::Add,
+        bin(BinOp::Mul, inner.clone(), index(3)),
+        outer.clone(),
+    );
+    let square = bin(BinOp::Mul, inner.clone(), inner);
+    let env: HashMap<Ref, Value<B>> = HashMap::new();
+    let mut rng = StdRng::seed_from_u64(0);
+    for (index, n, fast) in [(row, 4, true), (column, 4, true), (square, 3, false)] {
+        let body = mk::<B>(Op::Ram(w.clone(), index));
+        let dom = Value::<B>::VecIndex((0..n).collect::<Vec<_>>().into());
+        let params = [Value::Index(2)];
+        let got =
+            try_eval_affine_gather(&body, &dom, &env, &mut rng, &params, &mut Vec::new()).unwrap();
+        assert_eq!(got.is_some(), fast);
+        let want = Value::value_vec(
+            eval_loop_body_each(&body, &env, dom.clone().into_elements(), &params).unwrap(),
+        );
+        if let Some(got) = got {
+            assert_eq!(got, want);
+        }
     }
 }

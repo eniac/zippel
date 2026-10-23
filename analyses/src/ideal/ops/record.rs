@@ -90,7 +90,7 @@ mod tests {
     use backend::ArkBls12_381;
 
     use backend::ATyp;
-    use backend::op::mk;
+    use backend::ir::op::mk;
     use graph::{GOp, HOp, Op};
 
     use share::Ctx;
@@ -421,7 +421,7 @@ mod tests {
         // Build a record {a: Scalar, b: Scalar} from scalar refs, project
         // field "a", assert pl/basis aliases the field directly.
         use crate::Var;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
@@ -448,7 +448,7 @@ mod tests {
         ideal.register(&var_b);
 
         // Build record {a: var_a, b: var_b}.
-        let mut field_ops: Ctx<String, backend::op::HOp<ArkBls12_381>> = Ctx::new();
+        let mut field_ops: Ctx<String, backend::ir::op::HOp<ArkBls12_381>> = Ctx::new();
         field_ops.insert(
             &"a".to_string(),
             &mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), s.clone())),

@@ -6,7 +6,7 @@ use crate::error::AnalysisError;
 use crate::frontend::{Block, BlockKind, MonoOrder, Polynomial};
 use crate::ideal::{Ideal, IdealBuilder};
 use crate::uniform::UniformityPropagation;
-use backend::op::Ref;
+use backend::ir::op::Ref;
 use graph::QDag;
 use lang::typ::Distribution;
 use log::warn;

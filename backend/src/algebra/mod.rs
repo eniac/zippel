@@ -1,6 +1,6 @@
 //! The algebra a backend supplies: a prime [`Field`], [`Group`]s over it, and an optional
 //! [`Pairing`]. Every runtime value and polynomial is generic over these traits alone, so a
-//! backend is any library that implements them (see `ark` for arkworks).
+//! backend is any library that implements them (see [`crate::backends`]).
 
 use rand::Rng;
 use rayon::prelude::*;
@@ -107,52 +107,6 @@ pub trait Field:
     }
 }
 
-/// An iterative radix-2 FFT over [`Field::two_adic_root`]; the inverse transform scales by
-/// `1 / n`.
-pub(crate) fn radix2<F: Field>(a: &mut [F], inverse: bool) {
-    let n = a.len();
-    assert!(
-        n.is_power_of_two(),
-        "an FFT domain has a power-of-two size, not {n}"
-    );
-    let log_n = n.trailing_zeros();
-    let root = F::two_adic_root(log_n)
-        .unwrap_or_else(|| panic!("the field has no FFT domain of size 2^{log_n}"));
-    let root = if inverse {
-        root.inverse().expect("a root of unity is non-zero")
-    } else {
-        root
-    };
-    for i in 0..n {
-        let j = i.reverse_bits() >> (usize::BITS - log_n.max(1));
-        if n > 1 && i < j {
-            a.swap(i, j);
-        }
-    }
-    let mut len = 2;
-    while len <= n {
-        let w_len = root.pow((n / len) as u64);
-        let twiddles: Vec<F> = std::iter::successors(Some(F::one()), |w| Some(*w * w_len))
-            .take(len / 2)
-            .collect();
-        a.par_chunks_mut(len).for_each(|chunk| {
-            let (lo, hi) = chunk.split_at_mut(len / 2);
-            for ((x, y), w) in lo.iter_mut().zip(hi.iter_mut()).zip(&twiddles) {
-                let t = *y * w;
-                *y = *x - t;
-                *x += t;
-            }
-        });
-        len <<= 1;
-    }
-    if inverse {
-        let n_inv = F::from(n as u64)
-            .inverse()
-            .expect("n is non-zero in the field");
-        a.par_iter_mut().for_each(|x| *x *= n_inv);
-    }
-}
-
 /// A prime-order group, written additively, over the scalar field [`Group::Scalar`].
 pub trait Group:
     Copy
@@ -211,11 +165,6 @@ pub trait Pairing: Send + Sync + 'static {
     type G2: Group<Scalar = <Self::G1 as Group>::Scalar>;
     /// The target group.
     type GT: Group<Scalar = <Self::G1 as Group>::Scalar, Affine = Self::GT> + Hash;
-    /// A second-source point prepared for pairing (as a verifier key keeps it).
-    type G2Prepared: Clone + Send + Sync + Debug;
-
-    /// `g` prepared for pairing.
-    fn prepare_g2(g: &<Self::G2 as Group>::Affine) -> Self::G2Prepared;
     /// `e(a, b)`.
     fn pairing(a: &Self::G1, b: &Self::G2) -> Self::GT;
     /// `Σ e(a[i], b[i])`.
@@ -223,11 +172,6 @@ pub trait Pairing: Send + Sync + 'static {
     /// # Panics
     /// Panics if the two have different lengths.
     fn multi_pairing(a: &[Self::G1], b: &[Self::G2]) -> Self::GT;
-    /// `Σ e(a[i], b[i])`, with the second side prepared.
-    ///
-    /// # Panics
-    /// Panics if the two have different lengths.
-    fn multi_pairing_prepared(a: &[Self::G1], b: &[Self::G2Prepared]) -> Self::GT;
 
     /// `e(a[i], b[i])` for each `i`.
     fn pairings(a: &[Self::G1], b: &[Self::G2]) -> Vec<Self::GT> {
@@ -238,82 +182,12 @@ pub trait Pairing: Send + Sync + 'static {
     }
 }
 
-/// Elementwise `b[i] += a[i]`, over the shorter length.
-pub fn vec_add<F: Field>(a: &[F], b: &mut [F]) {
-    b.par_iter_mut()
-        .zip(a.par_iter())
-        .for_each(|(b, a)| *b += a);
-}
+/// The radix-2 FFT behind [`Field::fft`].
+mod fft;
+/// Elementwise vector arithmetic over a field.
+mod vec;
 
-/// Elementwise `b[i] = a[i] - b[i]`, over the shorter length.
-pub fn vec_sub<F: Field>(a: &[F], b: &mut [F]) {
-    b.par_iter_mut()
-        .zip(a.par_iter())
-        .for_each(|(b, a)| *b = *a - *b);
-}
-
-/// Elementwise `b[i] *= a[i]`, over the shorter length.
-pub fn vec_mul<F: Field>(a: &[F], b: &mut [F]) {
-    b.par_iter_mut()
-        .zip(a.par_iter())
-        .for_each(|(b, a)| *b *= a);
-}
-
-/// Elementwise negation.
-pub fn vec_neg<F: Field>(a: &mut [F]) {
-    a.par_iter_mut().for_each(|x| *x = -*x);
-}
-
-/// Elementwise `a[i]^e`.
-pub fn vec_pow<F: Field>(a: &mut [F], e: u64) {
-    a.par_iter_mut().for_each(|x| *x = x.pow(e));
-}
-
-/// The inner product.
-pub fn vec_dot<F: Field>(a: &[F], b: &[F]) -> F {
-    a.par_iter()
-        .zip(b.par_iter())
-        .map(|(a, b)| *a * b)
-        .reduce(F::zero, |x, y| x + y)
-}
-
-/// Inverts every entry in place with one field inversion (Montgomery's trick).
-///
-/// # Errors
-/// [`DivisionByZero`] if an entry is zero; `a` is then unchanged.
-pub fn batch_inverse<F: Field>(a: &mut [F]) -> Result<(), DivisionByZero> {
-    const CHUNK: usize = 1 << 10;
-    if a.par_iter().any(Field::is_zero) {
-        return Err(DivisionByZero);
-    }
-    a.par_chunks_mut(CHUNK).for_each(|chunk| {
-        let mut prefix = Vec::with_capacity(chunk.len());
-        let mut acc = F::one();
-        for x in chunk.iter() {
-            prefix.push(acc);
-            acc *= x;
-        }
-        let mut inv = acc.inverse().expect("a product of non-zero entries");
-        for (x, before) in chunk.iter_mut().zip(prefix).rev() {
-            let next = inv * *x;
-            *x = inv * before;
-            inv = next;
-        }
-    });
-    Ok(())
-}
-
-/// Elementwise `b[i] = a[i] / b[i]`, over the shorter length.
-///
-/// # Errors
-/// [`DivisionByZero`] if an entry of `b` is zero; `b` is then unchanged.
-pub fn vec_div<F: Field>(a: &[F], b: &mut [F]) -> Result<(), DivisionByZero> {
-    batch_inverse(b)?;
-    vec_mul(a, b);
-    Ok(())
-}
-
-/// `n` uniformly random elements.
-pub fn vec_rand<F: Field, R: Rng + ?Sized>(rng: &mut R, n: usize) -> Vec<F> {
-    (0..n).map(|_| F::rand(rng)).collect()
-}
+pub(crate) use fft::radix2;
+pub use vec::{
+    batch_inverse, vec_add, vec_div, vec_dot, vec_mul, vec_neg, vec_pow, vec_rand, vec_sub,
+};

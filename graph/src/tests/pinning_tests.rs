@@ -1522,7 +1522,7 @@ fn pin_app_univariate_poly() {
 #[test]
 fn pin_fun_lit() {
     use ark_ff::{One, Zero};
-    use backend::poly_variant::DenseUni;
+    use backend::poly::variant::DenseUni;
     use backend::{PolyVariant, Value, VirtualPolynomial};
     type F = <B as backend::Backend>::F;
 
@@ -2631,7 +2631,7 @@ fn pin_multi_transcript() {
 #[test]
 fn pin_fun_multilinear() {
     use ark_ff::{One, Zero};
-    use backend::poly_variant::DenseMle;
+    use backend::poly::variant::DenseMle;
     use backend::{PolyVariant, Value, VirtualPolynomial};
     type F = <B as backend::Backend>::F;
 

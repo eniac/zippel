@@ -18,7 +18,6 @@ spongefish = "0.7"
 [dev-dependencies]
 graph = { path = "../graph", features = ["testing"] }
 ark-ff = { version = "0.6", features = ["parallel"] }
-serial_test = "3.2.0"
 ark-std = { version = "0.6.0", features = ["parallel"] }
 arbitrary = { version = "1.4.1", features = ["derive"] }
 arbtest = "0.3.2"

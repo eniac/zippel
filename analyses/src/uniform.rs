@@ -444,7 +444,7 @@ impl fmt::Display for UniformityPropagation {
 mod tests {
     use super::*;
     use crate::QualifierPropagation;
-    use backend::op::mk;
+    use backend::ir::op::mk;
 
     /// The exclusion of `T - [0]`, with its list inline.
     fn excluding_zero() -> OpExclusion<ArkBls12_381> {

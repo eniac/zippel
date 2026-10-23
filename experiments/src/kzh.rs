@@ -62,7 +62,7 @@ pub mod shared {
 pub mod zippel_side {
     use super::*;
     use ark_ec::AffineRepr;
-    use backend::{ArkBls12_381, PreparedG2Vec, Value};
+    use backend::{ArkBls12_381, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::collections::HashMap;
@@ -109,11 +109,9 @@ pub mod zippel_side {
                     ("z0", Value::Scalar(sh.value)),
                     ("h1", Value::vec_g1_affine(sh.srs.h_tensors[0].clone())),
                     ("h2", Value::vec_g1_affine(sh.srs.h_tensors[1].clone())),
-                    // Prepared once here, as native's verifier key stores V1.
-                    (
-                        "v1",
-                        Value::VecG2Prepared(PreparedG2Vec::new(sh.srs.v_mat[0].clone())),
-                    ),
+                    // A verifier key: a pairing backend prepares it once here, as
+                    // native's verifier key stores V1.
+                    ("v1", Value::vec_g2_key(sh.srs.v_mat[0].clone())),
                     ("v_gen", Value::g2(sh.srs.v.into_group())),
                     ("g_gen", Value::g1(sh.srs.g.into_group())),
                 ]

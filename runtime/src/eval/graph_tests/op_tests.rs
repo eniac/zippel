@@ -733,6 +733,55 @@ mod op_integration {
 
     // ── Numeric literals in a field ─────────────────────────────────────
 
+    /// Field-only backends over tiny prime fields, where reducing a literal into the
+    /// field shows with small numbers.
+    mod tiny {
+        use ark_ff::{Fp64, MontBackend, MontConfig, PrimeField};
+        use backend::backends::NoKey;
+        use backend::{Backend, NoGroup, NoPairing};
+        use std::fmt;
+        use std::marker::PhantomData;
+
+        #[derive(MontConfig)]
+        #[modulus = "17"]
+        #[generator = "3"]
+        pub struct F17Config;
+
+        #[derive(MontConfig)]
+        #[modulus = "65537"]
+        #[generator = "3"]
+        pub struct F65537Config;
+
+        /// A backend with field `F` and no groups.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        pub struct FieldOnly<F>(PhantomData<F>);
+
+        impl<F: PrimeField> fmt::Display for FieldOnly<F> {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                write!(f, "Field<{}>", F::MODULUS)
+            }
+        }
+
+        impl<F: PrimeField> Backend for FieldOnly<F> {
+            type F = F;
+            type G1 = NoGroup<F>;
+            type G2 = NoGroup<F>;
+            type P = NoPairing<NoGroup<F>>;
+            type G1Key = NoKey;
+            type G2Key = NoKey;
+            type Analysis = Self;
+            const HAS_PAIRING: bool = false;
+            const HAS_GROUP: bool = false;
+        }
+
+        /// The 17-element field.
+        pub type Field17 = FieldOnly<Fp64<MontBackend<F17Config, 1>>>;
+        /// The 65537-element field.
+        pub type Field65537 = FieldOnly<Fp64<MontBackend<F65537Config, 1>>>;
+    }
+
+    use tiny::{Field17, Field65537};
+
     /// A literal above `u64::MAX` and both test moduli.
     const BIG: &str = "34545435435435435435435";
 
@@ -782,17 +831,17 @@ mod op_integration {
 
     #[test]
     fn numeric_literal_modulo_field() {
-        literal_modulo_field::<backend::ArkField17>(14);
-        literal_modulo_field::<backend::ArkField65537>(55512);
+        literal_modulo_field::<Field17>(14);
+        literal_modulo_field::<Field65537>(55512);
         // A finite literal returned as a field element is reduced, not an index.
-        type B = backend::ArkField17;
+        type B = Field17;
         let got = run::<B>("fn f<F: Field>() -> F { 18 }", "f", share::Ctx::new());
         assert_field::<B>(&got, f::<B>(1));
     }
 
     #[test]
     fn numeric_literal_field_uses() {
-        type B = backend::ArkField17;
+        type B = Field17;
         let none = share::Ctx::new;
         let scalar_of = |src: &str| run::<B>(src, "f", none());
 
@@ -879,7 +928,7 @@ mod op_integration {
     /// An integer stored into a field of a record becomes a field element of that field.
     #[test]
     fn numeric_literal_record_update() {
-        type B = backend::ArkField17;
+        type B = Field17;
         let src = "proto p<F: Field>(instance r: {a: F}) where r.a == r.a {
                        s <- r.set(a, 18);
                        verify(s.a == 1)

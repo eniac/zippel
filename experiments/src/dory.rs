@@ -69,7 +69,7 @@ pub mod shared {
 pub mod zippel_side {
     use super::*;
     use ark_ec::CurveGroup;
-    use backend::{ArkBls12_381, PreparedG2Vec, Value};
+    use backend::{ArkBls12_381, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::collections::HashMap;
@@ -119,11 +119,12 @@ pub mod zippel_side {
                             &s.g1_vec[..nv],
                         )),
                     ),
-                    // Prepared once here, as native's prepared-setup cache holds Γ2.
+                    // A verifier key: a pairing backend prepares it once here, as
+                    // native's prepared-setup cache holds Γ2.
                     (
                         "g2_vec",
-                        Value::VecG2Prepared(PreparedG2Vec::new(
-                            ark_bls12_381::G2Projective::normalize_batch(&s.g2_vec[..nv]),
+                        Value::vec_g2_key(ark_bls12_381::G2Projective::normalize_batch(
+                            &s.g2_vec[..nv],
                         )),
                     ),
                     ("g1_0", Value::g1(v.g1_0)),

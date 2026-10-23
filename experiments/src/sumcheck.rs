@@ -25,8 +25,8 @@ pub mod zippel_side {
     use super::*;
     use ark_ff::Zero;
     use ark_std::UniformRand;
-    use backend::poly_variant::DenseMle;
-    use backend::poly_variant::PolyVariant;
+    use backend::poly::variant::DenseMle;
+    use backend::poly::variant::PolyVariant;
     use backend::{ArkBls12_381, Backend, Value, VirtualPolynomial};
     use lang::id::{Tid, Vid};
     use share::Ctx;
@@ -257,7 +257,7 @@ mod cross_tests {
     use ark_bls12_381::Fr;
     use ark_ff::{One, UniformRand};
     use ark_poly::DenseMultilinearExtension;
-    use backend::poly_variant::{DenseMle, PolyVariant};
+    use backend::poly::variant::{DenseMle, PolyVariant};
     use backend::{ArkBls12_381, Value};
     use std::sync::Arc;
 

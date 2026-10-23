@@ -24,8 +24,8 @@
 //! the user flagged (`value_ifft` returning `VecScalar` when the spec says
 //! `Poly(F, 1, n)`) is exactly this kind of variant mismatch.
 
-use crate::config::ArkBls12_381;
-use crate::op::{GOp, mk};
+use crate::backends::ArkBls12_381;
+use crate::ir::op::{GOp, mk};
 use crate::{ABase, ATyp, Backend, Op, Value};
 use arbitrary::{Arbitrary, Unstructured};
 use ark_std::test_rng;

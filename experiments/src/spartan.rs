@@ -365,7 +365,9 @@ fn make_inputs<C: Backend>(m: usize) -> (HashMap<Vid, Value<C>>, MatVec<C::F>) {
         (Vid("mat_c_t".to_string()), mat_c_t),
         (Vid("io".to_string()), Value::vec_scalar(r1cs.io)),
         (Vid("w".to_string()), Value::vec_scalar(r1cs.w)),
-        (Vid("g_vec_w".to_string()), Value::vec_g1_affine(g_vec_aff)),
+        // The witness commitment multiplies these generators by every row: a
+        // commitment key, for which the backend may keep precomputations.
+        (Vid("g_vec_w".to_string()), Value::vec_g1_key(g_vec_aff)),
         (Vid("g_1".to_string()), Value::g1(g_1)),
         (Vid("h_1".to_string()), Value::g1(h_1)),
         (Vid("g_4".to_string()), Value::vec_g1_affine(g_4)),
@@ -813,11 +815,25 @@ mod cross_tests {
     mod libspartan {
         const HAS_PCS_BATCHING: bool = true;
         use crate::upstream::libspartan as native;
-        use backend::{Backend, DalekRistretto as C, Field, Group, Value};
+        use backend::{ArkFrRistretto, Backend, DalekRistretto, Field, Group, Value};
         use curve25519_dalek::ristretto::CompressedRistretto;
-        type F = <C as Backend>::F;
-        type G = <C as Backend>::G1;
-        type V = Value<C>;
+        type V<C> = Value<C>;
+
+        /// A backend on curve25519-dalek 5's Ristretto group; libspartan's dalek 4 points
+        /// enter it by their compressed bytes.
+        trait Ristretto: Backend {
+            fn point(p: curve25519_dalek_5::RistrettoPoint) -> Self::G1;
+        }
+        impl Ristretto for DalekRistretto {
+            fn point(p: curve25519_dalek_5::RistrettoPoint) -> Self::G1 {
+                backend::backends::ff_group::FfPoint::new(p)
+            }
+        }
+        impl Ristretto for ArkFrRistretto {
+            fn point(p: curve25519_dalek_5::RistrettoPoint) -> Self::G1 {
+                backend::backends::hybrid::ArkFrRistrettoPoint::new(p)
+            }
+        }
         type NativeNizk = native::NIZK;
         type NativeInstance = native::Instance;
         type NativeGens = native::NIZKGens;
@@ -833,25 +849,25 @@ mod cross_tests {
         use native::r1csproof::R1CSProof as R1csProof;
         use native::sumcheck::ZKSumcheckInstanceProof as SumcheckProof;
 
-        fn group(g: &NativeGroup) -> V {
+        fn group<C: Ristretto>(g: &NativeGroup) -> V<C> {
             let p = curve25519_dalek_5::ristretto::CompressedRistretto(g.to_bytes())
                 .decompress()
                 .unwrap();
-            Value::g1(backend::ff_group::FfPoint::new(p))
+            Value::g1(C::point(p))
         }
-        fn native_group(v: &V) -> NativeGroup {
+        fn native_group<C: Ristretto>(v: &V<C>) -> NativeGroup {
             let mut bytes = Vec::new();
             match v {
                 Value::G1(g) => g.write_bytes(&mut bytes),
-                Value::G1Affine(g) => G::write_affine_bytes(g, &mut bytes),
+                Value::G1Affine(g) => C::G1::write_affine_bytes(g, &mut bytes),
                 _ => panic!("expected group element, got {v}"),
             }
             CompressedRistretto(bytes.try_into().unwrap())
         }
-        fn scalar(f: &NativeScalar) -> V {
-            Value::Scalar(F::from_le_bytes_mod_order(&f.to_bytes()))
+        fn scalar<C: Ristretto>(f: &NativeScalar) -> V<C> {
+            Value::Scalar(C::F::from_le_bytes_mod_order(&f.to_bytes()))
         }
-        fn native_scalar(v: &V) -> NativeScalar {
+        fn native_scalar<C: Ristretto>(v: &V<C>) -> NativeScalar {
             let mut bytes = Vec::new();
             match v {
                 Value::Scalar(f) => f.write_bytes(&mut bytes),
@@ -859,16 +875,16 @@ mod cross_tests {
             }
             NativeScalar::from_bytes(&bytes.try_into().unwrap()).unwrap()
         }
-        fn bytes(f: &F) -> [u8; 32] {
+        fn bytes<F: Field>(f: &F) -> [u8; 32] {
             let mut bytes = Vec::new();
             f.write_bytes(&mut bytes);
             bytes.try_into().unwrap()
         }
 
-        fn setup(
+        fn setup<C: Ristretto>(
             m: usize,
-            inputs: &mut std::collections::HashMap<lang::id::Vid, V>,
-            products: &super::super::MatVec<F>,
+            inputs: &mut std::collections::HashMap<lang::id::Vid, V<C>>,
+            products: &super::super::MatVec<C::F>,
         ) -> (NativeInstance, NativeGens, NativeVars, NativeInputs) {
             let n = 1 << m;
             let nw = n / 2;
@@ -930,21 +946,21 @@ mod cross_tests {
                 }
             }
         }
-        impl Challenger<C> for SpartanChallenges {
-            fn instance(&mut self, _: &V) {}
-            fn message(&mut self, _: &V) {}
-            fn challenge(&mut self) -> V {
+        impl<C: Ristretto> Challenger<C> for SpartanChallenges {
+            fn instance(&mut self, _: &V<C>) {}
+            fn message(&mut self, _: &V<C>) {}
+            fn challenge(&mut self) -> V<C> {
                 let index = self.draws;
                 self.draws += 1;
                 if !HAS_PCS_BATCHING && index == self.pcs_batching_index {
-                    Value::Scalar(<F as backend::Field>::one())
+                    Value::Scalar(<C::F as backend::Field>::one())
                 } else {
                     <Challenges as Challenger<C>>::challenge(&mut self.sequence)
                 }
             }
         }
 
-        fn group_values(values: Vec<V>) -> V {
+        fn group_values<C: Ristretto>(values: Vec<V<C>>) -> V<C> {
             Value::vec_g1(
                 values
                     .into_iter()
@@ -956,21 +972,21 @@ mod cross_tests {
             )
         }
 
-        fn scalar_vec(fs: &[NativeScalar]) -> V {
+        fn scalar_vec<C: Ristretto>(fs: &[NativeScalar]) -> V<C> {
             Value::vec_scalar(
                 fs.iter()
-                    .map(|f| match scalar(f) {
+                    .map(|f| match scalar::<C>(f) {
                         Value::Scalar(f) => f,
                         _ => unreachable!(),
                     })
                     .collect(),
             )
         }
-        fn group_vec(gs: &[NativeGroup]) -> V {
+        fn group_vec<C: Ristretto>(gs: &[NativeGroup]) -> V<C> {
             group_values(gs.iter().map(group).collect())
         }
 
-        fn append_sumcheck(out: &mut Vec<V>, sc: &SumcheckProof) {
+        fn append_sumcheck<C: Ristretto>(out: &mut Vec<V<C>>, sc: &SumcheckProof) {
             for i in 0..sc.proofs.len() {
                 let p = &sc.proofs[i];
                 out.extend([
@@ -985,7 +1001,7 @@ mod cross_tests {
             }
         }
 
-        fn as_zippel(p: &NativeNizk) -> Vec<V> {
+        fn as_zippel<C: Ristretto>(p: &NativeNizk) -> Vec<V<C>> {
             let p = &p.r1cs_sat_proof;
             let mut out = vec![group_vec(&p.comm_vars.C)];
             append_sumcheck(&mut out, &p.sc_proof_phase1);
@@ -1026,8 +1042,8 @@ mod cross_tests {
             out
         }
 
-        struct Messages<'a>(std::slice::Iter<'a, V>);
-        impl Messages<'_> {
+        struct Messages<'a, C: Backend>(std::slice::Iter<'a, V<C>>);
+        impl<C: Ristretto> Messages<'_, C> {
             fn group(&mut self) -> NativeGroup {
                 native_group(self.0.next().expect("group message"))
             }
@@ -1038,7 +1054,7 @@ mod cross_tests {
                 match self.0.next().expect("scalar vector") {
                     Value::VecScalar(fs) => fs
                         .iter()
-                        .map(|f| native_scalar(&Value::Scalar(*f)))
+                        .map(|f| native_scalar::<C>(&Value::Scalar(*f)))
                         .collect(),
                     v => panic!("expected scalar vector, got {v}"),
                 }
@@ -1046,10 +1062,13 @@ mod cross_tests {
             fn groups(&mut self) -> Vec<NativeGroup> {
                 match self.0.next().expect("group vector") {
                     Value::Vec(vs) => vs.iter().map(native_group).collect(),
-                    Value::VecG1(gs) => gs.iter().map(|g| native_group(&Value::g1(*g))).collect(),
+                    Value::VecG1(gs) => gs
+                        .iter()
+                        .map(|g| native_group::<C>(&Value::g1(*g)))
+                        .collect(),
                     Value::VecG1Affine(gs) => gs
                         .iter()
-                        .map(|g| native_group(&Value::g1_affine(*g)))
+                        .map(|g| native_group::<C>(&Value::g1_affine(*g)))
                         .collect(),
                     v => panic!("expected group vector, got {v}"),
                 }
@@ -1076,9 +1095,10 @@ mod cross_tests {
             }
         }
 
-        fn points(m: usize) -> (Vec<NativeScalar>, Vec<NativeScalar>) {
+        fn points<C: Ristretto>(m: usize) -> (Vec<NativeScalar>, Vec<NativeScalar>) {
             let mut seq = Challenges::default();
-            let mut next = || native_scalar(&<Challenges as Challenger<C>>::challenge(&mut seq));
+            let mut next =
+                || native_scalar::<C>(&<Challenges as Challenger<C>>::challenge(&mut seq));
             for _ in 0..m {
                 next();
             }
@@ -1107,7 +1127,7 @@ mod cross_tests {
             (rx, ry)
         }
 
-        fn as_native(messages: &[V], m: usize) -> NativeNizk {
+        fn as_native<C: Ristretto>(messages: &[V<C>], m: usize) -> NativeNizk {
             let mut r = Messages(messages.iter());
             let comm_vars = PolyCommitment { C: r.groups() };
             let sc_proof_phase1 = r.sumcheck(m);
@@ -1164,20 +1184,22 @@ mod cross_tests {
                     proof_eval_vars_at_ry,
                     proof_eq_sc_phase2,
                 },
-                r: points(m),
+                r: points::<C>(m),
             }
         }
 
         #[test]
         fn native_prove_then_zippel_verify() {
-            cross_verify(Direction::NativeToZippel);
+            cross_verify::<DalekRistretto>(Direction::NativeToZippel);
+            cross_verify::<ArkFrRistretto>(Direction::NativeToZippel);
         }
         #[test]
         fn zippel_prove_then_native_verify() {
-            cross_verify(Direction::ZippelToNative);
+            cross_verify::<DalekRistretto>(Direction::ZippelToNative);
+            cross_verify::<ArkFrRistretto>(Direction::ZippelToNative);
         }
 
-        fn cross_verify(direction: Direction) {
+        fn cross_verify<C: Ristretto>(direction: Direction) {
             for m in [3usize, 4, 5] {
                 let (mut inputs, products) = super::super::make_inputs::<C>(m);
                 let (inst, gens, vars, io) = setup(m, &mut inputs, &products);
@@ -1195,7 +1217,7 @@ mod cross_tests {
                                 .verify(&inst, &io, &mut Challenges::default(), &gens)
                                 .is_ok()
                         );
-                        let proof = as_zippel(&native);
+                        let proof = as_zippel::<C>(&native);
                         assert!(
                             verifier
                                 .verify_with(
@@ -1207,7 +1229,7 @@ mod cross_tests {
                             "M={m}: Zippel rejects native proof"
                         );
                         let mut wrong = proof;
-                        super::corrupt_response(&mut wrong);
+                        super::corrupt_response::<C>(&mut wrong);
                         assert!(
                             !verifier
                                 .verify_with(

@@ -167,7 +167,7 @@ mod tests {
     use backend::ATyp;
     use backend::ArkBls12_381;
     use backend::Value;
-    use backend::op::mk;
+    use backend::ir::op::mk;
     use graph::{GOp, Op};
 
     #[test]
@@ -496,7 +496,7 @@ mod tests {
     )]
     fn test_add_op_interpolate_duplicate_points_panics_explicitly() {
         use crate::Var;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 

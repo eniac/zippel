@@ -1,7 +1,7 @@
 //! `fun` bodies as polynomials.
 
 use super::*;
-use backend::poly_variant::{DenseMle, DenseUni};
+use backend::poly::variant::{DenseMle, DenseUni};
 use lang::ast::Visit;
 
 impl<C: Backend> UDag<C> {

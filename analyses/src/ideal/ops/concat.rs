@@ -83,7 +83,7 @@ mod tests {
     use backend::ArkBls12_381;
 
     use backend::ATyp;
-    use backend::op::mk;
+    use backend::ir::op::mk;
     use graph::{Op, Ref};
 
     #[test]

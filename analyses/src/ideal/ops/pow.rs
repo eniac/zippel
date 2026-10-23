@@ -165,7 +165,7 @@ mod tests {
     use backend::ArkBls12_381;
     use backend::Backend;
     use backend::Value;
-    use backend::op::mk;
+    use backend::ir::op::mk;
     use graph::Op;
 
     #[test]
@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn test_pow_uni_const_exp() {
         use crate::Var;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use lang::ast::BinOp;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
@@ -252,7 +252,7 @@ mod tests {
     #[test]
     fn test_pow_vec_uni_const_exp() {
         use crate::Var;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use lang::ast::BinOp;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
@@ -303,7 +303,7 @@ mod tests {
     #[test]
     fn test_pow_vec_vecindex_per_element() {
         use crate::Var;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use lang::ast::BinOp;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
@@ -347,7 +347,7 @@ mod tests {
     #[should_panic(expected = "ideal: operation has no polynomial-ideal treatment at dynamic-pow")]
     fn test_pow_vec_mixed_const_and_opaque() {
         use crate::Var;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use lang::ast::BinOp;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
@@ -389,7 +389,7 @@ mod tests {
     #[should_panic(expected = "ideal: operation has no polynomial-ideal treatment at dynamic-pow")]
     fn uncovered_op_dynamic_pow_vec_vec_panics() {
         use crate::Var;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use lang::ast::BinOp;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
@@ -434,7 +434,7 @@ mod tests {
     #[should_panic(expected = "ideal: operation has no polynomial-ideal treatment at dynamic-pow")]
     fn uncovered_op_dynamic_pow_scalar_panics() {
         use crate::Var;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use lang::ast::BinOp;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;

@@ -3,8 +3,9 @@
 //! encoding must agree with arkworks' on the same integers.
 
 use crate::algebra::radix2;
-use crate::ff_group::{DalekMsm, FfPoint, FfScalar, Msm, Pippenger};
-use crate::{Backend, DalekRistretto, Field, Group, PastaPallas};
+use crate::backends::ff_group::{DalekMsm, FfPoint, FfScalar, Msm, Pippenger};
+use crate::backends::hybrid::ArkFrRistrettoPoint;
+use crate::{ArkFrRistretto, Backend, DalekRistretto, Field, Group, PastaPallas};
 use ark_std::test_rng;
 
 /// `x` (any field) as the arkworks field `A` of the same modulus, by canonical bytes.
@@ -90,6 +91,65 @@ fn msm_is_the_sum_of_products() {
     check::<pasta_curves::pallas::Point, Pippenger>();
 }
 
+/// `ArkFrRistretto` hands dalek its arkworks scalars at each group operation: every
+/// result must equal `DalekRistretto`'s for the same points and integers, byte for byte.
+/// The group laws alone would not catch a bridge that maps scalars consistently wrong.
+#[test]
+fn ark_fr_ristretto_agrees_with_dalek() {
+    type S = <ArkFrRistretto as Backend>::F;
+    type D = <DalekRistretto as Backend>::G1;
+    fn encoding<G: Group>(g: &G) -> Vec<u8> {
+        let mut out = Vec::new();
+        g.write_bytes(&mut out);
+        out
+    }
+    let dalek = |s: &S| {
+        let mut bytes = Vec::new();
+        s.write_bytes(&mut bytes);
+        <DalekRistretto as Backend>::F::from_le_bytes_mod_order(&bytes)
+    };
+    let mut rng = test_rng();
+    let scalars: Vec<S> = [S::zero(), S::one(), -S::one()]
+        .into_iter()
+        .chain((0..20).map(|_| S::rand(&mut rng)))
+        .collect();
+    let bases = [D::generator(), D::rand(&mut rng)];
+    for d in bases {
+        let a = ArkFrRistrettoPoint::new(d.0);
+        assert_eq!(encoding(&a), encoding(&d));
+        for s in &scalars {
+            assert_eq!(encoding(&(a * *s)), encoding(&(d * dalek(s))), "{s}");
+            let mut assigned = a;
+            assigned *= *s;
+            assert_eq!(assigned, a * *s, "{s}");
+        }
+        let ours = a.batch_mul(&scalars);
+        let theirs = d.batch_mul(&scalars.iter().map(dalek).collect::<Vec<_>>());
+        assert_eq!(
+            ours.iter().map(encoding).collect::<Vec<_>>(),
+            theirs.iter().map(encoding).collect::<Vec<_>>()
+        );
+    }
+    assert_eq!(
+        ArkFrRistrettoPoint::generator(),
+        ArkFrRistrettoPoint::new(D::generator().0)
+    );
+    for n in [0, 1, 2, 31, 100] {
+        let bases: Vec<D> = (0..n).map(|_| D::rand(&mut rng)).collect();
+        let scalars: Vec<S> = (0..n).map(|_| S::rand(&mut rng)).collect();
+        let ours = ArkFrRistrettoPoint::msm(
+            &bases
+                .iter()
+                .map(|d| ArkFrRistrettoPoint::new(d.0))
+                .collect::<Vec<_>>(),
+            &scalars,
+        );
+        let theirs = D::msm(&bases, &scalars.iter().map(dalek).collect::<Vec<_>>());
+        assert_eq!(encoding(&ours), encoding(&theirs), "n = {n}");
+    }
+    assert!(ArkFrRistrettoPoint::msm(&[], &[]).is_zero());
+}
+
 /// Pallas's scalar field has 2-adicity 32, so the generic radix-2 FFT runs on it and
 /// inverts.
 #[test]
@@ -105,23 +165,4 @@ fn radix2_fft_inverts_on_pallas() {
         radix2(&mut v, true);
         assert_eq!(v, a, "n = 2^{log_n}");
     }
-}
-
-/// Every shipped backend passes the conformance check a new backend is held to.
-#[test]
-fn every_backend_conforms() {
-    use crate::conformance::check_backend;
-    use crate::*;
-    let mut rng = test_rng();
-    check_backend::<ArkBls12_381, _>(&mut rng);
-    check_backend::<ArkBn254, _>(&mut rng);
-    check_backend::<ArkMNT4_298, _>(&mut rng);
-    check_backend::<ArkCurve25519, _>(&mut rng);
-    check_backend::<ArkEd25519, _>(&mut rng);
-    check_backend::<ArkSecp256k1, _>(&mut rng);
-    check_backend::<ArkPallas, _>(&mut rng);
-    check_backend::<ArkVesta, _>(&mut rng);
-    check_backend::<ArkField65537, _>(&mut rng);
-    check_backend::<DalekRistretto, _>(&mut rng);
-    check_backend::<PastaPallas, _>(&mut rng);
 }

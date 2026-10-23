@@ -338,14 +338,14 @@ mod tests {
     use crate::frontend::Polynomial;
     use backend::ATyp;
     use backend::ArkBls12_381;
-    use backend::op::mk;
+    use backend::ir::op::mk;
     use graph::{GOp, Op};
 
     #[test]
     fn test_add_op_vpoly_mul_univariate_convolution() {
         // VPoly(1,1) × VPoly(1,1) → VPoly(1,2), a_0 b_0, a_0 b_1 + a_1 b_0, a_1 b_1.
         use crate::Var;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::Qualifier;
@@ -407,7 +407,7 @@ mod tests {
         // VPoly(2,2) multi-indices:
         //   [0,0], [0,1], [1,0], [0,2], [1,1], [2,0]   (size 6)
         use crate::Var;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::Qualifier;
@@ -468,7 +468,7 @@ mod tests {
         //   x^1 :  -2 u_0 v_0 + u_0 v_1 + u_1 v_0
         //   x^2 :  u_0 v_0 - u_0 v_1 - u_1 v_0 + u_1 v_1
         use crate::Var;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::Qualifier;
@@ -547,7 +547,7 @@ mod tests {
         //   Product: p(x)·q(x) = (u_0·b_0) + (u_1·b_0 - u_0·b_0 + u_0·b_1)·x
         //                      + (u_1·b_1 - u_0·b_1)·x²
         use crate::Var;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::Qualifier;
@@ -609,7 +609,7 @@ mod tests {
         // Result VPoly(2,3) has 10 slots.
         // Just verify all 10 ideal slots are populated.
         use crate::Var;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::Qualifier;
@@ -647,7 +647,7 @@ mod tests {
         // Mle(2) × VPoly(2, 1) → VPoly(2, 3).
         // Verify the constant-term slot (multi-index [0,0]) and a cross-term.
         use crate::Var;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::Qualifier;
@@ -800,7 +800,7 @@ mod tests {
     #[test]
     fn test_mul_vec_vpoly_by_vpoly() {
         use crate::Var;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::Qualifier;
@@ -855,7 +855,7 @@ mod tests {
     #[test]
     fn test_mul_vpoly_by_vec_vpoly() {
         use crate::Var;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::Qualifier;
