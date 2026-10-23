@@ -1,5 +1,5 @@
 use crate::AnalysisBackend;
-use backend::op::Ref;
+use backend::ir::op::Ref;
 use graph::{Dag, Node};
 use lang::typ::Qualifier;
 use petgraph::graph::NodeIndex;

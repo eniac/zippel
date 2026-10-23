@@ -1,4 +1,4 @@
-use crate::config::ArkBls12_381;
+use crate::backends::ArkBls12_381;
 use crate::{ABase, ATyp, Backend, Field, G1Affine, Group, PolyVariant, Value};
 use ark_bls12_381::Fr;
 use ark_std::test_rng;
@@ -954,7 +954,7 @@ fn test_typ_method() {
 
 #[test]
 fn test_serialize_value() {
-    use crate::values::value_to_bytes;
+    use crate::value::value_to_bytes;
 
     let scalar = Value::<TestConfig>::scalar_from_usize(42);
     assert_eq!(value_to_bytes(&scalar).len(), 32);
@@ -966,7 +966,7 @@ fn test_serialize_value() {
 #[test]
 fn test_value_eval() {
     use crate::VirtualPolynomial;
-    use crate::poly_variant::DenseUni;
+    use crate::poly::variant::DenseUni;
     // Create a polynomial from coefficients [1, 2, 3]
     // This represents 1 + 2x + 3x^2
     let coeffs_vec = vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)];
@@ -1130,7 +1130,7 @@ fn test_div_by_product_of_constants() {
 #[should_panic(expected = "Cannot divide by non-constant polynomial")]
 fn test_div_by_non_constant_poly_panics() {
     use crate::VirtualPolynomial;
-    use crate::poly_variant::DenseUni;
+    use crate::poly::variant::DenseUni;
 
     // Create a non-constant polynomial: 1 + 2x
     let poly = PolyVariant::DenseUni(DenseUni::new(vec![Fr::from(1u64), Fr::from(2u64)]));
@@ -1151,8 +1151,8 @@ fn test_div_by_non_constant_poly_panics() {
 #[test]
 fn sumcheck_style_vp_serializes() {
     use crate::VirtualPolynomial;
-    use crate::poly_variant::DenseMle;
-    use crate::values::value_to_bytes;
+    use crate::poly::variant::DenseMle;
+    use crate::value::value_to_bytes;
 
     type F = Fr;
     let num_vars = 10usize;
@@ -1180,7 +1180,7 @@ fn sumcheck_style_vp_serializes() {
 
 #[cfg(test)]
 mod test_into_scalar {
-    use crate::poly_variant::{DenseMle, DenseUni};
+    use crate::poly::variant::{DenseMle, DenseUni};
     use ark_bls12_381::Fr;
     use ark_ff::Zero;
     use std::sync::Arc;
@@ -1443,22 +1443,22 @@ fn test_value_concat_pbt() {
 
         let make_op = |elems: Vec<Value<TestConfig>>,
                        format: u8|
-         -> crate::op::Op<TestConfig, crate::op::Ref> {
+         -> crate::ir::op::Op<TestConfig, crate::ir::op::Ref> {
             match format {
                 0 => {
                     let val = make_value(elems, format);
-                    crate::op::Op::Value(val)
+                    crate::ir::op::Op::Value(val)
                 }
                 1 => {
-                    let ops: Vec<crate::op::HOp<TestConfig>> = elems
+                    let ops: Vec<crate::ir::op::HOp<TestConfig>> = elems
                         .into_iter()
-                        .map(|e| crate::op::mk::<TestConfig>(crate::op::Op::Value(e)))
+                        .map(|e| crate::ir::op::mk::<TestConfig>(crate::ir::op::Op::Value(e)))
                         .collect();
-                    crate::op::Op::Vec(ops)
+                    crate::ir::op::Op::Vec(ops)
                 }
                 _ => {
                     assert_eq!(elems.len(), 1);
-                    crate::op::Op::Value(elems[0].clone())
+                    crate::ir::op::Op::Value(elems[0].clone())
                 }
             }
         };
@@ -1466,19 +1466,21 @@ fn test_value_concat_pbt() {
         let op_left = make_op(elems1, format1);
         let op_right = make_op(elems2, format2);
 
-        let op_res = crate::op::Op::concat(op_left, op_right, expected_typ);
+        let op_res = crate::ir::op::Op::concat(op_left, op_right, expected_typ);
 
-        fn eval_op_local(op: &crate::op::Op<TestConfig, crate::op::Ref>) -> Value<TestConfig> {
+        fn eval_op_local(
+            op: &crate::ir::op::Op<TestConfig, crate::ir::op::Ref>,
+        ) -> Value<TestConfig> {
             match op {
-                crate::op::Op::Value(val) => val.clone(),
-                crate::op::Op::Vec(ops) => {
+                crate::ir::op::Op::Value(val) => val.clone(),
+                crate::ir::op::Op::Vec(ops) => {
                     let vals: Vec<Value<TestConfig>> = ops
                         .iter()
                         .map(|op_ref| eval_op_local(op_ref.get()))
                         .collect();
                     Value::Vec(vals.into())
                 }
-                crate::op::Op::Bin(lang::ast::BinOp::Concat, op1, op2, _) => {
+                crate::ir::op::Op::Bin(lang::ast::BinOp::Concat, op1, op2, _) => {
                     let val1 = eval_op_local(op1.get());
                     let val2 = eval_op_local(op2.get());
                     val1.value_concat(val2)
@@ -1500,7 +1502,7 @@ fn test_value_concat_pbt() {
 // equal, and with the same transcript bytes.
 #[test]
 fn ram_ref_slice_matches_the_gathered_copy() {
-    use crate::values::value_to_bytes;
+    use crate::value::value_to_bytes;
     let mut rng = test_rng();
     let points: Vec<G1Affine<TestConfig>> = (0..8)
         .map(|_| <TestConfig as Backend>::G1::rand(&mut rng).normalize())
@@ -1523,23 +1525,32 @@ fn ram_ref_slice_matches_the_gathered_copy() {
     }
 }
 
-// Slicing a prepared G2 vector is a view of both its points and their
-// preparations, equal (and serialized identically) to the gathered copy.
+// Slicing a G2 key is a view of both its points and the backend's precomputations for
+// them: equal (and serialized identically) to a key of the copied points, and its
+// keyed multi-pairing over the view is the plain one.
 #[test]
-fn ram_ref_slice_of_prepared_g2_matches_the_copy() {
-    use crate::values::{PreparedG2Vec, value_to_bytes};
+fn ram_ref_slice_of_a_g2_key_matches_the_copy() {
+    use crate::value::value_to_bytes;
     type G2 = <TestConfig as Backend>::G2;
     let mut rng = test_rng();
     let points: Vec<_> = (0..6).map(|_| G2::rand(&mut rng).normalize()).collect();
-    let v = Value::<TestConfig>::VecG2Prepared(PreparedG2Vec::new(points.clone()));
+    let v = Value::<TestConfig>::vec_g2_key(points.clone());
     let view = v.ram_ref(&Value::VecIndex((1..4).collect()));
-    let copy = Value::<TestConfig>::VecG2Prepared(PreparedG2Vec::new(points[1..4].to_vec()));
+    let copy = Value::<TestConfig>::vec_g2_key(points[1..4].to_vec());
     assert_eq!(view, copy);
     assert_eq!(value_to_bytes(&view), value_to_bytes(&copy));
-    let Value::VecG2Prepared(p) = &view else {
+    let Value::VecG2Affine(p) = &view else {
         unreachable!()
     };
-    assert_eq!(p.prepared().len(), 3);
+    let g1: Vec<_> = (0..3)
+        .map(|_| <TestConfig as Backend>::G1::rand(&mut rng))
+        .collect();
+    let g2: Vec<G2> = points[1..4].iter().map(|&p| p.into()).collect();
+    let keyed = p.key().map(|_| TestConfig::multi_pairing(&g1, p));
+    assert_eq!(
+        keyed,
+        Some(<<TestConfig as Backend>::P as crate::Pairing>::multi_pairing(&g1, &g2))
+    );
 }
 
 /// The address of a value's heap payload, if it has one. Exhaustive on
@@ -1555,7 +1566,6 @@ fn heap_payload(v: &Value<ArkBls12_381>) -> Option<*const u8> {
         Value::VecGT(x) => Some(x.as_ptr().cast()),
         Value::VecG1Affine(x) => Some(x.as_ptr().cast()),
         Value::VecG2Affine(x) => Some(x.as_ptr().cast()),
-        Value::VecG2Prepared(x) => Some(x.prepared().as_ptr().cast()),
         Value::Vec(x) => Some(x.as_ptr().cast()),
         Value::G2(x) => Some(Arc::as_ptr(x).cast()),
         Value::GT(x) => Some(Arc::as_ptr(x).cast()),
@@ -1589,7 +1599,7 @@ fn cloning_a_value_shares_its_heap_payload() {
         Value::vec_gt(vec![Default::default(); 3]),
         Value::vec_g1_affine(vec![<C as Backend>::G1::zero().normalize(); 3]),
         Value::vec_g2_affine(vec![g2a; 3]),
-        Value::VecG2Prepared(crate::PreparedG2Vec::new(vec![g2a; 3])),
+        Value::vec_g2_key(vec![g2a; 3]),
         Value::Vec(vec![Value::Index(1), Value::Index(2)].into()),
         Value::g2(g2),
         Value::gt(Default::default()),
@@ -1613,7 +1623,6 @@ fn a_value_is_forty_bytes() {
 
 #[test]
 fn conforms_to_accepts_every_representation_of_a_type() {
-    use crate::values::PreparedG2Vec;
     use share::Ctx;
     type V = Value<TestConfig>;
     type G1 = <TestConfig as Backend>::G1;
@@ -1639,12 +1648,9 @@ fn conforms_to_accepts_every_representation_of_a_type() {
         ),
         (V::vec_g1(vec![g1; 2]), ATyp::vec_g1(2)),
         (V::vec_g1_affine(vec![g1.normalize(); 2]), ATyp::vec_g1(2)),
+        (V::vec_g2_key(vec![g2.normalize(); 2]), ATyp::vec_g2(2)),
         (
-            V::VecG2Prepared(PreparedG2Vec::new(vec![g2.normalize(); 2])),
-            ATyp::vec_g2(2),
-        ),
-        (
-            V::VecG2Prepared(PreparedG2Vec::new(vec![g2.normalize(); 3]).select(&[0, 1])),
+            V::vec_g2_key(vec![g2.normalize(); 3]).ram_ref(&V::VecIndex(vec![0, 1].into())),
             ATyp::vec_g2(2),
         ),
         (
@@ -1681,7 +1687,7 @@ fn conforms_to_accepts_every_representation_of_a_type() {
         ),
         (V::vec_g1(vec![g1; 2]), ATyp::vec_g2(2)),
         (
-            V::VecG2Prepared(PreparedG2Vec::new(vec![g2.normalize(); 3]).select(&[0, 1])),
+            V::vec_g2_key(vec![g2.normalize(); 3]).ram_ref(&V::VecIndex(vec![0, 1].into())),
             ATyp::vec_g2(3),
         ),
         (
@@ -1707,8 +1713,8 @@ fn conforms_to_accepts_every_representation_of_a_type() {
 
 #[test]
 fn conforms_to_bounds_a_polynomial_by_its_type() {
-    use crate::poly_variant::{DenseMle, DenseUni};
-    use crate::virtual_polynomial::VirtualPolynomial;
+    use crate::poly::variant::{DenseMle, DenseUni};
+    use crate::poly::virtual_polynomial::VirtualPolynomial;
     type V = Value<TestConfig>;
     let fr = |xs: &[u64]| xs.iter().map(|&x| Fr::from(x)).collect::<Vec<_>>();
     let uni =
@@ -1736,4 +1742,46 @@ fn conforms_to_bounds_a_polynomial_by_its_type() {
         let value = V::poly(poly.clone());
         assert_eq!(value.conforms_to(&typ), expected, "{value} as {typ}");
     }
+}
+
+/// A G1 vector declared as MSM bases multiplies scalars as its plain points do, on a
+/// group with a preparation (ArkFrRistretto) and one without (BLS12-381), in either
+/// operand order; a slice, arithmetic and the encoding see only the points.
+#[test]
+fn msm_bases_act_as_their_points() {
+    fn check<C: Backend>() {
+        use crate::value::value_to_bytes;
+        let mut rng = test_rng();
+        let points: Vec<G1Affine<C>> = (0..40)
+            .map(|_| <C as Backend>::G1::rand(&mut rng).normalize())
+            .collect();
+        let bases = Value::<C>::vec_g1_key(points.clone());
+        let plain = Value::<C>::vec_g1_affine(points.clone());
+        for _ in 0..3 {
+            let scalars: Vec<C::F> = (0..40).map(|_| C::F::rand(&mut rng)).collect();
+            let want = Value::g1(<C as Backend>::G1::msm(&points, &scalars));
+            let mut dot = Value::vec_scalar(scalars.clone());
+            bases.value_dot(&mut dot);
+            assert_eq!(dot, want);
+            let mut swapped = bases.clone();
+            Value::vec_scalar(scalars).value_dot(&mut swapped);
+            assert_eq!(swapped, want);
+        }
+        let range = Value::VecIndex((2..9).collect());
+        let scalars: Vec<C::F> = (0..7).map(|_| C::F::rand(&mut rng)).collect();
+        let mut sliced = Value::vec_scalar(scalars.clone());
+        bases.ram_ref(&range).value_dot(&mut sliced);
+        assert_eq!(
+            sliced,
+            Value::g1(<C as Backend>::G1::msm(&points[2..9], &scalars))
+        );
+        assert_eq!(value_to_bytes(&bases), value_to_bytes(&plain));
+        let mut sum = plain.clone();
+        bases.value_add(&mut sum);
+        let mut want = plain.clone();
+        plain.value_add(&mut want);
+        assert_eq!(sum, want);
+    }
+    check::<crate::ArkFrRistretto>();
+    check::<TestConfig>();
 }

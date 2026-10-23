@@ -19,48 +19,28 @@
 #![feature(deref_patterns)]
 /// The `Field`, `Group` and `Pairing` traits a backend implements.
 pub mod algebra;
-/// The arkworks implementation of the algebra traits.
-pub mod ark;
-/// The `Backend` trait and its concrete curve/field instantiations.
-pub mod config;
-/// A conformance check for a backend: the laws and contracts Zippel relies on.
-pub mod conformance;
-/// The zkcrypto `ff`/`group` implementation of the algebra traits, and the
-/// Ristretto and Pallas backends built from it.
-pub mod ff_group;
-/// Placeholder group and pairing filling the slots of field-only or
-/// pairing-free backends.
-pub mod nothing;
-/// The typed IR operation enum `Op<C, R>` and its hash-consing factory.
-pub mod op;
-/// Process-global counters recording which sumcheck optimization paths ran.
-pub mod optimization;
-/// Concrete polynomial encodings (dense/sparse univariate, multilinear,
-/// sparse multivariate) and the arithmetic defined over them.
-pub mod poly_variant;
-/// Vectors that share their storage: O(1) clones and slices, copy-on-write.
-pub mod shared;
-/// The IR type level: `ATyp`/`ABase` and conversion from source-level `CTyp`.
-pub mod types;
+/// The `Backend` trait, keys, and the backends Zippel ships.
+pub mod backends;
+/// The IR: typed operations and their types.
+pub mod ir;
+/// Polynomials: concrete encodings and virtual sums of products.
+pub mod poly;
 /// Runtime values `Value<C>` and the evaluation of each `Op` over them.
-pub mod values;
-/// Sum-of-products polynomial representation used by sumcheck-style protocols.
-pub mod virtual_polynomial;
+pub mod value;
 
 pub use algebra::{DivisionByZero, Field, Group, Pairing};
-pub use config::{
-    ArkBls12_381, ArkBn254, ArkCurve25519, ArkEd25519, ArkField17, ArkField65537, ArkFieldN,
-    ArkMNT4_298, ArkPallas, ArkSecp256k1, ArkVesta, Backend, G1Affine, G2Affine, GT,
+pub use backends::nothing::{NoGroup, NoPairing};
+pub use backends::{
+    ArkBls12_381, ArkBn254, ArkCurve25519, ArkEd25519, ArkFrRistretto, ArkMNT4_298, ArkPallas,
+    ArkSecp256k1, ArkVesta, Backend, DalekRistretto, G1Affine, G1Points, G2Affine, G2Points, GT,
+    PastaPallas,
 };
-pub use ff_group::{DalekRistretto, PastaPallas};
-pub use nothing::{NoGroup, NoPairing};
-pub use op::{GOp, Op, OpExclusion, Ref};
-pub use optimization::{OptimizationStats, optimization_stats_snapshot, reset_optimization_stats};
-pub use poly_variant::{PolyError, PolyVariant};
-pub use shared::Shared;
-pub use types::{ABase, ATyp, binomial};
-pub use values::{PreparedG2Vec, Value, value_to_bytes};
-pub use virtual_polynomial::{SelectedEvalShape, VirtualPolynomial};
+pub use ir::op::{GOp, Op, OpExclusion, Ref};
+pub use ir::types::{ABase, ATyp, binomial};
+pub use poly::variant::{PolyError, PolyVariant};
+pub use poly::virtual_polynomial::{SelectedEvalShape, VirtualPolynomial};
+pub use value::shared::Shared;
+pub use value::{Value, value_to_bytes};
 
 #[cfg(test)]
 mod tests;

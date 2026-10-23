@@ -99,11 +99,7 @@ pub fn resolve(
 }
 
 /// Execute one registered example and return its process status.
-pub fn run<C: analyses::AnalysisBackend>(
-    name: &str,
-    spec: &ExampleSpec<C>,
-    request: &Request,
-) -> u8 {
+pub fn run<C: Backend>(name: &str, spec: &ExampleSpec<C>, request: &Request) -> u8 {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(spec.source);
     let module = match ParsedModule::load(&path) {
         Ok(module) => module,
@@ -217,7 +213,7 @@ pub fn run<C: analyses::AnalysisBackend>(
     }
 }
 
-fn run_analyses<C: analyses::AnalysisBackend>(
+fn run_analyses<C: Backend>(
     protocol: &CompiledProtocol<C>,
     analyses: &[Analysis<'_>],
     selected: Option<AnalysisKind>,
@@ -259,7 +255,7 @@ fn run_analyses<C: analyses::AnalysisBackend>(
     u8::from(failed)
 }
 
-fn run_protocol<C: analyses::AnalysisBackend>(
+fn run_protocol<C: Backend>(
     prover: &CompiledProver<C>,
     verifier: &CompiledVerifier<C>,
     inputs: Ctx<Vid, Value<C>>,

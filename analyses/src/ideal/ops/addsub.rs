@@ -247,7 +247,7 @@ mod tests {
         // VPoly(2,1) has 3 coefficient slots.  a + b should bind ideal.slot(i)
         // to a.slot(i) + b.slot(i) for each of the 3 slots.
         use crate::Var;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::Qualifier;
@@ -298,7 +298,7 @@ mod tests {
     fn test_add_op_mle_add_pointwise() {
         // Mle(2) has 4 evaluation slots. add is pointwise over hypercube.
         use crate::Var;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::Qualifier;
@@ -339,7 +339,7 @@ mod tests {
     #[test]
     fn test_add_op_vpoly_sub_coefficient_wise() {
         use crate::Var;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::Qualifier;
@@ -483,7 +483,7 @@ mod tests {
     fn test_add_uni_different_degrees() {
         use crate::Var;
         use ark_bls12_381::Fr;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use lang::ast::BinOp;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
@@ -642,7 +642,7 @@ mod tests {
     #[test]
     fn test_add_vec_vpoly_by_vpoly() {
         use crate::Var;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use graph::Ref;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
@@ -695,7 +695,7 @@ mod tests {
     #[test]
     fn test_sub_vec_vpoly_by_vpoly() {
         use crate::Var;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use graph::Ref;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
@@ -745,7 +745,7 @@ mod tests {
     #[test]
     fn test_add_vpoly_by_vec_vpoly() {
         use crate::Var;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use graph::Ref;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;

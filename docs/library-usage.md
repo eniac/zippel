@@ -140,10 +140,10 @@ check fails, and `Err` for an execution error.
 
 `prepare_analysis` returns a `PreparedAnalysis` for running static checks. Here,
 `run(Analysis::Completeness, GbBackendKind::ArkGb)` checks completeness using
-the ark-gb backend. The analyses need the backend's scalar field to be an
-arkworks prime field (`analyses::AnalysisBackend`). They depend only on that
-field, so to analyze a protocol that runs on another backend, compile it for
-the arkworks backend with the same scalar field.
+the ark-gb backend. The analyses need an arkworks prime field but depend only
+on the field, so `prepare_analysis` lowers the protocol for the backend's
+`Analysis` type: the arkworks backend with the same scalar field, or the
+backend itself if its field already comes from arkworks.
 
 Loading, compilation, verifier projection, execution and analysis preparation
 return `Result`; the example uses `?` to propagate errors. The analysis result
@@ -167,9 +167,11 @@ Completeness: PASSED
 A protocol runs over a *backend*: a type implementing
 `zippel::backend::Backend`, which names a scalar field, two source groups
 and a pairing. Zippel ships arkworks backends (`ArkBls12_381`, `ArkBn254`,
-`ArkCurve25519`, ...) and two built on the zkcrypto `ff`/`group` 0.14
-crates (`DalekRistretto`, `PastaPallas`). You can write a backend for any
-other library too.
+`ArkCurve25519`, ...), one with arkworks scalars over curve25519-dalek's
+Ristretto (`ArkFrRistretto`), and two built on the zkcrypto `ff`/`group`
+0.14 crates (`DalekRistretto`, `PastaPallas`). They live in
+`backend/src/backends/`. You can write a backend for any other library
+too.
 
 ### From `ff`/`group` 0.14
 
@@ -177,7 +179,8 @@ If your curve's types implement `ff::PrimeField` and
 `group::Group + group::GroupEncoding`, a marker type is all you need:
 
 ```rust
-use zippel::backend::ff_group::{FfPoint, FfScalar};
+use zippel::backend::backends::NoKey;
+use zippel::backend::backends::ff_group::{FfPoint, FfScalar};
 use zippel::backend::{Backend, NoPairing};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -194,20 +197,40 @@ impl Backend for MyCurve {
     type G1 = FfPoint<my_curve::Point>;
     type G2 = Self::G1;
     type P = NoPairing<Self::G1>;
+    type G1Key = NoKey;
+    type G2Key = NoKey;
+    // The arkworks backend with the same scalar field.
+    type Analysis = zippel::backend::ArkCurve25519;
     const HAS_PAIRING: bool = false;
 }
 ```
 
+`Analysis` names the arkworks backend with the same scalar field and
+capabilities. The static analyses run on it, because their Gröbner-basis
+engines need an arkworks field; a backend whose field already comes from
+arkworks names `Self`. This requirement goes away once the engines handle
+any field.
+
+`G1Key` and `G2Key` hold what the backend keeps for point vectors that a
+harness declares as keys with `Value::vec_g1_key` or `Value::vec_g2_key`,
+such as commitment or verifier keys reused across operations. `NoKey`
+keeps nothing. A key type implements `backends::Key` (`prepare`, and
+optionally `concat`). The operations that use keys, `msm_g1`, `msm_g2` and
+`multi_pairing`, are `Backend` methods with plain default implementations;
+a backend overrides them to read `points.key()`. If a backend speeds up
+several operations, one key type holds the data for all of them.
+
 `FfPoint<G>` uses a generic Pippenger MSM. To use the curve's own MSM
 instead, implement
-`zippel::backend::ff_group::Msm<my_curve::Point>`
+`zippel::backend::backends::ff_group::Msm<my_curve::Point>`
 on a marker type in your crate and use `FfPoint<my_curve::Point, MyMsm>`;
 `DalekMsm` is an example.
 
 ### From any other library
 
 Implement Zippel's traits from `zippel::backend::algebra`.
-`backend/src/ark.rs` and `backend/src/ff_group.rs` are complete examples.
+`backend/src/backends/arkworks.rs` and `backend/src/backends/ff_group.rs` are
+complete examples.
 
 - `Field`: the standard operators, plus `zero`, `one`, `is_zero`,
   `inverse`, `rand`, `from_le_bytes_mod_order`, `write_bytes`,
@@ -219,9 +242,10 @@ Implement Zippel's traits from `zippel::backend::algebra`.
   `normalize_batch`, `batch_mul`, `msm`, `write_bytes` and
   `write_affine_bytes`. `Affine` is the form an MSM takes; for a group with
   a single form, set it to `Self`.
-- `Pairing`: `pairing`, `multi_pairing`, `multi_pairing_prepared` and
-  `prepare_g2`. A backend without a pairing uses `NoPairing` and sets
-  `HAS_PAIRING = false`.
+- `Pairing`: `pairing` and `multi_pairing`. A backend without a pairing
+  uses `NoPairing` and sets `HAS_PAIRING = false`. A prepared form of the
+  second operand, which arkworks keeps for a verifier key, belongs in the
+  backend's `G2Key` rather than in the trait.
 
 Rust's orphan rule means you need a newtype around any type your crate
 does not own, as `FfScalar` and `FfPoint` are.
@@ -236,19 +260,13 @@ Three properties matter for correctness:
 - `two_adic_root(k)` is a primitive `2^k`-th root of unity for every
   `k <= TWO_ADICITY`.
 
-To check them, call the conformance test from a test in your crate:
-
-```rust
-#[test]
-fn my_curve_conforms() {
-    let mut rng = rand::thread_rng();
-    zippel::backend::conformance::check_backend::<MyCurve, _>(&mut rng);
-}
-```
+`backend/src/tests/conformance.rs` checks the shipped backends against
+these properties, and checks that their keyed operations agree with the
+plain ones. A backend added to Zippel is added to that test.
 
 Compilation rejects a protocol that needs something the backend lacks (a
 pairing, or an FFT larger than `2^TWO_ADICITY`), with a diagnostic at the
 operation; for the shipped backends, `cargo zcheck --backend NAME` reports
-the same. Static analysis needs an arkworks scalar field, so analyze a protocol
-on the arkworks backend with the same scalar field (`ArkCurve25519` for
-Ristretto, `ArkPallas` for Pallas).
+the same. The static analyses run on the backend's `Analysis` type
+(`ArkCurve25519` for Ristretto, `ArkPallas` for Pallas), so
+`prepare_analysis` works on every backend.

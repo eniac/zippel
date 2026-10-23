@@ -33,7 +33,7 @@ pub mod testing;
 #[cfg(test)]
 mod tests;
 
-pub use backend::op::{GOp, HOp, Op, OpExclusion, Ref, mk};
+pub use backend::ir::op::{GOp, HOp, Op, OpExclusion, Ref, mk};
 pub use dep::{Dep, DepType};
 use log::debug;
 pub use lower::Relations;
@@ -127,7 +127,7 @@ pub enum GraphError {
     #[error("{backend} cannot run this protocol: it needs {what}")]
     Unsupported {
         /// What is missing.
-        what: backend::op::Unsupported,
+        what: backend::ir::op::Unsupported,
         /// The backend's name.
         backend: String,
         /// The node that needs it.
@@ -209,9 +209,9 @@ impl From<&GraphError> for Diagnostic {
             }
             GraphError::Unsupported { what, span, .. } => {
                 let label = match what {
-                    backend::op::Unsupported::Pairing => "needs a pairing",
-                    backend::op::Unsupported::Group => "needs a group",
-                    backend::op::Unsupported::FftDomain { .. } => "needs a larger FFT domain",
+                    backend::ir::op::Unsupported::Pairing => "needs a pairing",
+                    backend::ir::op::Unsupported::Group => "needs a group",
+                    backend::ir::op::Unsupported::FftDomain { .. } => "needs a larger FFT domain",
                 };
                 Diagnostic::error(Phase::Type, span.clone(), &e.to_string())
                     .primary_label(label)
@@ -356,7 +356,7 @@ impl<C: Backend, A> Dag<C, A> {
     pub fn check_backend(&self) -> Result<(), GraphError> {
         for node in self.graph.node_weights() {
             let what = match &node.node {
-                Node::Arg(_, typ, ..) => backend::op::unsupported_type::<C>(typ),
+                Node::Arg(_, typ, ..) => backend::ir::op::unsupported_type::<C>(typ),
                 Node::Op(op, _) | Node::Transcr(op, _) => op.unsupported(),
                 Node::Inp(_) | Node::Rel(_) => None,
             };

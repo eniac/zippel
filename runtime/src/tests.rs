@@ -2,7 +2,7 @@
 mod runtime_tests {
     use crate::{MutexGraph, ResultKind, RunResult};
     use backend::Value;
-    use backend::config::ArkBls12_381;
+    use backend::backends::ArkBls12_381;
 
     use lang::id::Tid;
     use lang::id::Vid;

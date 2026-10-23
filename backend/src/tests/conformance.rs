@@ -1,9 +1,8 @@
-//! A conformance check for a [`Backend`]: the laws and encoding contracts Zippel relies
-//! on, checked on random elements. Call [`check_backend`] from a test of a new backend;
-//! it panics, naming the property, at the first one that fails.
+//! The laws and encoding contracts Zippel relies on, checked on random elements for every
+//! shipped backend; each check panics, naming the property, at the first one that fails.
 
 use crate::algebra::{Field, Group, Pairing};
-use crate::config::Backend;
+use crate::backends::Backend;
 use rand::Rng;
 use std::cmp::Ordering;
 use std::collections::hash_map::DefaultHasher;
@@ -29,7 +28,7 @@ fn bytes<T>(x: &T, write: impl Fn(&T, &mut Vec<u8>)) -> Vec<u8> {
 ///
 /// # Panics
 /// At the first property that fails.
-pub fn check_backend<C: Backend, R: Rng + ?Sized>(rng: &mut R) {
+fn check_backend<C: Backend, R: Rng + ?Sized>(rng: &mut R) {
     check_field::<C::F, R>(rng);
     if C::HAS_GROUP {
         check_group::<C::G1, R>(rng);
@@ -38,13 +37,89 @@ pub fn check_backend<C: Backend, R: Rng + ?Sized>(rng: &mut R) {
     if C::HAS_PAIRING {
         check_pairing::<C::P, R>(rng);
     }
+    if C::HAS_GROUP {
+        check_keys::<C, R>(rng);
+    }
+    check_analysis_twin::<C>();
+}
+
+/// The backend's analysis twin has its scalar field and its capabilities: the two
+/// fields' canonical encodings of `-1` (that is, of `p - 1`) agree.
+fn check_analysis_twin<C: Backend>() {
+    type A<C> = <C as Backend>::Analysis;
+    assert_eq!(
+        bytes(&-C::F::one(), C::F::write_bytes),
+        bytes(
+            &-<A<C> as Backend>::F::one(),
+            <A<C> as Backend>::F::write_bytes
+        ),
+        "the analysis twin has the same modulus"
+    );
+    assert_eq!(
+        (C::HAS_GROUP, C::HAS_PAIRING),
+        (A::<C>::HAS_GROUP, A::<C>::HAS_PAIRING),
+        "the analysis twin has the same capabilities"
+    );
+}
+
+/// Every bulk operation equals the plain one when given the key the backend prepares:
+/// for the whole vector, for a view of part of it, and for a key concatenated from two
+/// views.
+///
+/// # Panics
+/// At the first property that fails.
+fn check_keys<C: Backend, R: Rng + ?Sized>(rng: &mut R) {
+    use crate::backends::{G1Points, G2Points, Key};
+    for n in [1, 5, 40] {
+        let g1: Vec<C::G1> = (0..n).map(|_| C::G1::rand(rng)).collect();
+        let g2: Vec<C::G2> = (0..n).map(|_| C::G2::rand(rng)).collect();
+        let (a1, a2) = (C::G1::normalize_batch(&g1), C::G2::normalize_batch(&g2));
+        let scalars: Vec<C::F> = (0..n).map(|_| C::F::rand(rng)).collect();
+        let p1 = G1Points::<C>::keyed(a1.clone(), Key::prepare);
+        let p2 = G2Points::<C>::keyed(a2.clone(), Key::prepare);
+        for r in [0..n, n / 2..n] {
+            let (v1, v2) = (p1.slice(r.clone()), p2.slice(r.clone()));
+            assert_eq!(
+                C::msm_g1(&v1, &scalars[r.clone()]),
+                C::G1::msm(&a1[r.clone()], &scalars[r.clone()]),
+                "G1 msm of a key"
+            );
+            assert_eq!(
+                C::msm_g2(&v2, &scalars[r.clone()]),
+                C::G2::msm(&a2[r.clone()], &scalars[r.clone()]),
+                "G2 msm of a key"
+            );
+            if C::HAS_PAIRING {
+                assert_eq!(
+                    C::multi_pairing(&g1[r.clone()], &v2),
+                    C::P::multi_pairing(&g1[r.clone()], &g2[r]),
+                    "multi-pairing with a key"
+                );
+            }
+        }
+        let (front, back) = (p2.slice(n / 2..n), p2.slice(0..n / 2));
+        if C::HAS_PAIRING
+            && let (Some(f), Some(b)) = (front.key(), back.key())
+            && let Some(joined) = f.key.concat(f.view, b.key, b.view)
+        {
+            let order: Vec<usize> = (n / 2..n).chain(0..n / 2).collect();
+            let (o1, o2): (Vec<_>, Vec<_>) = order.iter().map(|&i| (g1[i], g2[i])).unzip();
+            let affine: Vec<_> = order.iter().map(|&i| a2[i]).collect();
+            let concatenated = G2Points::<C>::keyed(affine, |_| Some(joined));
+            assert_eq!(
+                C::multi_pairing(&o1, &concatenated),
+                C::P::multi_pairing(&o1, &o2),
+                "multi-pairing with a concatenated key"
+            );
+        }
+    }
 }
 
 /// The field laws, and the contracts of [`Field`]'s methods.
 ///
 /// # Panics
 /// At the first property that fails.
-pub fn check_field<F: Field, R: Rng + ?Sized>(rng: &mut R) {
+fn check_field<F: Field, R: Rng + ?Sized>(rng: &mut R) {
     let (zero, one) = (F::zero(), F::one());
     assert!(
         zero.is_zero() && !one.is_zero() && one.is_one(),
@@ -125,7 +200,7 @@ pub fn check_field<F: Field, R: Rng + ?Sized>(rng: &mut R) {
 ///
 /// # Panics
 /// At the first property that fails.
-pub fn check_group<G: Group, R: Rng + ?Sized>(rng: &mut R) {
+fn check_group<G: Group, R: Rng + ?Sized>(rng: &mut R) {
     let zero = G::zero();
     assert!(
         zero.is_zero() && !G::generator().is_zero(),
@@ -192,7 +267,7 @@ pub fn check_group<G: Group, R: Rng + ?Sized>(rng: &mut R) {
 ///
 /// # Panics
 /// At the first property that fails.
-pub fn check_pairing<P: Pairing, R: Rng + ?Sized>(rng: &mut R) {
+fn check_pairing<P: Pairing, R: Rng + ?Sized>(rng: &mut R) {
     type S<P> = <<P as Pairing>::G1 as Group>::Scalar;
     let (p, q) = (P::G1::rand(rng), P::G2::rand(rng));
     let (a, b) = (S::<P>::rand(rng), S::<P>::rand(rng));
@@ -213,13 +288,21 @@ pub fn check_pairing<P: Pairing, R: Rng + ?Sized>(rng: &mut R) {
         sum,
         "pairings"
     );
-    let prepared: Vec<P::G2Prepared> = P::G2::normalize_batch(&b2)
-        .iter()
-        .map(P::prepare_g2)
-        .collect();
-    assert_eq!(
-        P::multi_pairing_prepared(&a1, &prepared),
-        sum,
-        "multi_pairing_prepared"
-    );
+}
+
+#[test]
+fn every_backend_satisfies_the_laws() {
+    use crate::*;
+    let mut rng = ark_std::test_rng();
+    check_backend::<ArkBls12_381, _>(&mut rng);
+    check_backend::<ArkBn254, _>(&mut rng);
+    check_backend::<ArkMNT4_298, _>(&mut rng);
+    check_backend::<ArkCurve25519, _>(&mut rng);
+    check_backend::<ArkEd25519, _>(&mut rng);
+    check_backend::<ArkSecp256k1, _>(&mut rng);
+    check_backend::<ArkPallas, _>(&mut rng);
+    check_backend::<ArkVesta, _>(&mut rng);
+    check_backend::<DalekRistretto, _>(&mut rng);
+    check_backend::<ArkFrRistretto, _>(&mut rng);
+    check_backend::<PastaPallas, _>(&mut rng);
 }

@@ -3,7 +3,7 @@ use lang::id::Vid;
 use lang::typ::{Distribution, Nothing, Qualifier};
 use share::traversal::ToTraversal2;
 
-use backend::op::{GOp, HOp, Op, OpExclusion, Ref, mk};
+use backend::ir::op::{GOp, HOp, Op, OpExclusion, Ref, mk};
 use backend::{ATyp, Backend};
 use petgraph::graph::NodeIndex;
 use std::fmt;

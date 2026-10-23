@@ -117,7 +117,7 @@ impl<C: AnalysisBackend> IdealBuilder<C> {
                     if let Some(op) = builder.node_ops.get(r)
                         && matches!(op, Op::Bin(BinOp::And, ..))
                     {
-                        let hop = backend::op::mk::<C>(op.clone());
+                        let hop = backend::ir::op::mk::<C>(op.clone());
                         collect(builder, &hop, out);
                         return;
                     }
@@ -312,7 +312,7 @@ mod tests {
     use backend::ArkBls12_381;
     use backend::Value;
 
-    use backend::op::mk;
+    use backend::ir::op::mk;
 
     // -----------------------------------------------------------------
     // add_op: Op::Poly / Op::Mle / Op::Coef (identity on coefficient slots)
@@ -322,7 +322,7 @@ mod tests {
     fn test_add_op_poly_binds_coefficient_slots() {
         use crate::Var;
         use ark_bls12_381::Fr;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
@@ -359,7 +359,7 @@ mod tests {
         // Op::Coef(Op::Poly(v)) bound to the same slots should reduce to `v`.
         use crate::Var;
         use ark_bls12_381::Fr;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
@@ -414,7 +414,7 @@ mod tests {
     fn test_add_op_mle_binds_hypercube_slots() {
         use crate::Var;
         use ark_bls12_381::Fr;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
@@ -573,7 +573,7 @@ mod tests {
 
     #[test]
     fn pair_emits_product_without_sentinel() {
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 

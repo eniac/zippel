@@ -10,8 +10,8 @@
 //! own.
 
 use crate::algebra::{Field, Group};
-use crate::config::Backend;
-use crate::nothing::NoPairing;
+use crate::backends::Backend;
+use crate::backends::nothing::NoPairing;
 use num_bigint::BigUint;
 use rand::Rng;
 use rayon::prelude::*;
@@ -422,6 +422,9 @@ impl fmt::Display for PastaPallas {
 }
 
 impl Backend for DalekRistretto {
+    type Analysis = crate::ArkCurve25519;
+    type G1Key = crate::backends::keys::NoKey;
+    type G2Key = crate::backends::keys::NoKey;
     type F = FfScalar<curve25519_dalek::Scalar>;
     type G1 = FfPoint<curve25519_dalek::RistrettoPoint, DalekMsm>;
     type G2 = Self::G1;
@@ -430,6 +433,9 @@ impl Backend for DalekRistretto {
 }
 
 impl Backend for PastaPallas {
+    type Analysis = crate::ArkPallas;
+    type G1Key = crate::backends::keys::NoKey;
+    type G2Key = crate::backends::keys::NoKey;
     type F = FfScalar<pasta_curves::pallas::Scalar>;
     type G1 = FfPoint<pasta_curves::pallas::Point>;
     type G2 = Self::G1;

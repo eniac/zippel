@@ -1,9 +1,9 @@
 //! The transcript encoding of every `Value` variant, pinned: prover and
 //! verifier absorb these bytes, so a change to them changes every challenge.
 
-use crate::config::{ArkBls12_381, ArkSecp256k1, Backend};
-use crate::poly_variant::{DenseMle, DenseUni, Multivariate, SparseUni, Term};
-use crate::{Group, Pairing, PolyVariant, PreparedG2Vec, Value, VirtualPolynomial, value_to_bytes};
+use crate::backends::{ArkBls12_381, ArkSecp256k1, Backend};
+use crate::poly::variant::{DenseMle, DenseUni, Multivariate, SparseUni, Term};
+use crate::{Group, Pairing, PolyVariant, Value, VirtualPolynomial, value_to_bytes};
 use share::Ctx;
 use std::fmt::Write;
 
@@ -94,10 +94,7 @@ fn pairing_values<C: Backend>() -> Vec<(&'static str, Value<C>)> {
         ("vec_gt", Value::vec_gt(vec![gt, gt + gt])),
         (
             "vec_g2_prepared",
-            Value::VecG2Prepared(PreparedG2Vec::new(vec![
-                g2.normalize(),
-                (g2 + g2).normalize(),
-            ])),
+            Value::vec_g2_key(vec![g2.normalize(), (g2 + g2).normalize()]),
         ),
     ]
 }

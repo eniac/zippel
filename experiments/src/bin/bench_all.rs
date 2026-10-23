@@ -59,6 +59,7 @@ const ALL_SYSTEMS: &[&str] = &[
     "hyrax",
     "spartan",
     "spartan-ristretto",
+    "spartan-hybrid",
     "dekart",
     "kzh",
     "dory",
@@ -832,19 +833,25 @@ fn libspartan_timing(m: usize) -> Timing {
     }
 }
 
-/// Zippel's Spartan on `DalekRistretto`, the curve25519-dalek group libspartan uses,
-/// against libspartan. libspartan pins curve25519-dalek 4 and the backend uses 5, so
-/// compare their MSMs separately before crediting a difference to Zippel.
-fn run_spartan_ristretto(threads: usize, ms: &[usize]) -> Vec<Row> {
+/// Zippel's Spartan on a backend over the curve25519-dalek group libspartan uses
+/// (`DalekRistretto` as `spartan-ristretto`, `ArkFrRistretto` with arkworks scalars as
+/// `spartan-hybrid`), against libspartan. libspartan pins curve25519-dalek 4 and the
+/// backends use 5, so compare their MSMs separately before crediting a difference to
+/// Zippel.
+fn run_spartan_ristretto<C: backend::Backend>(
+    system: &'static str,
+    threads: usize,
+    ms: &[usize],
+) -> Vec<Row> {
     ms.iter()
         .map(|&m| {
-            let mut z = setup_pool().install(|| spartan::Setup::<backend::DalekRistretto>::new(m));
+            let mut z = setup_pool().install(|| spartan::Setup::<C>::new(m));
             let compile = z.compile_time();
             let (prover_nodes, verifier_nodes) = z.graph_sizes();
             let zippel = z.timing();
             let native = libspartan_timing(m);
             let r = Row {
-                system: "spartan-ristretto",
+                system,
                 threads,
                 log_size: m,
                 zippel,
@@ -1206,7 +1213,16 @@ fn main() {
             "pst13" => run_pst13(threads, &pst13_ns),
             "hyrax" => run_hyrax(threads, &hyrax_ns),
             "spartan" => run_spartan(threads, &spartan_ms),
-            "spartan-ristretto" => run_spartan_ristretto(threads, &spartan_ms),
+            "spartan-ristretto" => run_spartan_ristretto::<backend::DalekRistretto>(
+                "spartan-ristretto",
+                threads,
+                &spartan_ms,
+            ),
+            "spartan-hybrid" => run_spartan_ristretto::<backend::ArkFrRistretto>(
+                "spartan-hybrid",
+                threads,
+                &spartan_ms,
+            ),
             "dekart" => run_dekart(threads, &dekart_ls, DEKART_ELL),
             "kzh" => run_kzh(threads, &kzh_ns),
             "dory" => run_dory(threads, &dory_ns),

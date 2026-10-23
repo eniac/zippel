@@ -524,8 +524,8 @@ fn compile_rejects_what_the_backend_lacks() {
     assert!(error.contains("an FFT over 8 points"), "{error}");
 }
 
-/// Schnorr proves and verifies on the `ff`/`group` backends, and a tampered proof
-/// fails, as on arkworks.
+/// Schnorr proves and verifies on the `ff`/`group` backends and on arkworks scalars over
+/// dalek's Ristretto, and a tampered proof fails, as on arkworks.
 #[test]
 fn schnorr_runs_on_ff_group_backends() {
     fn run<C: backend::Backend>() {
@@ -551,6 +551,7 @@ fn schnorr_runs_on_ff_group_backends() {
         assert!(!verifier.verify(tampered, inputs).unwrap());
     }
     run::<backend::DalekRistretto>();
+    run::<backend::ArkFrRistretto>();
     run::<backend::PastaPallas>();
 }
 

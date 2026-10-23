@@ -126,11 +126,6 @@ impl<G: Group> Pairing for NoPairing<G> {
     type G1 = G;
     type G2 = G;
     type GT = NoGroup<G::Scalar>;
-    type G2Prepared = Infallible;
-
-    fn prepare_g2(_: &G::Affine) -> Infallible {
-        panic!("{NO_GROUP}")
-    }
 
     fn pairing(_: &G, _: &G) -> Self::GT {
         panic!("{NO_GROUP}")
@@ -138,10 +133,5 @@ impl<G: Group> Pairing for NoPairing<G> {
 
     fn multi_pairing(_: &[G], _: &[G]) -> Self::GT {
         panic!("{NO_GROUP}")
-    }
-
-    fn multi_pairing_prepared(_: &[G], b: &[Infallible]) -> Self::GT {
-        b.first()
-            .map_or_else(|| panic!("{NO_GROUP}"), |&x| match x {})
     }
 }

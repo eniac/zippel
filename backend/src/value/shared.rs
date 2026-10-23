@@ -29,7 +29,7 @@ const WHOLE: usize = usize::MAX;
 
 impl<T> Shared<T> {
     /// The viewed range of the buffer; `None` is all of it.
-    fn range(&self) -> Option<Range<usize>> {
+    pub(crate) fn range(&self) -> Option<Range<usize>> {
         (self.len != WHOLE).then(|| self.start..self.start + self.len)
     }
 

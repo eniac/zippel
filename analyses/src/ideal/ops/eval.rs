@@ -304,7 +304,7 @@ mod tests {
     fn test_add_op_eval_univariate_batched() {
         use crate::Var;
         use ark_bls12_381::Fr;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use graph::Ref;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
@@ -375,7 +375,7 @@ mod tests {
         // p(x) = 3 + 5x evaluated at [7, 11] should give [38, 58].
         use crate::Var;
         use ark_bls12_381::Fr;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
@@ -470,12 +470,12 @@ mod tests {
 
         let var = Var::from_node(NodeIndex::new(2), ATyp::scalar(), Qualifier::Witness);
         let op: GOp<ArkBls12_381> = Op::Evaluate(
-            backend::op::mk::<ArkBls12_381>(Op::Ref(
+            backend::ir::op::mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(0)),
                 ATyp::VPoly(2, 2),
             )),
             None,
-            Some(backend::op::mk::<ArkBls12_381>(Op::Ref(
+            Some(backend::ir::op::mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(1)),
                 ATyp::Uni(1),
             ))),
@@ -516,12 +516,12 @@ mod tests {
 
         let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(2, 1), Qualifier::Witness);
         let op: GOp<ArkBls12_381> = Op::Evaluate(
-            backend::op::mk::<ArkBls12_381>(Op::Ref(
+            backend::ir::op::mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(0)),
                 ATyp::VPoly(3, 1),
             )),
             None,
-            Some(backend::op::mk::<ArkBls12_381>(Op::Ref(
+            Some(backend::ir::op::mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(1)),
                 ATyp::Uni(0),
             ))),
@@ -562,12 +562,12 @@ mod tests {
 
         let var = Var::from_node(NodeIndex::new(2), ATyp::scalar(), Qualifier::Witness);
         let op: GOp<ArkBls12_381> = Op::Evaluate(
-            backend::op::mk::<ArkBls12_381>(Op::Ref(
+            backend::ir::op::mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(0)),
                 ATyp::Mle(2),
             )),
             None,
-            Some(backend::op::mk::<ArkBls12_381>(Op::Ref(
+            Some(backend::ir::op::mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(1)),
                 ATyp::Uni(1),
             ))),
@@ -603,12 +603,12 @@ mod tests {
 
         let var = Var::from_node(NodeIndex::new(2), ATyp::Mle(2), Qualifier::Witness);
         let op: GOp<ArkBls12_381> = Op::Evaluate(
-            backend::op::mk::<ArkBls12_381>(Op::Ref(
+            backend::ir::op::mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(0)),
                 ATyp::Mle(3),
             )),
             None,
-            Some(backend::op::mk::<ArkBls12_381>(Op::Ref(
+            Some(backend::ir::op::mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(1)),
                 ATyp::Uni(0),
             ))),

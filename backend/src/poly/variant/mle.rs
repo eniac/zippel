@@ -64,35 +64,70 @@ pub(super) enum Table<'a, F> {
 /// index beside its value and is read through a lookup.
 const SPARSE_MAX_FILL: usize = 4;
 
+/// Temporary dense tables use at most this many field elements per stored input entry.
+/// This allocation budget is independent of the result's density threshold.
+const DENSE_SCRATCH_FACTOR: usize = 4;
+
 /// Blocks above this many entries evaluate their halves in parallel.
 const PARALLEL_BLOCK: usize = 1 << 10;
 
 /// The MLE over `num_vars` variables with the given entries (an index listed twice takes the
 /// sum), encoded by density: a `SparseMle`, sorted and without zeros, while it is sparse
 /// enough (see [`SPARSE_MAX_FILL`]), else a `DenseMle`.
+/// Dense scratch storage is bounded by the iterator's known entry count. Its choice
+/// does not determine the result encoding, which depends only on actual nonzeros.
 fn from_entries<F: Field>(
     num_vars: usize,
     entries: impl IntoIterator<Item = (usize, F)>,
 ) -> PolyVariant<F> {
-    let mut sums: HashMap<usize, F> = HashMap::new();
-    for (i, v) in entries {
-        *sums.entry(i).or_insert_with(F::zero) += v;
+    enum Accumulated<F> {
+        Dense(Vec<F>),
+        Sparse(HashMap<usize, F>),
     }
-    sums.retain(|_, v| !v.is_zero());
-    match 1usize.checked_shl(num_vars as u32) {
-        Some(len) if sums.len().saturating_mul(SPARSE_MAX_FILL) > len => {
-            let mut dense = vec![F::zero(); len];
-            for (i, v) in sums {
-                dense[i] = v;
-            }
-            dense_mle(num_vars, dense)
+
+    let entries = entries.into_iter();
+    let len = 1usize.checked_shl(u32::try_from(num_vars).unwrap_or(u32::MAX));
+    let mut sums = match len {
+        Some(len) if len <= entries.size_hint().0.saturating_mul(DENSE_SCRATCH_FACTOR) => {
+            Accumulated::Dense(accumulate_dense(len, entries))
         }
         _ => {
-            let mut evals: Vec<(usize, F)> = sums.into_iter().collect();
-            evals.sort_unstable_by_key(|&(i, _)| i);
-            PolyVariant::SparseMle { num_vars, evals }
+            let mut sums: HashMap<usize, F> = HashMap::new();
+            for (i, v) in entries {
+                *sums.entry(i).or_insert_with(F::zero) += v;
+            }
+            Accumulated::Sparse(sums)
         }
+    };
+    let nonzero = match &mut sums {
+        Accumulated::Dense(values) => values.iter().filter(|v| !v.is_zero()).count(),
+        Accumulated::Sparse(entries) => {
+            entries.retain(|_, v| !v.is_zero());
+            entries.len()
+        }
+    };
+    if let Some(len) = len
+        && nonzero.saturating_mul(SPARSE_MAX_FILL) > len
+    {
+        let values = match sums {
+            Accumulated::Dense(values) => values,
+            Accumulated::Sparse(entries) => accumulate_dense(len, entries),
+        };
+        return dense_mle(num_vars, values);
     }
+    let evals = match sums {
+        Accumulated::Dense(values) => values
+            .into_iter()
+            .enumerate()
+            .filter(|(_, v)| !v.is_zero())
+            .collect(),
+        Accumulated::Sparse(entries) => {
+            let mut evals: Vec<_> = entries.into_iter().collect();
+            evals.sort_unstable_by_key(|&(i, _)| i);
+            evals
+        }
+    };
+    PolyVariant::SparseMle { num_vars, evals }
 }
 
 /// The `DenseMle` with table `values` over `num_vars` variables.
@@ -129,16 +164,49 @@ pub(super) fn add<F: Field>(num_vars: usize, a: Table<'_, F>, b: Table<'_, F>) -
     }
 }
 
+/// `Σ c·f` over the tables `terms`, all over `num_vars` variables: dense when any table is,
+/// else encoded by density ([`from_entries`]).
+pub(super) fn linear_combination<F: Field>(
+    num_vars: usize,
+    terms: &[(F, Table<'_, F>)],
+) -> PolyVariant<F> {
+    if terms.iter().all(|(_, t)| matches!(t, Table::Sparse(_))) {
+        return from_entries(
+            num_vars,
+            terms.iter().flat_map(|&(c, table)| {
+                let evals: &[(usize, F)] = match table {
+                    Table::Sparse(evals) => evals,
+                    Table::Dense(_) => &[],
+                };
+                evals.iter().map(move |&(i, v)| (i, c * v))
+            }),
+        );
+    }
+    let mut out = vec![F::zero(); 1 << num_vars];
+    for &(c, table) in terms {
+        match table {
+            Table::Dense(values) => out
+                .par_iter_mut()
+                .zip(values)
+                .with_min_len(PARALLEL_BLOCK)
+                .for_each(|(o, &v)| *o += c * v),
+            Table::Sparse(evals) => {
+                for &(i, v) in evals {
+                    out[i] += c * v;
+                }
+            }
+        }
+    }
+    dense_mle(num_vars, out)
+}
+
 /// The extension at `point`, which fixes every variable.
 pub(super) fn evaluate<F: Field>(table: Table<'_, F>, point: &[F]) -> F {
     match table {
         Table::Dense(values) => evaluate_block(values, point),
         Table::Sparse(evals) => {
-            let one_minus: Vec<F> = point.iter().map(|r| F::one() - r).collect();
-            evals
-                .par_iter()
-                .map(|&(i, v)| v * eq_weight(i, point, &one_minus))
-                .sum()
+            let weights = EqualityWeights::new(point, evals.len());
+            evals.par_iter().map(|&(i, v)| weights.apply(i, v)).sum()
         }
     }
 }
@@ -150,7 +218,8 @@ pub(super) fn evaluate<F: Field>(table: Table<'_, F>, point: &[F]) -> F {
 /// `values[j·2^k..(j+1)·2^k]` evaluated at the `k`-coordinate `point`, and only the
 /// `2^(n-k)`-entry result is allocated (arkworks' `fix_variables` first copies the whole
 /// table, and folds it single-threaded). A sparse table weighs each entry by
-/// `eq(point, low bits)` and adds it to the entry of its high bits, in `O(|evals| · k)`.
+/// `eq(point, low bits)` and adds it to the entry of its high bits. A bounded equality
+/// table shares weights; otherwise each entry computes its `k` factors directly.
 pub(super) fn fix_low<F: Field>(
     num_vars: usize,
     table: Table<'_, F>,
@@ -166,61 +235,84 @@ pub(super) fn fix_low<F: Field>(
                 .collect(),
         ),
         Table::Sparse(evals) => {
-            let remaining = num_vars - k;
-            if let Some(len) = 1usize.checked_shl(u32::try_from(remaining).unwrap_or(u32::MAX))
-                && len <= evals.len().saturating_mul(SPARSE_MAX_FILL)
-            {
-                let values = fix_sparse_into_dense(evals, point, len);
-                let nonzero = values.iter().filter(|v| !v.is_zero()).count();
-                return if nonzero.saturating_mul(SPARSE_MAX_FILL) > len {
-                    dense_mle(remaining, values)
-                } else {
-                    PolyVariant::SparseMle {
-                        num_vars: remaining,
-                        evals: values
-                            .into_iter()
-                            .enumerate()
-                            .filter(|(_, v)| !v.is_zero())
-                            .collect(),
-                    }
-                };
-            }
-            let one_minus: Vec<F> = point.iter().map(|r| F::one() - r).collect();
+            let weights = EqualityWeights::new(point, evals.len());
             from_entries(
                 num_vars - k,
-                evals
-                    .iter()
-                    .map(|&(i, v)| (i >> k, v * eq_weight(i, point, &one_minus))),
+                evals.iter().map(|&(i, v)| (i >> k, weights.apply(i, v))),
             )
         }
     }
 }
 
-/// Accumulate directly when the output table is bounded by the stored input size.
-/// Keep the arithmetic loop separate from representation selection: inlining it into
-/// the dispatch regresses the sparse matrix partial evaluations used by Spartan.
+/// Keep accumulation separate from representation selection, preserving the outlined
+/// arithmetic loop used by sparse matrix partial evaluations.
 #[inline(never)]
-fn fix_sparse_into_dense<F: Field>(evals: &[(usize, F)], point: &[F], len: usize) -> Vec<F> {
-    let k = point.len();
-    let one_minus: Vec<F> = point.iter().map(|r| F::one() - r).collect();
+fn accumulate_dense<F: Field>(len: usize, entries: impl IntoIterator<Item = (usize, F)>) -> Vec<F> {
     let mut out = vec![F::zero(); len];
-    for &(i, v) in evals {
-        let weighted = (0..k).fold(v, |acc, j| {
-            acc * if (i >> j) & 1 == 1 {
-                point[j]
-            } else {
-                one_minus[j]
-            }
-        });
-        out[i >> k] += weighted;
+    for (i, v) in entries {
+        out[i] += v;
     }
     out
+}
+
+enum EqualityWeights<'a, F> {
+    Table(Vec<F>),
+    Factors { point: &'a [F], one_minus: Vec<F> },
+}
+
+impl<'a, F: Field> EqualityWeights<'a, F> {
+    fn new(point: &'a [F], entries: usize) -> Self {
+        Self::table(point, entries).map_or_else(
+            || Self::Factors {
+                point,
+                one_minus: point.iter().map(|r| F::one() - r).collect(),
+            },
+            Self::Table,
+        )
+    }
+
+    fn apply(&self, index: usize, value: F) -> F {
+        match self {
+            Self::Table(weights) => value * weights[index & (weights.len() - 1)],
+            Self::Factors { point, one_minus } => (0..point.len()).fold(value, |acc, j| {
+                acc * if (index >> j) & 1 == 1 {
+                    point[j]
+                } else {
+                    one_minus[j]
+                }
+            }),
+        }
+    }
+
+    /// `eq(point, i)` for every low-bit index, when both storage and multiplication count
+    /// are bounded by the direct per-entry calculation. Build each pair with one multiply.
+    fn table(point: &[F], entries: usize) -> Option<Vec<F>> {
+        let len = 1usize.checked_shl(u32::try_from(point.len()).ok()?)?;
+        if len > entries.saturating_mul(DENSE_SCRATCH_FACTOR)
+            || len > entries.saturating_mul(point.len().saturating_sub(1))
+        {
+            return None;
+        }
+        let mut weights = Vec::with_capacity(len);
+        weights.push(F::one());
+        for &r in point {
+            let half = weights.len();
+            weights.resize(half * 2, F::zero());
+            for i in 0..half {
+                let right = weights[i] * r;
+                weights[half + i] = right;
+                weights[i] -= right;
+            }
+        }
+        Some(weights)
+    }
 }
 
 /// The extension over `input_num_vars` variables with every variable outside `free_range`
 /// fixed to the next value of `fixed` (see [`fixed_index_for_var`]), the free ones kept in
 /// order. Each entry is weighted by `eq(fixed, its fixed bits)` and added to the entry of its
-/// free bits; a dense table fixed only to 0s and 1s is read off directly.
+/// free bits; a dense table fixed only to 0s and 1s is read off directly, and one whose free
+/// variables are the low ones folds its high variables away ([`fix_high`]).
 pub(super) fn restrict<F: Field>(
     input_num_vars: usize,
     table: Table<'_, F>,
@@ -235,6 +327,9 @@ pub(super) fn restrict<F: Field>(
                     free_len,
                     restrict_to_bits(input_num_vars, values, free_range, &bits),
                 );
+            }
+            if free_range.start() == 0 {
+                return dense_mle(free_len, fix_high(values, fixed));
             }
             let mut out = vec![F::zero(); 1 << free_len];
             let entries = values.iter().copied().enumerate();
@@ -275,6 +370,33 @@ fn restrict_to_bits<F: Field>(
     } else {
         (0..len).into_par_iter().map(entry).collect()
     }
+}
+
+/// The table with its high `point.len()` variables fixed to `point`, the low ones kept in
+/// order: the highest variable at a time, each fold combining the table's halves as
+/// `lo + r·(hi - lo)`. Scratch is at most half the input.
+fn fix_high<F: Field>(values: &[F], point: &[F]) -> Vec<F> {
+    let Some((&r, rest)) = point.split_last() else {
+        return values.to_vec();
+    };
+    let (lo, hi) = values.split_at(values.len() / 2);
+    let mut out: Vec<F> = lo
+        .par_iter()
+        .zip(hi)
+        .with_min_len(PARALLEL_BLOCK)
+        .map(|(&a, &b)| a + r * (b - a))
+        .collect();
+    for &r in rest.iter().rev() {
+        let half = out.len() / 2;
+        let (lo, hi) = out.split_at_mut(half);
+        lo.par_iter_mut()
+            .zip(&*hi)
+            .with_min_len(PARALLEL_BLOCK)
+            .for_each(|(a, &b)| *a += r * (b - *a));
+        out.truncate(half);
+    }
+    out.shrink_to_fit();
+    out
 }
 
 /// Each entry weighted by the fixed variables' values and moved to its index among the free
@@ -328,14 +450,4 @@ fn evaluate_block<F: Field>(block: &[F], point: &[F]) -> F {
         (evaluate_block(lo, rest), evaluate_block(hi, rest))
     };
     a + r * (b - a)
-}
-
-/// `eq(point, low bits of idx)`, with `one_minus[j] = 1 - point[j]`.
-fn eq_weight<F: Field>(idx: usize, point: &[F], one_minus: &[F]) -> F {
-    point
-        .iter()
-        .zip(one_minus)
-        .enumerate()
-        .map(|(j, (r, s))| if (idx >> j) & 1 == 1 { *r } else { *s })
-        .product()
 }

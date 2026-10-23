@@ -1,7 +1,7 @@
 /// `EvalError`, the failure type raised while interpreting a DAG node.
 pub mod error;
 
-use backend::op::{GOp, HOp, Op, Ref};
+use backend::ir::op::{GOp, HOp, Op, Ref};
 use backend::{ATyp, Backend, Field, SelectedEvalShape, Value};
 use error::EvalError;
 use lang::ast::{BinOp, Exclusion};
@@ -673,6 +673,11 @@ where
                     got: format!("{}", dom),
                 });
             }
+            if let Some(gathered) =
+                try_eval_affine_gather(body, &dom, env, rng, loop_params, check_sink)?
+            {
+                return Ok(gathered);
+            }
             let results = eval_loop_body_each(body, env, dom.into_elements(), loop_params)?;
             Ok(Value::value_vec(results))
         }
@@ -758,6 +763,91 @@ where
             }
         }
     }
+}
+
+/// `[a[f(x)] for x in dom]`, `a` loop-invariant and `f(x) = s·x + t` built from `+` and
+/// `*` over the loop parameter and loop-invariant indices: one gather of `a` at natively
+/// computed indices (a contiguous run is a view of `a`), instead of an interpreted read
+/// per element. `None` for any other body or domain, or on index overflow.
+fn try_eval_affine_gather<C: Backend, R: Sampler<C>>(
+    body: &HOp<C>,
+    dom: &Value<C>,
+    env: &HashMap<Ref, Value<C>>,
+    rng: &mut R,
+    loop_params: &[Value<C>],
+    check_sink: &mut Vec<bool>,
+) -> Result<Option<Value<C>>, EvalError> {
+    let level = loop_params.len();
+    let Op::Ram(array, index) = body.get() else {
+        return Ok(None);
+    };
+    let Value::VecIndex(xs) = dom else {
+        return Ok(None);
+    };
+    if xs.is_empty() || op_has_loop_param(array.get(), level) {
+        return Ok(None);
+    }
+    let Some((s, t)) = affine_index(index, level, &mut |op| match eval_op_with_loop_params(
+        op,
+        env,
+        rng,
+        loop_params,
+        check_sink,
+    )? {
+        Value::Index(i) => Ok(Some(i)),
+        _ => Ok(None),
+    })?
+    else {
+        return Ok(None);
+    };
+    let Some(indices) = xs
+        .iter()
+        .map(|&x| s.checked_mul(x)?.checked_add(t))
+        .collect::<Option<Vec<usize>>>()
+    else {
+        return Ok(None);
+    };
+    let array = eval_op_with_loop_params(array, env, rng, loop_params, check_sink)?;
+    Ok(Some(array.ram_ref(&Value::VecIndex(indices.into()))))
+}
+
+/// `op` as `(s, t)` with `op = s·x + t` in the loop parameter `x` at `level`, reading each
+/// loop-invariant operand with `invariant`; `None` unless `op` is built from that
+/// parameter and invariant indices by `+` and `*` (one factor invariant).
+fn affine_index<C: Backend>(
+    op: &HOp<C>,
+    level: usize,
+    invariant: &mut impl FnMut(&HOp<C>) -> Result<Option<usize>, EvalError>,
+) -> Result<Option<(usize, usize)>, EvalError> {
+    if !op_has_loop_param(op.get(), level) {
+        return Ok(invariant(op)?.map(|t| (0, t)));
+    }
+    Ok(match op.get() {
+        Op::LoopParam(l, _) if *l == level => Some((1, 0)),
+        Op::Bin(BinOp::Add, a, b, _) => {
+            let (Some((s1, t1)), Some((s2, t2))) = (
+                affine_index(a, level, invariant)?,
+                affine_index(b, level, invariant)?,
+            ) else {
+                return Ok(None);
+            };
+            s1.checked_add(s2).zip(t1.checked_add(t2))
+        }
+        Op::Bin(BinOp::Mul, a, b, _) => {
+            let (Some((s1, t1)), Some((s2, t2))) = (
+                affine_index(a, level, invariant)?,
+                affine_index(b, level, invariant)?,
+            ) else {
+                return Ok(None);
+            };
+            match (s1, s2) {
+                (_, 0) => s1.checked_mul(t2).zip(t1.checked_mul(t2)),
+                (0, _) => s2.checked_mul(t1).zip(t2.checked_mul(t1)),
+                _ => None,
+            }
+        }
+        _ => None,
+    })
 }
 
 /// Evaluate a pure loop body once per element, pushing the element onto the
@@ -847,7 +937,7 @@ mod graph_tests;
 mod tests {
     use super::*;
     use backend::ArkBn254;
-    use backend::op::mk;
+    use backend::ir::op::mk;
     use rand::rngs::ThreadRng;
 
     type Fr = <ArkBn254 as Backend>::F;

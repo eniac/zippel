@@ -1,5 +1,6 @@
 use crate::algebra::{radix2, vec_div, vec_mul};
-use crate::config::ArkBls12_381;
+use crate::backends::ArkBls12_381;
+use crate::backends::{G2Points, Key};
 use crate::{Backend, Field, Group, Pairing};
 use ark_bls12_381::{Bls12_381, Fr, G1Projective, G2Projective};
 use ark_ec::pairing::Pairing as ArkPairingEngine;
@@ -83,7 +84,18 @@ fn multi_pairing_matches_pairing_fold() {
     }
 }
 
-// Chunked pairing must equal one `multi_pairing` over all pairs, including at
+/// `g2` declared as a key of the BLS12-381 backend.
+fn arkworks_g2_key(g2: &[G2Projective]) -> G2Points<ArkBls12_381> {
+    let affine = <ArkBls12_381 as Backend>::G2::normalize_batch(g2);
+    let key = G2Points::<ArkBls12_381>::keyed(affine, Key::prepare);
+    assert!(
+        key.key().is_some(),
+        "a pairing backend keeps G2 preparations"
+    );
+    key
+}
+
+// The key's chunked pairing must equal one `multi_pairing` over all pairs, including at
 // and around the chunk boundary and for no pairs at all.
 #[test]
 fn prepared_vec_dot_equals_multi_pairing() {
@@ -91,9 +103,7 @@ fn prepared_vec_dot_equals_multi_pairing() {
     for n in [0, 1, 31, 32, 33, 70] {
         let g1: Vec<G1Projective> = (0..n).map(|_| G1Projective::rand(&mut rng)).collect();
         let g2: Vec<G2Projective> = (0..n).map(|_| G2Projective::rand(&mut rng)).collect();
-        let prepared: Vec<<Bls12_381 as ArkPairingEngine>::G2Prepared> =
-            g2.iter().map(|g| g.into()).collect();
-        let chunked = P::multi_pairing_prepared(&g1, &prepared);
+        let chunked = ArkBls12_381::multi_pairing(&g1, &arkworks_g2_key(&g2));
         let whole = Bls12_381::multi_pairing(g1.clone(), g2.clone());
         assert_eq!(chunked, whole, "{n} pairs");
     }
@@ -118,10 +128,9 @@ fn prepared_vec_dot_rejects_unequal_lengths() {
         (33, 64),
     ] {
         let g1: Vec<G1Projective> = (0..n1).map(|_| G1Projective::rand(&mut rng)).collect();
-        let prepared: Vec<<Bls12_381 as ArkPairingEngine>::G2Prepared> = (0..n2)
-            .map(|_| G2Projective::rand(&mut rng).into())
-            .collect();
-        let result = catch_unwind(|| P::multi_pairing_prepared(&g1, &prepared));
+        let g2: Vec<G2Projective> = (0..n2).map(|_| G2Projective::rand(&mut rng)).collect();
+        let key = arkworks_g2_key(&g2);
+        let result = catch_unwind(|| ArkBls12_381::multi_pairing(&g1, &key));
         assert!(result.is_err(), "({n1}, {n2}) pairs were accepted");
     }
 }

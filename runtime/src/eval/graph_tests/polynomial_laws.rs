@@ -1,5 +1,5 @@
 use crate::eval::eval_op;
-use backend::poly_variant::DenseUni;
+use backend::poly::variant::DenseUni;
 use backend::{ATyp, ArkBn254, PolyVariant, Value, VirtualPolynomial};
 /// Tests for polynomial ring laws and algebraic properties end-to-end through graph operations
 use graph::{Op, mk};

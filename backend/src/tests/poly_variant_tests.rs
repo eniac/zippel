@@ -1,4 +1,4 @@
-use crate::poly_variant::{DenseMle, DenseUni, Multivariate, SparseUni, Term};
+use crate::poly::variant::{DenseMle, DenseUni, Multivariate, SparseUni, Term};
 use crate::{PolyVariant, VirtualPolynomial};
 use ark_bls12_381::Fr;
 use ark_ff::{One, Zero};
@@ -200,6 +200,80 @@ fn fixing_sparse_mles_preserves_sparsity_after_accumulation() {
     }
 }
 
+#[test]
+fn sparse_result_encoding_depends_on_values_after_cancellation() {
+    for nonzero in [0, 7, 64, 65] {
+        let entries: Vec<_> = (0..nonzero)
+            .map(|i| (i << 2, Fr::from((i + 1) as u64)))
+            .collect();
+        let mut padded = entries.clone();
+        for i in 0..100 {
+            let index = ((i * 17) % 256) << 2;
+            padded.extend([(index, Fr::one()), (index, -Fr::one())]);
+        }
+        let restrict = |evals| {
+            PolyVariant::SparseMle {
+                num_vars: 10,
+                evals,
+            }
+            .evaluate_or_fix(&[Fr::from(2), Fr::from(3)])
+            .unwrap()
+        };
+        let result = restrict(entries);
+        assert_eq!(result, restrict(padded));
+        assert_encoded_by_density(&result, 8);
+    }
+}
+
+#[test]
+fn sparse_mle_weights_match_dense_restrictions() {
+    for entries in [16, 300] {
+        let poly = PolyVariant::SparseMle {
+            num_vars: 12,
+            evals: (0..entries)
+                .flat_map(|i| {
+                    let index = (i * 113) % (1 << 12);
+                    let value = Fr::from((i + 1) as u64);
+                    [(index, value), (index, -value), (index, value)]
+                })
+                .collect(),
+        };
+        let dense = poly.to_dense();
+        let mut point = rand_vec(12);
+        point[0] = Fr::zero();
+        point[2] = Fr::one();
+        for k in [2, 4, 6, 8, 10] {
+            let fixed = poly.evaluate_or_fix(&point[..k]).unwrap();
+            assert_encoded_by_density(&fixed, 12 - k);
+            assert_eq!(
+                fixed.to_dense(),
+                dense.evaluate_or_fix(&point[..k]).unwrap()
+            );
+        }
+        assert_eq!(
+            poly.evaluate_mv(&point).unwrap(),
+            dense.evaluate_mv(&point).unwrap()
+        );
+    }
+}
+
+#[test]
+fn sparse_mle_restriction_keeps_large_domains_sparse() {
+    let poly = sparse(60, &[0, 17, 1 << 59]);
+    let point = rand_vec(60);
+    for k in [4, 40] {
+        let fixed = poly.evaluate_or_fix(&point[..k]).unwrap();
+        let PolyVariant::SparseMle { evals, .. } = &fixed else {
+            panic!("large sparse restriction allocated its domain");
+        };
+        assert!(evals.len() <= 3);
+        assert_eq!(
+            fixed.evaluate_mv(&point[k..]).unwrap(),
+            poly.evaluate_mv(&point).unwrap()
+        );
+    }
+}
+
 /// A selected evaluation (`eval<range>`) of a sparse MLE matches its dense table's and is
 /// encoded by density: few fixed variables leave a sparse result, many a dense one.
 #[test]
@@ -221,6 +295,46 @@ fn restricting_a_sparse_mle_matches_its_dense_table() {
             restricted.to_dense(),
             dense.fix_variables_except_range(nv, free, &point).unwrap()
         );
+    }
+}
+
+/// A dense MLE whose free variables are the low ones, with its high variables fixed, agrees
+/// with arkworks' full evaluation and with the general path of its sparse encoding, on both
+/// sides of the parallel threshold (2^10), for every number of free variables.
+#[test]
+fn restricting_a_dense_mle_to_its_low_variables_matches_full_evaluation() {
+    use lang::typ::CRange;
+    for nv in [2, 5, 11, 12] {
+        let evals = rand_vec(1 << nv);
+        let mle = DenseMultilinearExtension::from_evaluations_vec(nv, evals.clone());
+        let poly = PolyVariant::DenseMle(DenseMle::new(nv, evals.clone()));
+        let entries: Vec<(usize, Fr)> = evals.into_iter().enumerate().collect();
+        let sparse = PolyVariant::SparseMle {
+            num_vars: nv,
+            evals: entries,
+        };
+        let point = rand_vec(nv);
+        for free in 1..nv {
+            let range = CRange::from_raw(0, 1, free);
+            let (low, high) = point.split_at(free);
+            let restricted = poly
+                .fix_variables_except_range(nv, range.clone(), high)
+                .unwrap();
+            assert_eq!(restricted.num_vars(), free, "nv = {nv}, free = {free}");
+            assert_eq!(
+                restricted.evaluate_mv(low).unwrap(),
+                mle.evaluate(&point),
+                "nv = {nv}, free = {free}"
+            );
+            assert_eq!(
+                restricted.to_dense(),
+                sparse
+                    .fix_variables_except_range(nv, range, high)
+                    .unwrap()
+                    .to_dense(),
+                "nv = {nv}, free = {free}"
+            );
+        }
     }
 }
 

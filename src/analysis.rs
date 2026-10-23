@@ -41,8 +41,9 @@ pub struct PreparedAnalysis<C: Backend> {
     graph: Dag<C, Qualifier>,
 }
 
-impl<C: AnalysisBackend> CompiledProtocol<C> {
-    /// Lower the full protocol graph, including its relation, and propagate qualifiers.
+impl<C: Backend> CompiledProtocol<C> {
+    /// Lower the full protocol graph, including its relation, and propagate qualifiers,
+    /// for the backend's analysis twin ([`Backend::Analysis`]).
     ///
     /// Call once before timing passes. This does no polynomial encoding or Gröbner-basis work.
     ///
@@ -51,8 +52,8 @@ impl<C: AnalysisBackend> CompiledProtocol<C> {
     ///
     /// # Panics
     /// If an internal compiler invariant fails.
-    pub fn prepare_analysis(&self) -> Result<PreparedAnalysis<C>, CompileError> {
-        let graphs = UDags::<C>::lower(&self.typed, Relations::Lower).map_err(|e| {
+    pub fn prepare_analysis(&self) -> Result<PreparedAnalysis<C::Analysis>, CompileError> {
+        let graphs = UDags::<C::Analysis>::lower(&self.typed, Relations::Lower).map_err(|e| {
             CompileError::Diagnostics {
                 name: self.source_name.clone(),
                 source: Arc::clone(&self.source),

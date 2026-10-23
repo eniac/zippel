@@ -6,10 +6,10 @@
 //! (`op.typ()`), `CompletenessAnalysis` and other consumers that
 //! resolve `Op::Ref` (notably `TransClos::trans_clos_op`) will
 //! compute wrong types and panic or produce bogus results. See
-//! `backend/src/op.rs:193-256` and commit `03bee5f`.
+//! `backend/src/ir/op.rs` (then `op.rs:193-256`) and commit `03bee5f`.
 
-use crate::config::ArkBls12_381;
-use crate::op::{HOp, Ref, mk};
+use crate::backends::ArkBls12_381;
+use crate::ir::op::{HOp, Ref, mk};
 use crate::{ATyp, Backend, GOp, Op, Value};
 use petgraph::graph::NodeIndex;
 

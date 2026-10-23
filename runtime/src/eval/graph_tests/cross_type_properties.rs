@@ -228,8 +228,8 @@ mod scalar_g1_properties {
 #[cfg(test)]
 mod mle_differential_tests {
     use crate::eval::graph_tests::helpers::*;
-    use backend::poly_variant::DenseMle;
-    use backend::{ATyp, Value, poly_variant::PolyVariant, virtual_polynomial::VirtualPolynomial};
+    use backend::poly::variant::DenseMle;
+    use backend::{ATyp, PolyVariant, Value, VirtualPolynomial};
     use lang::id::Vid;
     use share::Ctx;
 
@@ -334,8 +334,8 @@ mod mle_differential_tests {
 #[cfg(test)]
 mod multivariate_app_tests {
     use crate::eval::graph_tests::helpers::*;
-    use backend::poly_variant::{Multivariate, Term};
-    use backend::{ATyp, Value, poly_variant::PolyVariant, virtual_polynomial::VirtualPolynomial};
+    use backend::poly::variant::{Multivariate, Term};
+    use backend::{ATyp, PolyVariant, Value, VirtualPolynomial};
     use lang::id::Vid;
     use share::Ctx;
 

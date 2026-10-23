@@ -123,6 +123,19 @@ impl<F: Field> PolyVariant<F> {
         }
     }
 
+    /// `Σ c·p` over `terms`, when every `p` is a multilinear extension over `num_vars`
+    /// variables; `None` otherwise.
+    pub(crate) fn linear_combination(num_vars: usize, terms: &[(F, &Self)]) -> Option<Self> {
+        let tables: Vec<(F, Table<'_, F>)> = terms
+            .iter()
+            .map(|&(c, p)| match p.mle_table()? {
+                (n, table) if n == num_vars => Some((c, table)),
+                _ => None,
+            })
+            .collect::<Option<_>>()?;
+        Some(mle::linear_combination(num_vars, &tables))
+    }
+
     /// Get the degree of the polynomial
     pub fn degree(&self) -> usize {
         match self {
