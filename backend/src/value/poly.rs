@@ -348,6 +348,12 @@ impl<C: Backend> Value<C> {
                     coeffs,
                 )))
             }
+            // A polynomial, materialized as one table: what a protocol asks for when it
+            // reuses the polynomial enough to pay for it (across sumcheck rounds, say).
+            Value::Poly(p) => Value::poly(VirtualPolynomial::from_poly(
+                p.normalize()
+                    .expect("the type checker admits only polynomials of this encoding"),
+            )),
             _ => panic!("Expected vec scalar, found {}", self),
         }
     }
@@ -378,6 +384,12 @@ impl<C: Backend> Value<C> {
                     DenseMle::new(size, mle),
                 )))
             }
+            // A polynomial, materialized as one table: what a protocol asks for when it
+            // reuses the polynomial enough to pay for it (across sumcheck rounds, say).
+            Value::Poly(p) => Value::poly(VirtualPolynomial::from_poly(
+                p.normalize()
+                    .expect("the type checker admits only polynomials of this encoding"),
+            )),
             _ => panic!("Expected vec scalar or vec index, found {}", self),
         }
     }

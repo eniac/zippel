@@ -350,57 +350,33 @@ impl<F: Field> VirtualPolynomial<F> {
         result
     }
 
-    /// This polynomial with its terms `c·f` over multilinear `f` of one arity (the first
-    /// such term's) combined into a single table, as `Σ c·f` is multilinear; `None` when
-    /// there are fewer than two such terms.
-    fn combine_linear_terms(&self) -> Option<Self> {
-        let linear = |indices: &[usize]| match indices {
-            [i] if matches!(
-                *self.flattened_polys[*i],
-                PolyVariant::DenseMle(_) | PolyVariant::SparseMle { .. }
-            ) =>
-            {
-                Some(self.flattened_polys[*i].num_vars())
+    /// This polynomial as one multilinear table, when every product is a constant or a
+    /// single multilinear factor of one arity: all terms summed together, the table
+    /// encoded by the sum's density.
+    fn multilinear_sum(&self) -> Option<PolyVariant<F>> {
+        let mut constant = F::zero();
+        let mut terms = Vec::new();
+        let mut num_vars = None;
+        for (c, indices) in &self.products {
+            match indices.as_slice() {
+                [] => constant += *c,
+                [i] => {
+                    let p = self.flattened_polys[*i].as_ref();
+                    if !matches!(p, PolyVariant::DenseMle(_) | PolyVariant::SparseMle { .. })
+                        || *num_vars.get_or_insert(p.num_vars()) != p.num_vars()
+                    {
+                        return None;
+                    }
+                    terms.push((*c, p));
+                }
+                _ => return None,
             }
-            _ => None,
-        };
-        let num_vars = self.products.iter().find_map(|(_, ix)| linear(ix))?;
-        let (terms, rest): (Vec<_>, Vec<_>) = self
-            .products
-            .iter()
-            .partition(|(_, ix)| linear(ix) == Some(num_vars));
-        if terms.len() < 2 {
-            return None;
         }
-        let terms: Vec<(F, &PolyVariant<F>)> = terms
-            .iter()
-            .map(|(c, ix)| (*c, self.flattened_polys[ix[0]].as_ref()))
-            .collect();
-        let combined = PolyVariant::linear_combination(num_vars, &terms)?;
-        let mut result = Self::new();
-        result.num_variables = self.num_variables;
-        for (c, ix) in rest {
-            result.add_poly_list(ix.iter().map(|&i| Arc::clone(&self.flattened_polys[i])), *c);
-        }
-        result.add_poly_list([Arc::new(combined)], F::one());
-        Some(result)
+        PolyVariant::multilinear_sum(num_vars?, constant, &terms)
     }
 
-    /// Multiply two polynomials by distributing their sums of products. Each side's
-    /// multilinear terms are first combined into one table when the other side has a
-    /// factor to multiply them by, so it gains one product rather than one per term.
+    /// Multiply two polynomials by distributing their sums of products.
     pub fn poly_mul(&self, other: &Self) -> Self {
-        let has_factors = |p: &Self| p.products.iter().any(|(_, ix)| !ix.is_empty());
-        if has_factors(other)
-            && let Some(combined) = self.combine_linear_terms()
-        {
-            return combined.poly_mul(other);
-        }
-        if has_factors(self)
-            && let Some(combined) = other.combine_linear_terms()
-        {
-            return self.poly_mul(&combined);
-        }
         let mut result = VirtualPolynomial::new();
         result.num_variables = self.num_variables.or(other.num_variables);
         for (coeff1, indices1) in &self.products {
@@ -431,6 +407,9 @@ impl<F: Field> VirtualPolynomial<F> {
     /// [`PolyVariant::poly_mul`]/[`PolyVariant::poly_add`] failure such as
     /// [`PolyError::UnsupportedOperation`] between incompatible encodings.
     pub fn normalize(&self) -> Result<PolyVariant<F>, PolyError<F>> {
+        if let Some(table) = self.multilinear_sum() {
+            return Ok(table);
+        }
         let mut result: Option<PolyVariant<F>> = None;
         for (coeff, indices) in &self.products {
             let mut factors = indices

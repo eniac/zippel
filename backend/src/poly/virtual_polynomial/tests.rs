@@ -56,11 +56,12 @@ fn mle_round_sum_matches_interpolation() {
     }
 }
 
-/// Multiplying a sum of multilinear terms combines them into one table first: the
-/// product of `c1·f + c2·g + c3·s + 7` (sparse `s`) and `h` has two products, not
-/// four, and agrees with the distributed form. Sparse-only terms combine sparsely.
+/// Normalizing a sum of multilinear terms and a constant sums them into one table,
+/// encoded by the sum's density: `c1·f + c2·g + c3·s + 7` (sparse `s`) is one dense table
+/// agreeing with the sum, and a sum of sparse tables stays sparse. Multiplying keeps the
+/// terms: one product each.
 #[test]
-fn multiplying_combines_linear_terms() {
+fn normalizing_sums_multilinear_terms_into_one_table() {
     let mut rng = test_rng();
     let nv = 4;
     let mut dense = || {
@@ -82,22 +83,19 @@ fn multiplying_combines_linear_terms() {
         .poly_add(&vp(&g).poly_mul_scalar(c2))
         .poly_add(&vp(&sparse(3, 2)).poly_mul_scalar(c3))
         .poly_add_scalar(Fr::from(7u64));
-    let product = sum.poly_mul(&vp(&h));
-    assert_eq!(product.products.len(), 2);
+    assert_eq!(sum.poly_mul(&vp(&h)).products.len(), 4);
     let point: Vec<Fr> = (0..nv).map(|_| Fr::rand(&mut rng)).collect();
-    let at = |p: &PolyVariant<Fr>| p.evaluate_mv(&point).unwrap();
+    let table = sum.normalize().unwrap();
+    assert!(table.is_multilinear() && table.num_vars() == nv);
     assert_eq!(
-        product.evaluate_mv(&point).unwrap(),
-        (c1 * at(&f) + c2 * at(&g) + c3 * at(&sparse(3, 2)) + Fr::from(7u64)) * at(&h)
+        table.evaluate_mv(&point).unwrap(),
+        sum.evaluate_mv(&point).unwrap()
     );
     let sparse_sum = vp(&sparse(3, 2)).poly_add(&vp(&sparse(5, 4)));
-    let combined = sparse_sum.combine_linear_terms().unwrap();
-    assert!(matches!(
-        combined.flattened_polys[combined.products[0].1[0]].as_ref(),
-        PolyVariant::SparseMle { .. }
-    ));
+    let table = sparse_sum.normalize().unwrap();
+    assert!(matches!(table, PolyVariant::SparseMle { .. }));
     assert_eq!(
-        combined.evaluate_mv(&point).unwrap(),
+        table.evaluate_mv(&point).unwrap(),
         sparse_sum.evaluate_mv(&point).unwrap()
     );
 }

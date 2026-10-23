@@ -862,6 +862,24 @@ fn test_phase14_mle_pow2_sweep() {
     }
 }
 
+/// `mle(p)` of a multilinear polynomial and `poly(p)` of a univariate one keep its
+/// type: they materialize it, they do not change it. Any other polynomial is rejected.
+#[test]
+fn mle_and_poly_of_a_polynomial_keep_its_type() {
+    let fctx = Set::new();
+    let typ = |m: usize, d: usize| CTyp::Poly(Tid::from("F"), Spanned::dummy(m), Spanned::dummy(d));
+    let mut vctx = VAR_CTX.clone();
+    for (name, m, d) in [("ml", 3, 1), ("uni", 1, 4), ("quad", 3, 2)] {
+        vctx.insert(&Vid::from(name), &typ(m, d));
+    }
+    let infer = |e: Expr<_>| e.infer(&KIND_CTX, &fctx, &vctx);
+    assert_eq!(infer(mle(varstr("ml"))), Ok(typ(3, 1)));
+    assert_eq!(infer(poly(varstr("uni"))), Ok(typ(1, 4)));
+    assert!(matches!(infer(mle(varstr("quad"))), Err(TypeError::Mle)));
+    assert!(matches!(infer(mle(varstr("uni"))), Err(TypeError::Mle)));
+    assert!(matches!(infer(poly(varstr("ml"))), Err(TypeError::Poly)));
+}
+
 /// `mle([F; k])` for non-power-of-two `k` is rejected by infer.
 #[test]
 fn test_phase14_mle_rejects_non_pow2_sweep() {

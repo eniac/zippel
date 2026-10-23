@@ -782,6 +782,36 @@ mod op_integration {
 
     use tiny::{Field17, Field65537};
 
+    /// `mle(p)` of a multilinear sum and `poly(p)` of a univariate product materialize
+    /// it: one table, one coefficient vector, each the value of the expression.
+    #[test]
+    fn mle_and_poly_materialize_a_polynomial() {
+        type B = TestConfig;
+        let input = |name: &str, xs: &[u64]| {
+            (
+                lang::id::Vid::from(name),
+                Value::<B>::vec_scalar(xs.iter().map(|&n| f::<B>(n)).collect()),
+            )
+        };
+        let table = |v: Value<B>| match v {
+            Value::Poly(p) => p.to_vec().expect("one table"),
+            other => panic!("expected a polynomial, got {other}"),
+        };
+        let src = "fn f<F: Field>(witness a: [F; 4], witness b: [F; 4]) -> Poly<F, 2, 1> {
+                       mle(mle(a) * 3 + mle(b) + 1)
+                   }
+                   fn g<F: Field>(witness a: [F; 2], witness b: [F; 2]) -> Poly<F, 1, 2> {
+                       poly(poly(a) * poly(b))
+                   }";
+        let ab = |a: &[u64], b: &[u64]| share::Ctx::from_iter([input("a", a), input("b", b)]);
+        let f_table = table(run::<B>(src, "f", ab(&[1, 2, 3, 4], &[5, 6, 7, 8])));
+        let want: Vec<_> = [9u64, 13, 17, 21].iter().map(|&n| f::<B>(n)).collect();
+        assert_eq!(f_table, want, "3a + b + 1 at each point");
+        let g_coeffs = table(run::<B>(src, "g", ab(&[1, 2], &[3, 4])));
+        let want: Vec<_> = [3u64, 10, 8].iter().map(|&n| f::<B>(n)).collect();
+        assert_eq!(g_coeffs, want, "(1 + 2x)(3 + 4x)");
+    }
+
     /// A literal above `u64::MAX` and both test moduli.
     const BIG: &str = "34545435435435435435435";
 
