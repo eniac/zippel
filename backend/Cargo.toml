@@ -17,7 +17,7 @@ ark-vesta = { version = "0.6" }
 ark-ff =  { version = "0.6", features = ["parallel"] }
 ark-poly =  { version = "0.6", features = ["parallel"] }
 ark-std = { version = "0.6.0", features = ["parallel"] }
-spongefish =  { version = "0.7", features = ["ark-ff", "ark-ec"] }
+spongefish = "0.7"
 rayon = "1.10.0"
 rand = { version = "0.8", features = ["std"] }
 num-bigint = "0.4.6"
@@ -28,10 +28,14 @@ lang = { path = "../lang" }
 serde = { version = "1.0.219", features = ["derive"] }
 petgraph = "0.7.1"
 hashconsing = "1.6"
-lazy_static = "1.5"
+ff = "0.14"
+group = "0.14"
+curve25519-dalek = { version = "5", features = ["group"] }
+pasta_curves = "0.6"
 
 [dev-dependencies]
 ark-std = "0.6.0"
 arbitrary = { version = "1.4.1", features = ["derive"] }
 arbtest = "0.3.2"
+insta = "1.48"
 

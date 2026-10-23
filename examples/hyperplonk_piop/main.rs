@@ -1,7 +1,7 @@
 // HyperPlonk example driver.
 
 use ark_ff::{Field, One, Zero};
-use backend::{ArkBls12_381, ArkConfig, Value};
+use backend::{ArkBls12_381, Backend, Value};
 use lang::id::Vid;
 use rand::Rng;
 use rand::seq::SliceRandom;
@@ -193,7 +193,7 @@ where
 }
 
 fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
-    type F = <ArkBls12_381 as ArkConfig>::F;
+    type F = <ArkBls12_381 as Backend>::F;
     let s = size(sizes, "S");
     let num_gates = 1 << s;
 

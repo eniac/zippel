@@ -12,7 +12,7 @@ use ark_poly::{
     univariate::DensePolynomial,
 };
 use ark_std::test_rng;
-use backend::{ArkBls12_381, ArkConfig, Value};
+use backend::{ArkBls12_381, Backend, Value};
 use lang::id::Vid;
 use share::Ctx;
 
@@ -20,9 +20,9 @@ use crate::common;
 use crate::common::size;
 
 type C = ArkBls12_381;
-type F = <C as ArkConfig>::F;
-type G1 = <C as ArkConfig>::G1;
-type G2 = <C as ArkConfig>::G2;
+type F = <C as Backend>::F;
+type G1 = <C as Backend>::G1;
+type G2 = <C as Backend>::G2;
 
 // Total variables under the instance-outliner layout:
 //   z = [1, x[1..N], w[0..m_wit], aux[0..N]]   with aux[i] = z[i]^2.

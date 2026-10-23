@@ -1,4 +1,4 @@
-use crate::{ABase, ATyp, ArkConfig, ArkScalarOps, DivisionByZero, Value};
+use crate::{ABase, ATyp, Backend, DivisionByZero, Field, Value};
 use lang::ast::range::CRange;
 use lang::ast::spanned::Spanned;
 use lang::ast::{BinOp, Exclusion};
@@ -9,11 +9,14 @@ use lang::typ::lub::Lub;
 use hashconsing::{HConsed, HConsign, HashConsign};
 use petgraph::graph::NodeIndex;
 use share::Ctx;
+use std::any::{Any, TypeId};
+use std::collections::HashMap;
 use std::fmt;
 use std::ops::{
     Add, AddAssign, BitXor, BitXorAssign, Div, DivAssign, Mul, MulAssign, Rem, RemAssign, Sub,
     SubAssign,
 };
+use std::sync::LazyLock;
 use std::sync::RwLock;
 
 /// A reference to a node in the graph by `NodeIndex`.
@@ -30,7 +33,7 @@ pub struct Ref(pub NodeIndex);
 /// Typed operations are expressions which are not important
 /// enough to be nodes in the graph.
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub enum Op<C: ArkConfig, R> {
+pub enum Op<C: Backend, R> {
     /// Value
     Value(Value<C>),
 
@@ -124,25 +127,35 @@ pub type OpExclusion<C> = Exclusion<HOp<C>, Spanned<usize>>;
 /// Factory type for hash-consing operations
 pub type OpFactory<C> = HConsign<GOp<C>>;
 
-/// Trait for types that have an associated Op factory
-pub trait HasOpFactory: ArkConfig {
-    /// Returns the process-wide hash-consing factory for this configuration's graph
-    /// operations.
-    ///
-    /// Every `GOp<C>` handed out as an `HOp<C>` is interned here, so structural equality
-    /// of operations becomes pointer equality. Implementors must return the same lock on
-    /// every call — a fresh factory would break sharing across already-built subgraphs.
-    fn op_factory() -> &'static RwLock<OpFactory<Self>>;
+/// The process-wide hash-consing factory for backend `C`'s graph operations, made on
+/// first use. Every `GOp<C>` handed out as an `HOp<C>` is interned here, so structural
+/// equality of operations becomes pointer equality; there is one per backend type, for the
+/// life of the process, so sharing holds across every subgraph built.
+pub fn op_factory<C: Backend>() -> &'static RwLock<OpFactory<C>> {
+    type Factories = HashMap<TypeId, &'static (dyn Any + Send + Sync)>;
+    static FACTORIES: LazyLock<RwLock<Factories>> = LazyLock::new(Default::default);
+    let id = TypeId::of::<C>();
+    let found = FACTORIES.read().unwrap().get(&id).copied();
+    let factory = found.unwrap_or_else(|| {
+        *FACTORIES
+            .write()
+            .unwrap()
+            .entry(id)
+            .or_insert_with(|| Box::leak(Box::new(RwLock::new(OpFactory::<C>::empty()))))
+    });
+    factory
+        .downcast_ref()
+        .expect("the factory registered under C's type id is C's")
 }
 
 /// Construct a hash-consed operation
-pub fn mk<C: HasOpFactory>(op: GOp<C>) -> HOp<C> {
-    C::op_factory().write().unwrap().mk(op)
+pub fn mk<C: Backend>(op: GOp<C>) -> HOp<C> {
+    op_factory::<C>().write().unwrap().mk(op)
 }
 
 /// The entries a constant contributes, one per entry of an `n`-entry vector:
 /// its own entries if it is a vector, otherwise itself `n` times.
-fn constant_entries<C: ArkConfig>(v: Value<C>, n: usize) -> Vec<Value<C>> {
+fn constant_entries<C: Backend>(v: Value<C>, n: usize) -> Vec<Value<C>> {
     if v.is_vec() {
         v.into_elements()
     } else {
@@ -196,7 +209,7 @@ fn coef_typ_from_poly(t: ATyp) -> ATyp {
     }
 }
 
-fn selected_eval_typ<C: ArkConfig>(p: &HOp<C>, range: &CRange) -> ATyp {
+fn selected_eval_typ<C: Backend>(p: &HOp<C>, range: &CRange) -> ATyp {
     let free_len = range.len();
     match p.typ() {
         ATyp::Uni(d) => ATyp::vpoly(free_len, d),
@@ -206,7 +219,7 @@ fn selected_eval_typ<C: ArkConfig>(p: &HOp<C>, range: &CRange) -> ATyp {
     }
 }
 
-impl<C: ArkConfig, R> Op<C, R> {
+impl<C: Backend, R> Op<C, R> {
     /// Assign a unique tag to each operation
     pub fn discriminant_order(&self) -> usize {
         match &self {
@@ -486,7 +499,7 @@ impl<C: ArkConfig, R> Op<C, R> {
     }
 }
 
-impl<C: HasOpFactory> GOp<C> {
+impl<C: Backend> GOp<C> {
     /// Dispatches to the smart constructor for `op`, so that constant folding and the
     /// vector/`Fft` commuting conversions apply uniformly.
     ///
@@ -923,9 +936,9 @@ impl<C: HasOpFactory> GOp<C> {
     pub fn one(typ: &ATyp) -> GOp<C> {
         match typ {
             ATyp::Base(ABase::Fin(r)) if r.contains(1) => Op::Value(Value::Index(1)),
-            ATyp::Base(ABase::Scalar) => Op::Value(Value::Scalar(C::FOps::one())),
+            ATyp::Base(ABase::Scalar) => Op::Value(Value::Scalar(C::F::one())),
             ATyp::Vec(ATyp::Base(ABase::Scalar), n) => {
-                Op::Value(Value::vec_scalar(vec![C::FOps::one(); *n]))
+                Op::Value(Value::vec_scalar(vec![C::F::one(); *n]))
             }
             ATyp::Vec(ATyp::Base(ABase::Fin(r)), n) if r.contains(1) => {
                 Op::Value(Value::VecIndex(vec![1; *n].into()))
@@ -1085,14 +1098,14 @@ impl<C: HasOpFactory> GOp<C> {
 }
 
 /// Helper to extract the first child from an Op::Ram variant (cloned from HOp)
-fn v_inner_clone<C: ArkConfig>(op: &GOp<C>) -> GOp<C> {
+fn v_inner_clone<C: Backend>(op: &GOp<C>) -> GOp<C> {
     match op {
         Op::Ram(v, _) => v.get().clone(),
         _ => unreachable!(),
     }
 }
 
-impl<C: ArkConfig> GOp<C> {
+impl<C: Backend> GOp<C> {
     /// Builds an anonymous reference to graph node `n` of type `typ`, used where the
     /// referent has no source-level variable name.
     pub fn underscore(n: NodeIndex, typ: ATyp) -> Self {
@@ -1120,43 +1133,131 @@ impl<C: ArkConfig> GOp<C> {
     pub fn references(&self) -> Vec<Ref> {
         match self {
             Op::Ref(n, _) => vec![*n],
-            Op::Bin(_, a, b, _) | Op::Pair(a, b, _) | Op::Ram(a, b) => {
-                a.references().into_iter().chain(b.references()).collect()
-            }
-            Op::Evaluate(p, _, points) => match points {
-                None => p.references(),
-                Some(x) => p.references().into_iter().chain(x.references()).collect(),
-            },
-            Op::LoopParam(_, _) => vec![],
-            Op::Map(d, b) | Op::ReduceMap(_, d, b) => {
-                d.references().into_iter().chain(b.references()).collect()
-            }
-            Op::Vec(vs) => vs.iter().flat_map(|v| v.references()).collect(),
-            Op::Record(fields) => fields.iter().flat_map(|(_, v)| v.references()).collect(),
-            Op::Interpolate(points, v) => points
-                .references()
+            _ => self
+                .children()
                 .into_iter()
-                .chain(v.references())
+                .flat_map(|c| c.references())
                 .collect(),
-            Op::Assert(op) | Op::Verify(op) => op.references(),
-            Op::Poly(v)
-            | Op::Mle(v)
-            | Op::Coef(v)
-            | Op::Reduce(_, v)
-            | Op::Ifft(v)
-            | Op::Fft(v)
-            | Op::ToScalar(v) => v.references(),
-            Op::Proj(v, _, _) => v.references(),
-            Op::Random(_, x) | Op::Challenge(_, x) => x
-                .as_ref()
-                .and_then(Exclusion::values)
-                .map_or_else(Vec::new, |v| v.references()),
-            Op::Value(_) => vec![],
+        }
+    }
+
+    /// The first operation in this one (itself or a subterm) that backend `C` cannot
+    /// run: a pairing or a target-group value without a pairing, a group value without
+    /// groups, or an FFT over more points than the field's largest FFT domain. Each
+    /// shared subterm is visited once.
+    pub fn unsupported(&self) -> Option<Unsupported> {
+        let mut seen = std::collections::HashSet::new();
+        let mut stack: Vec<&GOp<C>> = vec![self];
+        while let Some(op) = stack.pop() {
+            if let Some(u) = op.unsupported_here() {
+                return Some(u);
+            }
+            for c in op.children() {
+                if seen.insert(c.uid()) {
+                    stack.push(c.get());
+                }
+            }
+        }
+        None
+    }
+
+    /// [`Self::unsupported`] for this operation alone, by its stored types (computing
+    /// an operand's type only for an FFT).
+    fn unsupported_here(&self) -> Option<Unsupported> {
+        let fft = |len: usize| {
+            (len.next_power_of_two().trailing_zeros() > C::F::TWO_ADICITY).then_some(
+                Unsupported::FftDomain {
+                    size: len,
+                    max_log: C::F::TWO_ADICITY,
+                },
+            )
+        };
+        let poly_len = |p: &HOp<C>| match p.typ() {
+            ATyp::Uni(m) => Some(m + 1),
+            _ => None,
+        };
+        match self {
+            Op::Pair(..) if !C::HAS_PAIRING => Some(Unsupported::Pairing),
+            Op::Ifft(v) => match v.typ() {
+                ATyp::Vec(_, n) => fft(n),
+                _ => None,
+            },
+            Op::Fft(p) | Op::Evaluate(p, None, None) => poly_len(p).and_then(fft),
+            Op::Ref(_, t)
+            | Op::Bin(_, _, _, t)
+            | Op::Proj(_, _, t)
+            | Op::LoopParam(_, t)
+            | Op::Random(t, _)
+            | Op::Challenge(t, _) => unsupported_type::<C>(t),
+            _ => None,
         }
     }
 }
 
-impl<C: HasOpFactory> GOp<C> {
+impl<C: Backend, R> Op<C, R> {
+    /// The operations this one is built from, in order: its operands, and the values a
+    /// sample excludes.
+    pub fn children(&self) -> Vec<&HOp<C>> {
+        match self {
+            Op::Value(_) | Op::Ref(_, _) | Op::LoopParam(_, _) => vec![],
+            Op::Bin(_, a, b, _)
+            | Op::Pair(a, b, _)
+            | Op::Ram(a, b)
+            | Op::Map(a, b)
+            | Op::ReduceMap(_, a, b)
+            | Op::Interpolate(a, b)
+            | Op::Evaluate(a, _, Some(b)) => vec![a, b],
+            Op::Evaluate(a, _, None)
+            | Op::Assert(a)
+            | Op::Verify(a)
+            | Op::Poly(a)
+            | Op::Mle(a)
+            | Op::Coef(a)
+            | Op::Reduce(_, a)
+            | Op::Ifft(a)
+            | Op::Fft(a)
+            | Op::ToScalar(a)
+            | Op::Proj(a, _, _) => vec![a],
+            Op::Vec(vs) => vs.iter().collect(),
+            Op::Record(fields) => fields.iter().map(|(_, v)| v).collect(),
+            Op::Random(_, x) | Op::Challenge(_, x) => {
+                x.as_ref().and_then(Exclusion::values).into_iter().collect()
+            }
+        }
+    }
+}
+
+/// Something a backend cannot run (see [`GOp::unsupported`]).
+#[derive(thiserror::Error, Debug, Clone, PartialEq, Eq)]
+pub enum Unsupported {
+    /// A pairing, or a target-group value, on a backend without a pairing.
+    #[error("a pairing, but the backend has none")]
+    Pairing,
+    /// A group value on a field-only backend.
+    #[error("a group element, but the backend has no group")]
+    Group,
+    /// An FFT over `size` points, above the field's largest domain of `2^max_log`.
+    #[error("an FFT over {size} points, but the field's largest FFT domain has 2^{max_log}")]
+    FftDomain {
+        /// The points the FFT needs.
+        size: usize,
+        /// `log2` of the field's largest FFT domain.
+        max_log: u32,
+    },
+}
+
+/// What a value of type `t` needs that backend `C` lacks.
+pub fn unsupported_type<C: Backend>(t: &ATyp) -> Option<Unsupported> {
+    if !C::HAS_PAIRING && t.any_base(&|b| matches!(b, ABase::GT)) {
+        Some(Unsupported::Pairing)
+    } else if !C::HAS_GROUP && t.any_base(&|b| matches!(b, ABase::G1 | ABase::G2)) {
+        Some(Unsupported::Group)
+    } else {
+        None
+    }
+}
+
+impl<C: Backend> GOp<C> {
     /// Rebuilds this operation with every referenced `NodeIndex` rewritten by `f`,
     /// re-hash-consing each child. Used when a subgraph is copied into another `Dag`
     /// and node numbering shifts.
@@ -1367,43 +1468,43 @@ impl From<NodeIndex> for Ref {
     }
 }
 
-impl<C: HasOpFactory> AddAssign<GOp<C>> for GOp<C> {
+impl<C: Backend> AddAssign<GOp<C>> for GOp<C> {
     fn add_assign(&mut self, other: GOp<C>) {
         *self = Op::add(self.clone(), other, self.typ());
     }
 }
 
-impl<C: HasOpFactory> SubAssign<GOp<C>> for GOp<C> {
+impl<C: Backend> SubAssign<GOp<C>> for GOp<C> {
     fn sub_assign(&mut self, other: GOp<C>) {
         *self = Op::sub(self.clone(), other, self.typ());
     }
 }
 
-impl<C: HasOpFactory> MulAssign<GOp<C>> for GOp<C> {
+impl<C: Backend> MulAssign<GOp<C>> for GOp<C> {
     fn mul_assign(&mut self, other: GOp<C>) {
         *self = Op::mul(self.clone(), other, self.typ());
     }
 }
 
-impl<C: HasOpFactory> DivAssign<GOp<C>> for GOp<C> {
+impl<C: Backend> DivAssign<GOp<C>> for GOp<C> {
     fn div_assign(&mut self, other: GOp<C>) {
         *self = Op::div(self.clone(), other, self.typ());
     }
 }
 
-impl<C: HasOpFactory> RemAssign<GOp<C>> for GOp<C> {
+impl<C: Backend> RemAssign<GOp<C>> for GOp<C> {
     fn rem_assign(&mut self, other: GOp<C>) {
         *self = Op::rem(self.clone(), other, self.typ());
     }
 }
 
-impl<C: HasOpFactory> BitXorAssign<GOp<C>> for GOp<C> {
+impl<C: Backend> BitXorAssign<GOp<C>> for GOp<C> {
     fn bitxor_assign(&mut self, other: GOp<C>) {
         *self = Op::pow(self.clone(), other, self.typ());
     }
 }
 
-impl<C: HasOpFactory> Add for GOp<C> {
+impl<C: Backend> Add for GOp<C> {
     type Output = GOp<C>;
 
     fn add(self, other: GOp<C>) -> GOp<C> {
@@ -1412,7 +1513,7 @@ impl<C: HasOpFactory> Add for GOp<C> {
     }
 }
 
-impl<C: HasOpFactory> Sub for GOp<C> {
+impl<C: Backend> Sub for GOp<C> {
     type Output = GOp<C>;
 
     fn sub(self, other: GOp<C>) -> GOp<C> {
@@ -1421,7 +1522,7 @@ impl<C: HasOpFactory> Sub for GOp<C> {
     }
 }
 
-impl<C: HasOpFactory> Mul for GOp<C> {
+impl<C: Backend> Mul for GOp<C> {
     type Output = GOp<C>;
 
     fn mul(self, other: GOp<C>) -> GOp<C> {
@@ -1430,7 +1531,7 @@ impl<C: HasOpFactory> Mul for GOp<C> {
     }
 }
 
-impl<C: HasOpFactory> Div for GOp<C> {
+impl<C: Backend> Div for GOp<C> {
     type Output = GOp<C>;
 
     fn div(self, other: GOp<C>) -> GOp<C> {
@@ -1439,7 +1540,7 @@ impl<C: HasOpFactory> Div for GOp<C> {
     }
 }
 
-impl<C: HasOpFactory> Rem for GOp<C> {
+impl<C: Backend> Rem for GOp<C> {
     type Output = GOp<C>;
 
     fn rem(self, other: GOp<C>) -> GOp<C> {
@@ -1448,7 +1549,7 @@ impl<C: HasOpFactory> Rem for GOp<C> {
     }
 }
 
-impl<C: HasOpFactory> BitXor for GOp<C> {
+impl<C: Backend> BitXor for GOp<C> {
     type Output = GOp<C>;
 
     fn bitxor(self, other: GOp<C>) -> GOp<C> {
@@ -1458,7 +1559,7 @@ impl<C: HasOpFactory> BitXor for GOp<C> {
 }
 
 /// S-expression-like IR syntax, e.g. `(eval n3, n4)`; binary operators are infix.
-impl<C: ArkConfig, R: fmt::Display> fmt::Display for Op<C, R> {
+impl<C: Backend, R: fmt::Display> fmt::Display for Op<C, R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Op::Value(v) => write!(f, "{v}"),
@@ -1528,19 +1629,19 @@ impl<C: ArkConfig, R: fmt::Display> fmt::Display for Op<C, R> {
     }
 }
 
-impl<C: ArkConfig, R> From<Value<C>> for Op<C, R> {
+impl<C: Backend, R> From<Value<C>> for Op<C, R> {
     fn from(v: Value<C>) -> Self {
         Op::Value(v)
     }
 }
 
-impl<C: ArkConfig, R> From<usize> for Op<C, R> {
+impl<C: Backend, R> From<usize> for Op<C, R> {
     fn from(v: usize) -> Self {
         Op::Value(Value::Index(v))
     }
 }
 
-impl<C: ArkConfig, R> From<CRange> for Op<C, R> {
+impl<C: Backend, R> From<CRange> for Op<C, R> {
     fn from(r: CRange) -> Self {
         Op::Value(Value::VecIndex(r.into_iter().collect()))
     }

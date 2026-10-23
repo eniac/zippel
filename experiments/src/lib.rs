@@ -5,7 +5,7 @@
 //! (`zippel_side` and `native_side`) plus a shared input-generation
 //! helper that seeds both halves identically.
 
-use backend::{ArkConfig, HasOpFactory, Value};
+use backend::{Backend, Value};
 use lang::id::Vid;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -218,7 +218,7 @@ fn dhat_profiler(caller: &std::panic::Location<'_>) -> dhat::Profiler {
 /// A zippel protocol's inputs as a harness keeps them: it owns every value
 /// and only ever lends it to a run.
 #[must_use]
-pub fn harness_inputs<C: ArkConfig, K: Into<Vid>>(
+pub fn harness_inputs<C: Backend, K: Into<Vid>>(
     pairs: impl IntoIterator<Item = (K, Value<C>)>,
 ) -> HashMap<Vid, Value<C>> {
     pairs.into_iter().map(|(k, v)| (k.into(), v)).collect()
@@ -229,7 +229,7 @@ pub fn harness_inputs<C: ArkConfig, K: Into<Vid>>(
 /// every buffer and the run frees nothing that was live before it started,
 /// as a native prover that borrows its inputs frees nothing; the heap count
 /// sees only what the run allocates.
-pub fn lend<C: ArkConfig>(
+pub fn lend<C: Backend>(
     inputs: &HashMap<Vid, Value<C>>,
 ) -> impl Iterator<Item = (Vid, Value<C>)> + '_ {
     inputs.iter().map(|(k, v)| (k.clone(), v.clone()))
@@ -240,7 +240,7 @@ pub fn lend<C: ArkConfig>(
 /// # Panics
 /// Panics if a run fails.
 #[track_caller]
-pub fn sample_zippel_prover<C: ArkConfig + HasOpFactory>(
+pub fn sample_zippel_prover<C: Backend>(
     prover: &CompiledProver<C>,
     inputs: &HashMap<Vid, Value<C>>,
 ) -> (Vec<Duration>, Vec<usize>, Vec<Value<C>>) {
@@ -253,7 +253,7 @@ pub fn sample_zippel_prover<C: ArkConfig + HasOpFactory>(
 /// # Panics
 /// Panics if a run fails.
 #[track_caller]
-pub fn sample_zippel_verifier<C: ArkConfig + HasOpFactory>(
+pub fn sample_zippel_verifier<C: Backend>(
     verifier: &CompiledVerifier<C>,
     proof: &[Value<C>],
     inputs: &HashMap<Vid, Value<C>>,

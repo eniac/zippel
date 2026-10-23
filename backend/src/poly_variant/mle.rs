@@ -5,13 +5,50 @@
 //! Each operation reads the table alone. A result that may or may not stay sparse is encoded
 //! by its density ([`from_entries`]); the rest of the module never builds a table itself.
 
-use ark_ff::Field;
-use ark_poly::DenseMultilinearExtension;
+use crate::Field;
 use lang::typ::CRange;
 use rayon::prelude::*;
 use std::collections::HashMap;
 
 use super::{PolyVariant, fixed_index_for_var};
+
+/// A multilinear extension by its values on the boolean hypercube: `2^num_vars` of them,
+/// variable `i` being bit `i` of an index.
+#[derive(Debug, Clone, Default, Hash, PartialEq, Eq)]
+pub struct DenseMle<F> {
+    num_vars: usize,
+    evals: Vec<F>,
+}
+
+impl<F> DenseMle<F> {
+    /// The MLE over `num_vars` variables with table `evals`.
+    ///
+    /// # Panics
+    /// Panics unless `evals` has `2^num_vars` entries.
+    pub fn new(num_vars: usize, evals: Vec<F>) -> Self {
+        assert_eq!(
+            Some(evals.len()),
+            1usize.checked_shl(u32::try_from(num_vars).unwrap_or(u32::MAX)),
+            "an MLE over {num_vars} variables has 2^{num_vars} values"
+        );
+        Self { num_vars, evals }
+    }
+
+    /// The number of variables.
+    pub fn num_vars(&self) -> usize {
+        self.num_vars
+    }
+
+    /// The `2^num_vars` values.
+    pub fn evals(&self) -> &[F] {
+        &self.evals
+    }
+
+    /// The `2^num_vars` values.
+    pub fn into_evals(self) -> Vec<F> {
+        self.evals
+    }
+}
 
 /// A multilinear extension's table, by encoding.
 #[derive(Clone, Copy)]
@@ -60,9 +97,7 @@ fn from_entries<F: Field>(
 
 /// The `DenseMle` with table `values` over `num_vars` variables.
 pub(super) fn dense_mle<F: Field>(num_vars: usize, values: Vec<F>) -> PolyVariant<F> {
-    PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(
-        num_vars, values,
-    ))
+    PolyVariant::DenseMle(DenseMle::new(num_vars, values))
 }
 
 /// The dense table of the sparse entries `evals` over `num_vars` variables.

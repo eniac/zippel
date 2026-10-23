@@ -17,7 +17,7 @@
 use ark_bls12_381::{Fr, G1Affine, G1Projective};
 use ark_ec::{CurveGroup, VariableBaseMSM};
 use ark_std::UniformRand;
-use backend::{ArkBls12_381, ArkConfig, ArkGroupOps, Value};
+use backend::{ArkBls12_381, Backend, Value};
 use clap::Parser;
 use lang::id::{Tid, Vid};
 use rand::SeedableRng;
@@ -107,7 +107,7 @@ fn main() {
     let one = inputs(1);
     let expected = native(0);
     assert_eq!(
-        <C as ArkConfig>::G1Ops::vec_dot(&bases[0], &scalars[0]),
+        <<C as Backend>::G1 as backend::Group>::msm(&bases[0], &scalars[0]),
         expected
     );
     assert_eq!(
@@ -119,7 +119,7 @@ fn main() {
     report(
         "zippel backend dot",
         median(args.reps, || {
-            <C as ArkConfig>::G1Ops::vec_dot(&bases[0], &scalars[0])
+            <C as Backend>::G1::msm(&bases[0], &scalars[0])
         }),
     );
     report(

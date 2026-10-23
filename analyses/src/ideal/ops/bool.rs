@@ -1,7 +1,8 @@
 //! Bool op encoder: `BinOp::Equ` in computation context (`let b = x == y`).
 
-use backend::op::HasOpFactory;
-use backend::{ABase, ATyp, ArkConfig, ArkScalarOps};
+use crate::AnalysisBackend;
+use ark_ff::One;
+use backend::{ABase, ATyp};
 use graph::HOp;
 use lang::typ::Nothing;
 use lang::typ::lub::Lub;
@@ -33,12 +34,7 @@ use super::PolySource;
 /// solver reduce back to `x_j - y_j = 0` via:
 ///   b = 1  (asserted)
 ///   d_j * b = 0  →  d_j = 0  →  x_j - y_j = 0
-pub fn equ_op<C: ArkConfig + HasOpFactory>(
-    ctx: &mut EncodeCtx<'_, C>,
-    var: &Var,
-    x: &HOp<C>,
-    y: &HOp<C>,
-) {
+pub fn equ_op<C: AnalysisBackend>(ctx: &mut EncodeCtx<'_, C>, var: &Var, x: &HOp<C>, y: &HOp<C>) {
     assert!(
         matches!(var.typ, ATyp::Base(ABase::Bool)),
         "equ_op: unexpected result type {} (expected Bool)",
@@ -47,7 +43,7 @@ pub fn equ_op<C: ArkConfig + HasOpFactory>(
     let x_src = PolySource::from_ref_vars(&ctx.ideal.vars, x);
     let y_src = PolySource::from_ref_vars(&ctx.ideal.vars, y);
     let b_poly = Polynomial::var(var);
-    let one = Polynomial::lit(&C::FOps::one());
+    let one = Polynomial::lit(&C::F::one());
 
     // d_j = x_j - y_j for each slot
     let diffs = slot_differences(&x_src, &y_src);
@@ -70,7 +66,7 @@ pub fn equ_op<C: ArkConfig + HasOpFactory>(
 
 /// `x_j − y_j` for each coefficient slot `j` of the LUB type of `x` and `y`:
 /// `x == y` holds exactly when every difference is zero.
-fn slot_differences<C: ArkConfig + HasOpFactory>(
+fn slot_differences<C: AnalysisBackend>(
     x_src: &PolySource<C>,
     y_src: &PolySource<C>,
 ) -> Vec<Polynomial<C::F>> {

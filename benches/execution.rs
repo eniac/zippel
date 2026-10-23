@@ -17,7 +17,7 @@ use std::path::PathBuf;
 
 use ark_ff::Field;
 use ark_std::UniformRand;
-use backend::{ATyp, ArkBls12_381, ArkConfig, ArkGroupOps, ArkPairingOps, ArkSecp256k1, Value};
+use backend::{ATyp, ArkBls12_381, ArkSecp256k1, Backend, Value};
 use lang::id::{Tid, Vid};
 use share::Ctx;
 use zippel::*;
@@ -28,9 +28,9 @@ use zippel::*;
 
 fn schnorr_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
-    let x = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
-    let g = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
-    let h_affines = <ArkBls12_381 as ArkConfig>::G1Ops::vec_mul(&g, &[x]);
+    let x = <ArkBls12_381 as Backend>::F::rand(&mut rng);
+    let g = <<ArkBls12_381 as Backend>::G1 as backend::Group>::rand(&mut rng);
+    let h_affines = backend::Group::batch_mul(&g, &[x]);
     let h = h_affines.into_iter().next().unwrap();
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("x".to_string()), Value::Scalar(x)),
@@ -122,8 +122,8 @@ fn hadamard_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
     let p_C = Value::<ArkSecp256k1>::vec_scalar(p_c_coeffs).value_poly();
 
     // v_H = 1 (constant polynomial), so any poly is divisible by v_H.
-    let zero = <ArkSecp256k1 as ArkConfig>::F::zero();
-    let one = <ArkSecp256k1 as ArkConfig>::F::one();
+    let zero = <ArkSecp256k1 as Backend>::F::zero();
+    let one = <ArkSecp256k1 as Backend>::F::one();
     let mut v_h_coeffs = Vec::with_capacity(n);
     v_h_coeffs.push(one);
     v_h_coeffs.extend(std::iter::repeat_n(zero, n));
@@ -202,11 +202,11 @@ fn pedersen_eq_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
 
     let mut rng = rand::rngs::OsRng;
 
-    let x = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
-    let r1 = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
-    let r2 = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
-    let g = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
-    let h = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
+    let x = <ArkBls12_381 as Backend>::F::rand(&mut rng);
+    let r1 = <ArkBls12_381 as Backend>::F::rand(&mut rng);
+    let r2 = <ArkBls12_381 as Backend>::F::rand(&mut rng);
+    let g = <<ArkBls12_381 as Backend>::G1 as backend::Group>::rand(&mut rng);
+    let h = <<ArkBls12_381 as Backend>::G1 as backend::Group>::rand(&mut rng);
 
     let c1 = g.mul(x) + h.mul(r1);
     let c2 = g.mul(x) + h.mul(r2);
@@ -378,12 +378,12 @@ fn hyrax_ipa_inputs(s: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
     let a_vec = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
     let y = x_vec.clone().dot(a_vec.clone());
 
-    let r_xi = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
-    let r_tau = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
+    let r_xi = <ArkBls12_381 as Backend>::F::rand(&mut rng);
+    let r_tau = <ArkBls12_381 as Backend>::F::rand(&mut rng);
 
     let g_vec = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n_val_const));
-    let g_base = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
-    let h_base = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
+    let g_base = <<ArkBls12_381 as Backend>::G1 as backend::Group>::rand(&mut rng);
+    let h_base = <<ArkBls12_381 as Backend>::G1 as backend::Group>::rand(&mut rng);
 
     let tau_val = match y.clone() {
         Value::Scalar(y_scalar) => g_base * y_scalar + h_base * r_tau,
@@ -475,18 +475,30 @@ fn dory_inputs(log_n: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
     let n = 1usize << log_n;
 
-    let u_vec = <ArkBls12_381 as ArkConfig>::G1Ops::vec_rand(&mut rng, n);
-    let g_vec = <ArkBls12_381 as ArkConfig>::G2Ops::vec_rand(&mut rng, n);
+    let u_vec = (0..n)
+        .map(|_| <<ArkBls12_381 as Backend>::G1 as backend::Group>::rand(&mut rng))
+        .collect::<Vec<_>>();
+    let g_vec = (0..n)
+        .map(|_| <<ArkBls12_381 as Backend>::G2 as backend::Group>::rand(&mut rng))
+        .collect::<Vec<_>>();
 
-    let gamma1 = <ArkBls12_381 as ArkConfig>::G1Ops::vec_rand(&mut rng, n);
-    let gamma2 = <ArkBls12_381 as ArkConfig>::G2Ops::vec_rand(&mut rng, n);
+    let gamma1 = (0..n)
+        .map(|_| <<ArkBls12_381 as Backend>::G1 as backend::Group>::rand(&mut rng))
+        .collect::<Vec<_>>();
+    let gamma2 = (0..n)
+        .map(|_| <<ArkBls12_381 as Backend>::G2 as backend::Group>::rand(&mut rng))
+        .collect::<Vec<_>>();
 
-    let gamma1_prime = <ArkBls12_381 as ArkConfig>::G1Ops::vec_rand(&mut rng, n / 2);
-    let gamma2_prime = <ArkBls12_381 as ArkConfig>::G2Ops::vec_rand(&mut rng, n / 2);
+    let gamma1_prime = (0..n / 2)
+        .map(|_| <<ArkBls12_381 as Backend>::G1 as backend::Group>::rand(&mut rng))
+        .collect::<Vec<_>>();
+    let gamma2_prime = (0..n / 2)
+        .map(|_| <<ArkBls12_381 as Backend>::G2 as backend::Group>::rand(&mut rng))
+        .collect::<Vec<_>>();
 
-    let c1 = <ArkBls12_381 as ArkConfig>::POps::billinear_vec_dot(&u_vec, &g_vec);
-    let c2 = <ArkBls12_381 as ArkConfig>::POps::billinear_vec_dot(&u_vec, &gamma2);
-    let c3 = <ArkBls12_381 as ArkConfig>::POps::billinear_vec_dot(&gamma1, &g_vec);
+    let c1 = <<ArkBls12_381 as Backend>::P as backend::Pairing>::multi_pairing(&u_vec, &g_vec);
+    let c2 = <<ArkBls12_381 as Backend>::P as backend::Pairing>::multi_pairing(&u_vec, &gamma2);
+    let c3 = <<ArkBls12_381 as Backend>::P as backend::Pairing>::multi_pairing(&gamma1, &g_vec);
 
     let mut hash1_l_vec = Vec::new();
     let mut hash1_r_vec = Vec::new();
@@ -509,11 +521,18 @@ fn dory_inputs(log_n: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
         let cur_g1_prime = gamma1_prime[0..half_n].to_vec();
         let cur_g2_prime = gamma2_prime[0..half_n].to_vec();
 
-        let h1_l = <ArkBls12_381 as ArkConfig>::POps::billinear_vec_dot(&g1_l, &cur_g2_prime);
-        let h1_r = <ArkBls12_381 as ArkConfig>::POps::billinear_vec_dot(&g1_r, &cur_g2_prime);
-        let h2_l = <ArkBls12_381 as ArkConfig>::POps::billinear_vec_dot(&cur_g1_prime, &g2_l);
-        let h2_r = <ArkBls12_381 as ArkConfig>::POps::billinear_vec_dot(&cur_g1_prime, &g2_r);
-        let ipp = <ArkBls12_381 as ArkConfig>::POps::billinear_vec_dot(&cur_gamma1, &cur_gamma2);
+        let h1_l =
+            <<ArkBls12_381 as Backend>::P as backend::Pairing>::multi_pairing(&g1_l, &cur_g2_prime);
+        let h1_r =
+            <<ArkBls12_381 as Backend>::P as backend::Pairing>::multi_pairing(&g1_r, &cur_g2_prime);
+        let h2_l =
+            <<ArkBls12_381 as Backend>::P as backend::Pairing>::multi_pairing(&cur_g1_prime, &g2_l);
+        let h2_r =
+            <<ArkBls12_381 as Backend>::P as backend::Pairing>::multi_pairing(&cur_g1_prime, &g2_r);
+        let ipp = <<ArkBls12_381 as Backend>::P as backend::Pairing>::multi_pairing(
+            &cur_gamma1,
+            &cur_gamma2,
+        );
 
         hash1_l_vec.push(h1_l);
         hash1_r_vec.push(h1_r);
@@ -618,16 +637,16 @@ fn kzg_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
     let n_size = 2;
 
-    let gen_g1_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
+    let gen_g1_input = <<ArkBls12_381 as Backend>::G1 as backend::Group>::rand(&mut rng);
     let gen_g1: Value<ArkBls12_381> = Value::g1(gen_g1_input);
 
-    let gen_g2_input = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
+    let gen_g2_input = <<ArkBls12_381 as Backend>::G2 as backend::Group>::rand(&mut rng);
     let gen_g2: Value<ArkBls12_381> = Value::g2(gen_g2_input);
 
     let poly_x: Value<ArkBls12_381> =
         Value::<ArkBls12_381>::random(&mut rng, &ATyp::uni(n_size - 1));
     let eval_point: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-    let tau_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
+    let tau_input = <ArkBls12_381 as Backend>::F::rand(&mut rng);
 
     let srs_g1: Value<ArkBls12_381> = Value::vec_g1((0..n_size).map(|_| gen_g1_input).collect())
         * Value::vec_scalar((0..n_size).map(|i| tau_input.pow([i as u64])).collect());

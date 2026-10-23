@@ -4,10 +4,10 @@
 //! per element. At the leaf level (non-Vec), dispatches to polynomial
 //! convolution (VPoly/Uni/Mle) or slot-wise multiplication (base types).
 
+use crate::AnalysisBackend;
 use std::collections::HashMap;
 
-use backend::op::HasOpFactory;
-use backend::{ABase, ATyp, ArkConfig, ArkScalarOps};
+use backend::{ABase, ATyp};
 use graph::HOp;
 
 use crate::Var;
@@ -17,7 +17,7 @@ use super::PolySource;
 use super::{EncodeCtx, link_to_polys};
 use super::{hypercube, multi_indices};
 
-pub fn mul_op<C: ArkConfig + HasOpFactory>(
+pub fn mul_op<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     target: &Var,
     a: &HOp<C>,
@@ -29,7 +29,7 @@ pub fn mul_op<C: ArkConfig + HasOpFactory>(
     mul_op_inner(ctx, target, &a_src, &b_src, r_typ);
 }
 
-pub fn mul_op_inner<C: ArkConfig + HasOpFactory>(
+pub fn mul_op_inner<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     target: &Var,
     a: &PolySource<C>,
@@ -87,7 +87,7 @@ pub fn mul_op_inner<C: ArkConfig + HasOpFactory>(
 /// - `poly × poly` (`Uni`/`VPoly`) → VPoly coefficient convolution
 /// - `Base × Base` → slot-wise multiply
 /// - otherwise → `uncovered_op`
-fn mul_leaf<C: ArkConfig + HasOpFactory>(
+fn mul_leaf<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     target: &Var,
     a: &PolySource<C>,
@@ -132,7 +132,7 @@ fn mul_leaf<C: ArkConfig + HasOpFactory>(
     }
 }
 
-fn slot_wise_mul<C: ArkConfig + HasOpFactory>(
+fn slot_wise_mul<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     target: &Var,
     a: &PolySource<C>,
@@ -152,7 +152,7 @@ fn slot_wise_mul<C: ArkConfig + HasOpFactory>(
 /// Each evaluation slot of the result is a linear combination of
 /// `a_eval[i] · b_eval[j]` weighted by the Lagrange-to-monomial
 /// change-of-basis coefficients.
-fn mul_mle_mle<C: ArkConfig + HasOpFactory>(
+fn mul_mle_mle<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     target: &Var,
     a: &PolySource<C>,
@@ -178,9 +178,9 @@ fn mul_mle_mle<C: ArkConfig + HasOpFactory>(
     };
     let lit_of = |v: i64| -> Polynomial<C::F> {
         if v >= 0 {
-            Polynomial::lit(&C::FOps::from_usize(v as usize))
+            Polynomial::lit(&C::F::from(v as u64))
         } else {
-            -Polynomial::lit(&C::FOps::from_usize((-v) as usize))
+            -Polynomial::lit(&C::F::from((-v) as u64))
         }
     };
     let mut out: Vec<Polynomial<C::F>> = vec![Polynomial::<C::F>::zero(); r_idx.len()];
@@ -211,7 +211,7 @@ fn mul_mle_mle<C: ArkConfig + HasOpFactory>(
 ///
 /// The Mle operand is expanded via Lagrange basis polynomials, then
 /// convolved with the VPoly coefficient slots.
-fn mul_mle_vpoly<C: ArkConfig + HasOpFactory>(
+fn mul_mle_vpoly<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     target: &Var,
     a: &PolySource<C>,
@@ -242,9 +242,9 @@ fn mul_mle_vpoly<C: ArkConfig + HasOpFactory>(
     let r_idx = multi_indices(n, *mr);
     let lit_of = |v: i64| -> Polynomial<C::F> {
         if v >= 0 {
-            Polynomial::lit(&C::FOps::from_usize(v as usize))
+            Polynomial::lit(&C::F::from(v as u64))
         } else {
-            -Polynomial::lit(&C::FOps::from_usize((-v) as usize))
+            -Polynomial::lit(&C::F::from((-v) as u64))
         }
     };
     let mut out: Vec<Polynomial<C::F>> = vec![Polynomial::<C::F>::zero(); r_idx.len()];
@@ -288,7 +288,7 @@ fn mul_mle_vpoly<C: ArkConfig + HasOpFactory>(
 ///
 /// Normalizes `Uni` to `VPoly(1, m)`, then convolves the multi-index
 /// coefficient slots element-wise.
-fn mul_vpoly_vpoly<C: ArkConfig + HasOpFactory>(
+fn mul_vpoly_vpoly<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     target: &Var,
     a: &PolySource<C>,

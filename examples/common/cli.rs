@@ -2,7 +2,6 @@
 use clap::{Arg, ArgAction, ArgMatches, Command, ValueEnum, builder::TypedValueParser};
 
 use crate::common::{AnalysisKind, ExampleSpec, Operation, Request};
-use backend::ArkConfig;
 
 /// A selected Gröbner-basis engine.
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
@@ -42,7 +41,7 @@ pub fn request(matches: &ArgMatches, operation: &str) -> Request {
 }
 
 /// Details shown when help names a particular example.
-pub fn example_help<C: ArkConfig>(spec: &ExampleSpec<C>) -> String {
+pub fn example_help<C: backend::Backend>(spec: &ExampleSpec<C>) -> String {
     let mut help = String::new();
     if !spec.defaults.is_empty() {
         help.push_str("Defaults: ");

@@ -1,15 +1,15 @@
 use ark_ec::PrimeGroup;
 use ark_std::UniformRand;
-use backend::{ArkBls12_381, ArkConfig, Value};
+use backend::{ArkBls12_381, Backend, Value};
 use lang::id::Vid;
 use share::Ctx;
 
 use crate::common;
 use crate::common::size;
 
-type F = <ArkBls12_381 as ArkConfig>::F;
-type G1 = <ArkBls12_381 as ArkConfig>::G1;
-type G2 = <ArkBls12_381 as ArkConfig>::G2;
+type F = <ArkBls12_381 as Backend>::F;
+type G1 = <ArkBls12_381 as Backend>::G1;
+type G2 = <ArkBls12_381 as Backend>::G2;
 
 /// eq(x, r) over x ∈ {0,1}^n with r[0] the low bit (irondict's `build_eq_x_r`).
 fn eq_weights(r: &[F]) -> Vec<F> {

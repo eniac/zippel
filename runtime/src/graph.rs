@@ -4,7 +4,7 @@
 //! successors, the nodes ready at the start, the input marker and the checks.
 
 use crate::eval::error::EvalError;
-use backend::{ArkConfig, Value};
+use backend::{Backend, Value};
 use graph::{Dag, GOp, Node, Op, UDag};
 use lang::ast::Exclusion;
 use petgraph::Direction;
@@ -21,7 +21,7 @@ use crate::inbox::Inbox;
 /// A node never stores its own value: when it finishes, it delivers the
 /// value into the [`Inbox`] of each successor that reads it, and the value
 /// is freed once the last of them has run.
-pub(crate) struct NodeState<C: ArkConfig> {
+pub(crate) struct NodeState<C: Backend> {
     /// Operands delivered by the nodes this one reads; taken when it runs.
     pub(crate) inbox: Inbox<Value<C>>,
     /// Set when the node runs, to catch a scheduler running it twice.
@@ -31,7 +31,7 @@ pub(crate) struct NodeState<C: ArkConfig> {
     remaining_deps: AtomicUsize,
 }
 
-impl<C: ArkConfig> NodeState<C> {
+impl<C: Backend> NodeState<C> {
     /// Records that the predecessor `from` has finished, taking its value if
     /// it produced one, and returns whether this node is now ready to run.
     pub(crate) fn receive(&self, from: NodeIndex, value: Option<&Value<C>>) -> bool {
@@ -48,7 +48,7 @@ impl<C: ArkConfig> NodeState<C> {
 /// The jobs of one `rayon::scope` drive it concurrently (see
 /// [`MutexGraph::run_graph`]). A node refuses to run twice, so a
 /// `MutexGraph` runs once; build a new one per run.
-pub struct MutexGraph<C: ArkConfig> {
+pub struct MutexGraph<C: Backend> {
     pub(crate) dag: Dag<C, NodeState<C>>,
     /// Each node's distinct successors, sorted, by node index: a run spawns
     /// ready nodes in the same order every time (the order changes which
@@ -62,7 +62,7 @@ pub struct MutexGraph<C: ArkConfig> {
     checks: Vec<NodeIndex>,
 }
 
-impl<C: ArkConfig> MutexGraph<C> {
+impl<C: Backend> MutexGraph<C> {
     /// Wrap a scheduled DAG for execution: give every compute node a fresh
     /// [`NodeState`] and compute the scheduling tables.
     ///

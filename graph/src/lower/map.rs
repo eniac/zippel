@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use lang::ast::{ExpId, Exprs, Visit};
 
-impl<C: HasOpFactory> UDag<C> {
+impl<C: Backend> UDag<C> {
     /// Lower a Map/ReduceMap body to an inline `GOp` op-tree (no graph nodes).
     /// `binders` are the enclosing loop binders by de Bruijn level (index =
     /// level); `vctx` is already extended with their CTyps. `Ok(None)` means

@@ -1,6 +1,6 @@
 //! Failures of [`PolyVariant`] arithmetic, evaluation and conversion.
 
-use ark_ff::Field;
+use crate::Field;
 use lang::ast::BinOp;
 use thiserror::Error;
 

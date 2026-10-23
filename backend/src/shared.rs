@@ -1,6 +1,5 @@
 //! Vectors that share their storage.
 
-use ark_serialize::{CanonicalSerialize, Compress, SerializationError, Write};
 use rayon::prelude::*;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -214,21 +213,6 @@ impl<T: Hash> Hash for Shared<T> {
     }
 }
 
-/// Serializes the viewed elements exactly as a `Vec` of them would.
-impl<T: CanonicalSerialize> CanonicalSerialize for Shared<T> {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        (**self).serialize_with_mode(writer, compress)
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        (**self).serialized_size(compress)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -358,23 +342,6 @@ mod tests {
         s.to_mut()[0] = 99;
         assert_eq!(&*s, &[99, 4]);
         assert_eq!(&*v, &[1, 2, 3, 4]);
-    }
-
-    #[test]
-    fn a_view_serializes_as_a_vec_of_its_elements() {
-        let v = Shared::from(vec![1u64, 2, 3, 4, 5]);
-        let s = v.select(&[1, 2, 3]);
-        let bytes = |x: &dyn Fn(&mut Vec<u8>)| {
-            let mut out = Vec::new();
-            x(&mut out);
-            out
-        };
-        for compress in [Compress::Yes, Compress::No] {
-            let view = bytes(&|o| s.serialize_with_mode(o, compress).unwrap());
-            let plain = bytes(&|o| vec![2u64, 3, 4].serialize_with_mode(o, compress).unwrap());
-            assert_eq!(view, plain);
-            assert_eq!(s.serialized_size(compress), plain.len());
-        }
     }
 
     #[test]

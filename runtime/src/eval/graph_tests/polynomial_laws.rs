@@ -1,12 +1,12 @@
 use crate::eval::eval_op;
-use ark_poly::{DenseUVPolynomial, univariate::DensePolynomial};
+use backend::poly_variant::DenseUni;
 use backend::{ATyp, ArkBn254, PolyVariant, Value, VirtualPolynomial};
 /// Tests for polynomial ring laws and algebraic properties end-to-end through graph operations
 use graph::{Op, mk};
 use std::collections::HashMap;
 
 type TestValue = Value<ArkBn254>;
-type Fr = <ArkBn254 as backend::ArkConfig>::F;
+type Fr = <ArkBn254 as backend::Backend>::F;
 
 fn make_scalar(val: u64) -> TestValue {
     TestValue::poly(VirtualPolynomial::from_poly(PolyVariant::from_scalar(
@@ -15,7 +15,7 @@ fn make_scalar(val: u64) -> TestValue {
 }
 
 fn make_uni_poly(coeffs: Vec<u64>) -> TestValue {
-    let poly = DensePolynomial::from_coefficients_vec(coeffs.into_iter().map(Fr::from).collect());
+    let poly = DenseUni::new(coeffs.into_iter().map(Fr::from).collect());
     TestValue::poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(poly)))
 }
 

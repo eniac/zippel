@@ -1,7 +1,7 @@
 //! Concatenation op encoder: `concat_op`, `bind_lifted_alias`, `bind_vec_aliases`.
 
-use backend::op::HasOpFactory;
-use backend::{ATyp, ArkConfig};
+use crate::AnalysisBackend;
+use backend::ATyp;
 use graph::HOp;
 
 use crate::Var;
@@ -12,7 +12,7 @@ use super::PolySource;
 use super::link_to_polys;
 
 /// Bind `target`'s slots to `source`'s polys lifted to `target_typ`.
-pub fn bind_lifted_alias<C: ArkConfig>(
+pub fn bind_lifted_alias<C: AnalysisBackend>(
     target: &Var,
     source: &PolySource<C>,
     target_typ: &ATyp,
@@ -23,7 +23,7 @@ pub fn bind_lifted_alias<C: ArkConfig>(
 }
 
 /// Bind a range of `target`'s element slots to `source`'s elements.
-pub fn bind_vec_aliases<C: ArkConfig>(
+pub fn bind_vec_aliases<C: AnalysisBackend>(
     target: &Var,
     target_offset: usize,
     source: &PolySource<C>,
@@ -38,7 +38,7 @@ pub fn bind_vec_aliases<C: ArkConfig>(
     }
 }
 
-pub fn concat_op<C: ArkConfig + HasOpFactory>(
+pub fn concat_op<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     a: &HOp<C>,
@@ -49,7 +49,7 @@ pub fn concat_op<C: ArkConfig + HasOpFactory>(
     concat_op_inner(ctx, var, &a_src, &b_src);
 }
 
-fn concat_op_inner<C: ArkConfig + HasOpFactory>(
+fn concat_op_inner<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     a: &PolySource<C>,

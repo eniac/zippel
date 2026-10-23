@@ -1,11 +1,11 @@
 //! Evaluation op encoders: `eval_op`, `eval_to_poly`, `eval_to_poly_as`.
 
+use crate::AnalysisBackend;
 use std::collections::HashMap;
 
 use ark_ff::One;
 
-use backend::op::HasOpFactory;
-use backend::{ATyp, ArkConfig};
+use backend::ATyp;
 use graph::{GOp, Ref};
 
 use crate::Var;
@@ -21,7 +21,7 @@ use super::{hypercube, multi_indices};
 /// polynomials for evaluating `p` at `xs`. Panics on unsupported
 /// (p.typ(), |xs|) combinations; the type checker guarantees these
 /// are not expected.
-pub fn eval_to_poly<C: ArkConfig>(
+pub fn eval_to_poly<C: AnalysisBackend>(
     p: &GOp<C>,
     xs: &GOp<C>,
     vars: &HashMap<Ref, Var>,
@@ -145,7 +145,7 @@ pub fn eval_to_poly<C: ArkConfig>(
     }
 }
 
-pub fn eval_to_poly_as<C: ArkConfig>(
+pub fn eval_to_poly_as<C: AnalysisBackend>(
     p: &GOp<C>,
     xs: &GOp<C>,
     target_typ: &ATyp,
@@ -177,7 +177,7 @@ pub fn eval_to_poly_as<C: ArkConfig>(
 /// Selected evaluation: keep variable `range.start` free and substitute
 /// `fixed` for the remaining variables. Returns the residual univariate
 /// coefficient polys, or `None` for unsupported shapes.
-pub fn selected_eval_to_poly<C: ArkConfig>(
+pub fn selected_eval_to_poly<C: AnalysisBackend>(
     p: &GOp<C>,
     range: &lang::ast::CRange,
     fixed: &GOp<C>,
@@ -258,7 +258,7 @@ pub fn selected_eval_to_poly<C: ArkConfig>(
 /// 3. `(p, None, None)` — full-grid DFT.
 ///
 /// `(p, Some(_), None)` is unsupported and panics.
-pub fn eval_op<C: ArkConfig + HasOpFactory>(
+pub fn eval_op<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     p: &GOp<C>,

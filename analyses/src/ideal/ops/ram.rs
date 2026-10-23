@@ -1,7 +1,7 @@
 //! RAM read op encoder: `ram_op`.
 
-use backend::op::HasOpFactory;
-use backend::{ArkConfig, Value};
+use crate::AnalysisBackend;
+use backend::Value;
 use graph::{HOp, Op};
 
 use crate::Var;
@@ -13,12 +13,7 @@ use super::link_to_witness;
 /// to the i-th logical element of the array. For compound element types,
 /// all physical slots are linked pairwise. Multi-index (VecIndex) reads
 /// produce a vector of elements. Runtime indices are unsupported.
-pub fn ram_op<C: ArkConfig + HasOpFactory>(
-    ctx: &mut EncodeCtx<'_, C>,
-    var: &Var,
-    a: &HOp<C>,
-    b: &HOp<C>,
-) {
+pub fn ram_op<C: AnalysisBackend>(ctx: &mut EncodeCtx<'_, C>, var: &Var, a: &HOp<C>, b: &HOp<C>) {
     match b.get() {
         Op::Value(Value::Index(i)) => {
             let Op::Ref(r, _) = a.get() else {

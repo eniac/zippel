@@ -3,7 +3,7 @@
 
 use analyses::QualifierPropagation;
 use analyses::frontend::Polynomial;
-use backend::{ArkBls12_381, ArkConfig};
+use backend::{ArkBls12_381, Backend};
 use graph::{Relations, UDags};
 use lang::ast::{SizeSearchError, UModule, minimal_sizes};
 use lang::diagnostic::Severity;
@@ -15,7 +15,7 @@ use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
 type AnalysisDag = graph::Dag<ArkBls12_381, Qualifier>;
-type F = <ArkBls12_381 as ArkConfig>::F;
+type F = <ArkBls12_381 as Backend>::F;
 
 /// Snapshot directory, relative to this file's directory
 /// (`analyses/tests/gb_snapshots/`) — resolves to

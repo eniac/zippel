@@ -3,8 +3,8 @@ use lang::id::Vid;
 use lang::typ::{Distribution, Nothing, Qualifier};
 use share::traversal::ToTraversal2;
 
-use backend::op::{GOp, HOp, HasOpFactory, Op, OpExclusion, Ref, mk};
-use backend::{ATyp, ArkConfig};
+use backend::op::{GOp, HOp, Op, OpExclusion, Ref, mk};
+use backend::{ATyp, Backend};
 use petgraph::graph::NodeIndex;
 use std::fmt;
 
@@ -22,7 +22,7 @@ pub enum ArgKind {
 
 /// A node in the DAG
 #[derive(PartialEq, Eq, Clone, Debug)]
-pub enum Node<C: ArkConfig, A> {
+pub enum Node<C: Backend, A> {
     /// Entry in the graph: protocol/function name marker.
     /// Phase B: arguments are split out into per-arg `Node::Arg` nodes,
     /// each connected to this marker by a data edge.
@@ -37,7 +37,7 @@ pub enum Node<C: ArkConfig, A> {
     Op(HOp<C>, A),
 }
 
-impl<C: ArkConfig, N> Node<C, N> {
+impl<C: Backend, N> Node<C, N> {
     /// Returns `true` when this node carries a hash-consed operation, i.e. it is
     /// either an `Op` or a `Transcr` node rather than a marker or argument.
     pub fn is_op(&self) -> bool {
@@ -228,8 +228,8 @@ impl<C: ArkConfig, N> Node<C, N> {
     }
 }
 
-/// Methods requiring `HasOpFactory` (for creating new hash-consed operations)
-impl<C: HasOpFactory, N> Node<C, N> {
+/// Methods creating new hash-consed operations
+impl<C: Backend, N> Node<C, N> {
     /// Rewrites every `NodeIndex` embedded in this node's operation through `f`,
     /// re-interning the result; used when a subgraph is copied into another `Dag`
     /// and indices are renumbered.
@@ -260,7 +260,7 @@ impl<C: HasOpFactory, N> Node<C, N> {
     }
 }
 
-impl<C: ArkConfig> Node<C, Nothing> {
+impl<C: Backend> Node<C, Nothing> {
     /// Builds the entry marker node for the protocol or function named `f`.
     pub fn inp(f: Vid) -> Self {
         Node::Inp(f)
@@ -288,8 +288,8 @@ impl<C: ArkConfig> Node<C, Nothing> {
     }
 }
 
-/// Constructors requiring `HasOpFactory` (for creating new hash-consed operations)
-impl<C: HasOpFactory> Node<C, Nothing> {
+/// Constructors creating new hash-consed operations
+impl<C: Backend> Node<C, Nothing> {
     /// Builds a node lifting a coefficient `Vec` into a univariate polynomial.
     pub fn poly(op: &GOp<C>) -> Self {
         Node::Op(mk::<C>(GOp::poly(op.clone())), Nothing)
@@ -372,7 +372,7 @@ impl<C: HasOpFactory> Node<C, Nothing> {
     }
 }
 
-impl<C: ArkConfig, A: fmt::Display> fmt::Display for Node<C, A> {
+impl<C: Backend, A: fmt::Display> fmt::Display for Node<C, A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Node::Inp(fid) => write!(f, "Impl {}", fid),
@@ -403,7 +403,7 @@ impl<C: ArkConfig, A: fmt::Display> fmt::Display for Node<C, A> {
     }
 }
 
-impl<C: ArkConfig, N> ToTraversal2<N> for Node<C, N> {
+impl<C: Backend, N> ToTraversal2<N> for Node<C, N> {
     type Output<Z> = Node<C, Z>;
     fn traverse2<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
         match self {

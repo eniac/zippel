@@ -2,8 +2,8 @@
 //! `apply_binop`, `emit_slotwise_binop`, `add_sub_op`,
 //! `add_sub_op_inner`, `add_sub_leaf`.
 
-use backend::op::HasOpFactory;
-use backend::{ABase, ATyp, ArkConfig};
+use crate::AnalysisBackend;
+use backend::{ABase, ATyp};
 use graph::HOp;
 use lang::ast::BinOp;
 
@@ -13,7 +13,7 @@ use crate::frontend::Polynomial;
 use super::PolySource;
 use super::{EncodeCtx, link_to_polys};
 
-pub fn apply_binop<C: ArkConfig>(
+pub fn apply_binop<C: AnalysisBackend>(
     op: BinOp,
     a: &Polynomial<C::F>,
     b: &Polynomial<C::F>,
@@ -25,7 +25,7 @@ pub fn apply_binop<C: ArkConfig>(
     }
 }
 
-pub fn emit_slotwise_binop<C: ArkConfig + HasOpFactory>(
+pub fn emit_slotwise_binop<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     left: &[Polynomial<C::F>],
@@ -53,7 +53,7 @@ pub fn emit_slotwise_binop<C: ArkConfig + HasOpFactory>(
     link_to_polys(ctx.ideal, var, combined);
 }
 
-fn add_sub_op<C: ArkConfig + HasOpFactory>(
+fn add_sub_op<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     a: &HOp<C>,
@@ -67,7 +67,7 @@ fn add_sub_op<C: ArkConfig + HasOpFactory>(
 }
 
 /// Slot-wise addition with type-aware broadcasting.
-pub fn add_op<C: ArkConfig + HasOpFactory>(
+pub fn add_op<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     a: &HOp<C>,
@@ -78,7 +78,7 @@ pub fn add_op<C: ArkConfig + HasOpFactory>(
 }
 
 /// Slot-wise subtraction with type-aware broadcasting.
-pub fn sub_op<C: ArkConfig + HasOpFactory>(
+pub fn sub_op<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     a: &HOp<C>,
@@ -88,7 +88,7 @@ pub fn sub_op<C: ArkConfig + HasOpFactory>(
     add_sub_op(ctx, var, a, b, r_typ, BinOp::Sub);
 }
 
-pub fn add_sub_op_inner<C: ArkConfig + HasOpFactory>(
+pub fn add_sub_op_inner<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     a: &PolySource<C>,
@@ -163,7 +163,7 @@ pub fn add_sub_op_inner<C: ArkConfig + HasOpFactory>(
 /// - `scalar ± poly` → inject scalar as constant, lift poly, slot-wise
 /// - `non-poly ± non-poly` (e.g. `Base×Base`) → raw slot-wise
 /// - otherwise → `uncovered_op` (mixed poly/non-poly without scalar)
-fn add_sub_leaf<C: ArkConfig + HasOpFactory>(
+fn add_sub_leaf<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     a: &PolySource<C>,

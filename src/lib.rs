@@ -23,15 +23,11 @@ pub use lang;
 pub use runtime;
 pub use share;
 
-use backend::{ArkConfig, Value, value_to_bytes};
+use backend::{Backend, Value, value_to_bytes};
 
 /// Compute the total serialized size (in bytes) of a proof certificate.
-pub fn proof_size_bytes<C: ArkConfig>(proof: &[Value<C>]) -> usize {
-    proof
-        .iter()
-        .filter_map(|v| value_to_bytes(v).ok())
-        .map(|b| b.len())
-        .sum()
+pub fn proof_size_bytes<C: Backend>(proof: &[Value<C>]) -> usize {
+    proof.iter().map(|v| value_to_bytes(v).len()).sum()
 }
 
 #[cfg(test)]

@@ -1,9 +1,8 @@
 /// `EvalError`, the failure type raised while interpreting a DAG node.
 pub mod error;
 
-use ark_ff::{One, Zero};
 use backend::op::{GOp, HOp, Op, Ref};
-use backend::{ATyp, ArkConfig, SelectedEvalShape, Value};
+use backend::{ATyp, Backend, Field, SelectedEvalShape, Value};
 use error::EvalError;
 use lang::ast::{BinOp, Exclusion};
 use rand::RngCore;
@@ -34,7 +33,7 @@ use std::collections::HashMap;
 /// `runtime::graph::run_graph` sync-channel handling); the bare
 /// `Op::Challenge` arm here preserves the runtime's existing `ThreadRng`
 /// fallback behavior.
-fn selected_eval_shape<C: ArkConfig>(p: &HOp<C>, range: &lang::ast::CRange) -> SelectedEvalShape {
+fn selected_eval_shape<C: Backend>(p: &HOp<C>, range: &lang::ast::CRange) -> SelectedEvalShape {
     let (input_num_vars, max_degree) = match p.typ() {
         ATyp::Uni(d) => (1, d),
         ATyp::Mle(n) => (n, 1),
@@ -52,7 +51,7 @@ fn selected_eval_shape<C: ArkConfig>(p: &HOp<C>, range: &lang::ast::CRange) -> S
 /// depends on the element currently being iterated. Leaves that can never
 /// mention a loop parameter (`Value`, `Ref`, `Random`, `Challenge`) are
 /// `false`.
-pub fn op_has_loop_param<C: ArkConfig>(op: &GOp<C>, target_level: usize) -> bool {
+pub fn op_has_loop_param<C: Backend>(op: &GOp<C>, target_level: usize) -> bool {
     match op {
         Op::LoopParam(level, _) => *level == target_level,
         Op::Bin(_, a, b, _) => {
@@ -102,7 +101,7 @@ pub fn op_has_loop_param<C: ArkConfig>(op: &GOp<C>, target_level: usize) -> bool
 }
 
 /// Check whether an `Op` represents a constant literal value of 2 (either as an index or a scalar field element).
-fn is_const_two<C: ArkConfig>(op: &GOp<C>) -> bool {
+fn is_const_two<C: Backend>(op: &GOp<C>) -> bool {
     match op {
         Op::Value(val) => match val {
             Value::Index(2) => true,
@@ -113,7 +112,7 @@ fn is_const_two<C: ArkConfig>(op: &GOp<C>) -> bool {
     }
 }
 
-fn match_bit_extraction_ast<C: ArkConfig>(
+fn match_bit_extraction_ast<C: Backend>(
     op: &GOp<C>,
     outer_level: usize,
     inner_level: usize,
@@ -145,7 +144,7 @@ fn match_bit_extraction_ast<C: ArkConfig>(
     *l_inner == inner_level
 }
 
-fn is_value_one<C: ArkConfig>(v: &Value<C>) -> bool {
+fn is_value_one<C: Backend>(v: &Value<C>) -> bool {
     match v {
         Value::Scalar(f) => *f == C::F::one(),
         Value::Index(1) => true,
@@ -153,7 +152,7 @@ fn is_value_one<C: ArkConfig>(v: &Value<C>) -> bool {
     }
 }
 
-fn is_value_zero<C: ArkConfig>(v: &Value<C>) -> bool {
+fn is_value_zero<C: Backend>(v: &Value<C>) -> bool {
     match v {
         Value::Scalar(f) => f.is_zero(),
         Value::Index(0) => true,
@@ -161,7 +160,7 @@ fn is_value_zero<C: ArkConfig>(v: &Value<C>) -> bool {
     }
 }
 
-fn has_zero_one_at_start<C: ArkConfig>(v: &Value<C>) -> bool {
+fn has_zero_one_at_start<C: Backend>(v: &Value<C>) -> bool {
     match v {
         Value::Vec(elements) => {
             elements.len() >= 2 && is_value_zero(&elements[0]) && is_value_one(&elements[1])
@@ -174,7 +173,7 @@ fn has_zero_one_at_start<C: ArkConfig>(v: &Value<C>) -> bool {
     }
 }
 
-fn verify_domain_is_canonical_indices<C: ArkConfig>(dom_val: &Value<C>, n: usize) -> bool {
+fn verify_domain_is_canonical_indices<C: Backend>(dom_val: &Value<C>, n: usize) -> bool {
     match dom_val {
         Value::VecIndex(v) => {
             if v.len() != n {
@@ -212,7 +211,7 @@ fn verify_domain_is_canonical_indices<C: ArkConfig>(dom_val: &Value<C>, n: usize
 ///
 /// Handles all runtime value representations: `VecScalar`, `VecIndex`,
 /// `VecBool`, and heterogeneous `Vec`.
-fn is_canonical_hypercube_vector<C: ArkConfig>(val: &Value<C>, i: usize, k: usize) -> bool {
+fn is_canonical_hypercube_vector<C: Backend>(val: &Value<C>, i: usize, k: usize) -> bool {
     match val {
         Value::VecScalar(v) => {
             v.len() == k
@@ -247,7 +246,7 @@ fn is_canonical_hypercube_vector<C: ArkConfig>(val: &Value<C>, i: usize, k: usiz
     }
 }
 
-fn verify_domain_is_canonical_coordinates<C: ArkConfig>(
+fn verify_domain_is_canonical_coordinates<C: Backend>(
     dom_val: &Value<C>,
     n: usize,
     k: usize,
@@ -264,7 +263,7 @@ fn verify_domain_is_canonical_coordinates<C: ArkConfig>(
     }
 }
 
-fn try_match_canonical_hypercube_ast<C: ArkConfig>(
+fn try_match_canonical_hypercube_ast<C: Backend>(
     fixed: &HOp<C>,
     env: &HashMap<Ref, Value<C>>,
     rng: &mut impl rand::RngCore,
@@ -313,7 +312,7 @@ fn try_match_canonical_hypercube_ast<C: ArkConfig>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn verify_hypercube_coordinates<C: ArkConfig, R: RngCore>(
+fn verify_hypercube_coordinates<C: Backend, R: RngCore>(
     fixed: &HOp<C>,
     env: &HashMap<Ref, Value<C>>,
     rng: &mut R,
@@ -374,7 +373,7 @@ fn try_eval_reduce_map_fused_hypercube<C, R>(
     check_sink: &mut Vec<bool>,
 ) -> Result<Option<Value<C>>, EvalError>
 where
-    C: ArkConfig,
+    C: Backend,
     R: RngCore,
 {
     // (1) Must be additive reduction
@@ -482,7 +481,7 @@ where
     }
 }
 
-fn is_vector_value<C: ArkConfig>(v: &Value<C>) -> bool {
+fn is_vector_value<C: Backend>(v: &Value<C>) -> bool {
     matches!(
         v,
         Value::VecIndex(_)
@@ -519,7 +518,7 @@ pub fn eval_op<C, R>(
     check_sink: &mut Vec<bool>,
 ) -> Result<Value<C>, EvalError>
 where
-    C: ArkConfig,
+    C: Backend,
     R: RngCore,
 {
     eval_op_with_loop_params(op, env, rng, &[], check_sink)
@@ -536,7 +535,7 @@ pub fn eval_op_with_loop_params<C, R>(
     check_sink: &mut Vec<bool>,
 ) -> Result<Value<C>, EvalError>
 where
-    C: ArkConfig,
+    C: Backend,
     R: RngCore,
 {
     match op {
@@ -609,7 +608,7 @@ where
         }
         Op::Evaluate(p, None, None) => {
             let p_val = eval_op_with_loop_params(p, env, rng, loop_params, check_sink)?;
-            Ok(p_val.value_fft())
+            Ok(p_val.value_fft(&p.typ()))
         }
         Op::Evaluate(p, None, Some(x)) => {
             let p_val = eval_op_with_loop_params(p, env, rng, loop_params, check_sink)?;
@@ -682,8 +681,9 @@ where
             eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?
                 .value_interpolate_owned(None)?,
         ),
+        // At the operand's declared type, like `Op::Coef`.
         Op::Fft(a) => {
-            Ok(eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?.value_fft())
+            Ok(eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?.value_fft(&a.typ()))
         }
         Op::Mle(a) => {
             // Consume the input via `value_mle_owned` to avoid a 500 MB
@@ -726,7 +726,7 @@ where
 /// Evaluate a pure loop body once per element, pushing the element onto the
 /// loop-parameter stack. Bodies are pure templates (no Random/Challenge), so
 /// the per-task rng is a throwaway; rayon parallelizes across elements.
-fn eval_loop_body_each<C: ArkConfig>(
+fn eval_loop_body_each<C: Backend>(
     body: &HOp<C>,
     env: &HashMap<Ref, Value<C>>,
     elems: Vec<Value<C>>,
@@ -749,13 +749,13 @@ fn eval_loop_body_each<C: ArkConfig>(
 /// Collect every `Op::Ref` leaf reachable from `op`, in DFS order with
 /// duplicates retained. Used by the runtime to snapshot referenced node
 /// values into the `eval_op` env before dispatch.
-pub fn collect_refs<C: ArkConfig>(op: &GOp<C>) -> Vec<Ref> {
+pub fn collect_refs<C: Backend>(op: &GOp<C>) -> Vec<Ref> {
     let mut acc = Vec::new();
     collect_refs_into(op, &mut acc);
     acc
 }
 
-fn collect_refs_into<C: ArkConfig>(op: &GOp<C>, acc: &mut Vec<Ref>) {
+fn collect_refs_into<C: Backend>(op: &GOp<C>, acc: &mut Vec<Ref>) {
     match op {
         Op::Random(_, x) | Op::Challenge(_, x) => {
             if let Some(v) = x.as_ref().and_then(Exclusion::values) {
@@ -814,7 +814,7 @@ mod tests {
     use backend::op::mk;
     use rand::rngs::ThreadRng;
 
-    type Fr = <ArkBn254 as ArkConfig>::F;
+    type Fr = <ArkBn254 as Backend>::F;
     type TestValue = Value<ArkBn254>;
 
     #[test]
@@ -903,7 +903,9 @@ mod tests {
             )
             .unwrap()
         };
-        let zero = mk::<ArkBn254>(Op::Value(Value::VecScalar(vec![Zero::zero()].into())));
+        let zero = mk::<ArkBn254>(Op::Value(Value::VecScalar(
+            vec![<ArkBn254 as Backend>::F::zero()].into(),
+        )));
         for exclusion in [None, Some(Exclusion::Values(zero))] {
             for op in [
                 Op::Random(ATyp::scalar(), exclusion.clone()),

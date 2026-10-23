@@ -1,6 +1,6 @@
 use ark_ff::Field;
 use ark_std::UniformRand;
-use backend::{ArkBls12_381, ArkConfig, Value};
+use backend::{ArkBls12_381, Backend, Value};
 use lang::id::Vid;
 use share::Ctx;
 use std::ops::Mul;
@@ -8,8 +8,8 @@ use std::ops::Mul;
 use crate::common;
 
 fn make_inputs(_sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
-    type F = <ArkBls12_381 as ArkConfig>::F;
-    type G1 = <ArkBls12_381 as ArkConfig>::G1;
+    type F = <ArkBls12_381 as Backend>::F;
+    type G1 = <ArkBls12_381 as Backend>::G1;
     let mut rng = rand::rngs::OsRng;
 
     let f = G1::rand(&mut rng);

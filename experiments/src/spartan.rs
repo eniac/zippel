@@ -1,5 +1,7 @@
-//! Spartan comparison: zippel-compiled Spartan NIZK vs. the vendored
-//! `ark-spartan` implementation — both on Curve25519.
+//! Spartan comparison: zippel-compiled Spartan NIZK, on any backend
+//! (`ArkCurve25519`, or `DalekRistretto`, the curve25519-dalek group
+//! libspartan uses), vs. the vendored `ark-spartan` implementation and
+//! libspartan.
 //!
 //! Statement on both sides: a synthetic satisfiable R1CS instance with
 //! `2^M` constraints, proved with a sumcheck-based polynomial IOP whose
@@ -8,12 +10,8 @@
 //! generation and `.zippel` compilation are excluded.
 
 use crate::Timing;
-use ark_curve25519::{EdwardsProjective as G1Projective, Fr};
-use ark_ec::CurveGroup;
-use ark_ff::{Field, Zero};
-use ark_std::UniformRand;
 use ark_std::rand::SeedableRng;
-use backend::{ArkCurve25519, PolyVariant, Value, VirtualPolynomial};
+use backend::{Backend, Field, Group, PolyVariant, Value, VirtualPolynomial};
 use lang::id::{Tid, Vid};
 use rand::Rng;
 use share::Ctx;
@@ -56,29 +54,29 @@ pub struct ZippelTiming {
 
 /// Compiled Spartan protocol plus its pre-generated prover inputs, reused
 /// across every timing sample at one size.
-pub struct Setup {
+pub struct Setup<C: Backend> {
     m: usize,
-    prover: CompiledProver<ArkCurve25519>,
-    verifier: CompiledVerifier<ArkCurve25519>,
-    inputs: HashMap<Vid, Value<ArkCurve25519>>,
+    prover: CompiledProver<C>,
+    verifier: CompiledVerifier<C>,
+    inputs: HashMap<Vid, Value<C>>,
     /// What the prover's `az`, `bz`, `cz` inputs are computed from, inside
     /// each timed run, as libspartan computes them inside `prove`.
-    products: MatVec,
+    products: MatVec<C::F>,
     compile_time: Vec<std::time::Duration>,
 }
 
 /// The R1CS matrices (as `(row, col, value)` triples) and the assignment
 /// `z = (w, io, 1)` they multiply.
-struct MatVec {
-    mats: [Vec<(usize, usize, Fr)>; 3],
-    z: Vec<Fr>,
+struct MatVec<F> {
+    mats: [Vec<(usize, usize, F)>; 3],
+    z: Vec<F>,
 }
 
-impl MatVec {
+impl<F: Field> MatVec<F> {
     /// `[Az, Bz, Cz]`.
-    fn products(&self) -> [Vec<Fr>; 3] {
+    fn products(&self) -> [Vec<F>; 3] {
         self.mats.each_ref().map(|mat| {
-            let mut out = vec![Fr::from(0u64); self.z.len()];
+            let mut out = vec![F::zero(); self.z.len()];
             for &(i, c, v) in mat {
                 out[i] += v * self.z[c];
             }
@@ -87,7 +85,7 @@ impl MatVec {
     }
 }
 
-impl Setup {
+impl<C: Backend> Setup<C> {
     /// Compiles `examples/spartan/spartan.zippel` with size variable `M` bound
     /// to `m` and generates a satisfying synthetic R1CS instance for it.
     ///
@@ -107,13 +105,13 @@ impl Setup {
             PathBuf::from("examples/spartan/spartan.zippel")
         };
 
-        let (inputs, products) = make_inputs(m);
+        let (inputs, products) = make_inputs::<C>(m);
 
         let ((prover, verifier), compile_time) = crate::sample_compile(|| {
             let module = ParsedModule::load(zippel_path.clone()).expect("parse protocol");
             let mut sizes = Ctx::new();
             sizes.insert(&Tid::new("M"), &m);
-            let protocol: CompiledProtocol<ArkCurve25519> = module
+            let protocol: CompiledProtocol<C> = module
                 .compile(&sizes, CompileOptions::default())
                 .expect("compile protocol");
             (
@@ -163,7 +161,7 @@ impl Setup {
                 .prove(crate::lend(&self.inputs).chain(computed))
                 .expect("run_prover failed")
         });
-        let proof_bytes = proof_size_bytes::<ArkCurve25519>(&proof);
+        let proof_bytes = proof_size_bytes::<C>(&proof);
         let (verify, verify_peak, passed) =
             crate::sample_zippel_verifier(&self.verifier, &proof, &self.inputs);
 
@@ -292,7 +290,7 @@ where
     }
 }
 
-fn make_inputs(m: usize) -> (HashMap<Vid, Value<ArkCurve25519>>, MatVec) {
+fn make_inputs<C: Backend>(m: usize) -> (HashMap<Vid, Value<C>>, MatVec<C::F>) {
     let num_cons = 1usize << m;
     let witness_len = 1usize << (m - 1);
     let io_len = witness_len - 1;
@@ -302,14 +300,14 @@ fn make_inputs(m: usize) -> (HashMap<Vid, Value<ArkCurve25519>>, MatVec) {
     let mut seed_bytes = [0u8; 32];
     seed_bytes[..8].copy_from_slice(&(0xFEEDFACE_u64 ^ m as u64).to_le_bytes());
     let mut rng = ark_std::rand::rngs::StdRng::from_seed(seed_bytes);
-    let one = Fr::from(1u64);
+    let one = C::F::one();
 
-    let witness: Vec<Fr> = (0..witness_len).map(|_| Fr::rand(&mut rng)).collect();
-    let instance: Vec<Fr> = (0..io_len).map(|_| Fr::rand(&mut rng)).collect();
+    let witness: Vec<C::F> = (0..witness_len).map(|_| C::F::rand(&mut rng)).collect();
+    let instance: Vec<C::F> = (0..io_len).map(|_| C::F::rand(&mut rng)).collect();
 
-    let r1cs = random_r1cs::<Fr, _>(&mut rng, num_cons, &witness, &instance);
+    let r1cs = random_r1cs::<C::F, _>(&mut rng, num_cons, &witness, &instance);
 
-    let mut z: Vec<Fr> = Vec::with_capacity(num_cons);
+    let mut z: Vec<C::F> = Vec::with_capacity(num_cons);
     z.extend_from_slice(&witness);
     z.extend_from_slice(&instance);
     z.push(one);
@@ -327,7 +325,7 @@ fn make_inputs(m: usize) -> (HashMap<Vid, Value<ArkCurve25519>>, MatVec) {
         );
     }
 
-    let triples_to_mle_evals = |triples: &[(usize, usize, Fr)]| -> Vec<(usize, Fr)> {
+    let triples_to_mle_evals = |triples: &[(usize, usize, C::F)]| -> Vec<(usize, C::F)> {
         triples
             .iter()
             .filter(|(_, _, v)| !v.is_zero())
@@ -335,7 +333,7 @@ fn make_inputs(m: usize) -> (HashMap<Vid, Value<ArkCurve25519>>, MatVec) {
             .collect()
     };
     let two_m_vars = 2 * m;
-    let mk_sparse_mle = |evals: Vec<(usize, Fr)>| {
+    let mk_sparse_mle = |evals: Vec<(usize, C::F)>| {
         Value::poly(VirtualPolynomial::from_poly(PolyVariant::SparseMle {
             num_vars: two_m_vars,
             evals,
@@ -345,18 +343,18 @@ fn make_inputs(m: usize) -> (HashMap<Vid, Value<ArkCurve25519>>, MatVec) {
     let mat_b_t = mk_sparse_mle(triples_to_mle_evals(&r1cs.mat_b));
     let mat_c_t = mk_sparse_mle(triples_to_mle_evals(&r1cs.mat_c));
 
-    let g_vec_proj: Vec<G1Projective> = (0..ncols).map(|_| G1Projective::rand(&mut rng)).collect();
-    let g_vec_aff = G1Projective::normalize_batch(&g_vec_proj);
-    let g_base_w = G1Projective::rand(&mut rng);
-    let h_base_w = G1Projective::rand(&mut rng);
+    let g_vec_proj: Vec<C::G1> = (0..ncols).map(|_| C::G1::rand(&mut rng)).collect();
+    let g_vec_aff = C::G1::normalize_batch(&g_vec_proj);
+    let g_base_w = C::G1::rand(&mut rng);
+    let h_base_w = C::G1::rand(&mut rng);
 
-    let g_evs_d3_proj: Vec<G1Projective> = (0..4).map(|_| G1Projective::rand(&mut rng)).collect();
-    let g_evs_d3_aff = G1Projective::normalize_batch(&g_evs_d3_proj);
-    let g_evs_d2_proj: Vec<G1Projective> = (0..3).map(|_| G1Projective::rand(&mut rng)).collect();
-    let g_evs_d2_aff = G1Projective::normalize_batch(&g_evs_d2_proj);
-    let h_evs = G1Projective::rand(&mut rng);
+    let g_evs_d3_proj: Vec<C::G1> = (0..4).map(|_| C::G1::rand(&mut rng)).collect();
+    let g_evs_d3_aff = C::G1::normalize_batch(&g_evs_d3_proj);
+    let g_evs_d2_proj: Vec<C::G1> = (0..3).map(|_| C::G1::rand(&mut rng)).collect();
+    let g_evs_d2_aff = C::G1::normalize_batch(&g_evs_d2_proj);
+    let h_evs = C::G1::rand(&mut rng);
 
-    let placeholder_tau: Vec<Fr> = vec![Fr::from(0u64); m];
+    let placeholder_tau: Vec<C::F> = vec![C::F::zero(); m];
 
     let inputs = crate::harness_inputs([
         (Vid("mat_a_t".to_string()), mat_a_t),

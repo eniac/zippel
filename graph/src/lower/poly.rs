@@ -1,10 +1,10 @@
 //! `fun` bodies as polynomials.
 
 use super::*;
-use ark_poly::{DenseMultilinearExtension, DenseUVPolynomial, univariate::DensePolynomial};
+use backend::poly_variant::{DenseMle, DenseUni};
 use lang::ast::Visit;
 
-impl<C: HasOpFactory> UDag<C> {
+impl<C: Backend> UDag<C> {
     /// The polynomial a `fun` body over `vars` denotes. Only `+`, `-`, `*`, negation, the
     /// fun's parameters and literals may occur; a factor built from literals alone scales the
     /// other factor. One post-order pass over the body, each subtree a constant or a
@@ -14,10 +14,8 @@ impl<C: HasOpFactory> UDag<C> {
         vars: &[Vid],
         var_map: &HashMap<Vid, usize>,
     ) -> Result<PolyVariant<C::F>, GraphError> {
-        use ark_ff::{One, Zero};
-
         /// A subtree's value: a field constant until it meets a parameter.
-        enum Value<F: PrimeField> {
+        enum Value<F: Field> {
             Const(F),
             Poly(PolyVariant<F>),
         }
@@ -34,9 +32,10 @@ impl<C: HasOpFactory> UDag<C> {
         let poly = |e: CRef<'_>, v: Value<C::F>| match v {
             Value::Poly(p) => Ok(p),
             Value::Const(c) if vars.len() < 2 => Ok(PolyVariant::from_scalar(c)),
-            Value::Const(c) => Ok(PolyVariant::DenseMle(
-                DenseMultilinearExtension::from_evaluations_vec(vars.len(), vec![c; table_len(e)?]),
-            )),
+            Value::Const(c) => Ok(PolyVariant::DenseMle(DenseMle::new(
+                vars.len(),
+                vec![c; table_len(e)?],
+            ))),
         };
         let mut values: Vec<Value<C::F>> = Vec::new();
         for visit in exp.walk() {
@@ -72,10 +71,7 @@ impl<C: HasOpFactory> UDag<C> {
                     };
                     Value::Poly(if vars.len() == 1 {
                         // Univariate: x
-                        PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(vec![
-                            C::F::zero(),
-                            C::F::one(),
-                        ]))
+                        PolyVariant::DenseUni(DenseUni::new(vec![C::F::zero(), C::F::one()]))
                     } else {
                         // Multilinear: the basis polynomial of this variable
                         let mut evals = vec![C::F::zero(); table_len(e)?];
@@ -84,10 +80,7 @@ impl<C: HasOpFactory> UDag<C> {
                                 *x = C::F::one();
                             }
                         }
-                        PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(
-                            vars.len(),
-                            evals,
-                        ))
+                        PolyVariant::DenseMle(DenseMle::new(vars.len(), evals))
                     })
                 }
                 CExp::Neg(_) => match values.pop().expect("operand") {

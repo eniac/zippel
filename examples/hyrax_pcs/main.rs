@@ -1,14 +1,14 @@
 use ark_std::One;
 use ark_std::UniformRand;
-use backend::{ArkBls12_381, ArkConfig, Value};
+use backend::{ArkBls12_381, Backend, Value};
 use lang::id::Vid;
 use share::Ctx;
 
 use crate::common;
 use crate::common::size;
 
-type F = <ArkBls12_381 as ArkConfig>::F;
-type G1 = <ArkBls12_381 as ArkConfig>::G1;
+type F = <ArkBls12_381 as Backend>::F;
+type G1 = <ArkBls12_381 as Backend>::G1;
 
 fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
     let l = size(sizes, "L");

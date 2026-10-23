@@ -1,15 +1,12 @@
+use crate::Field;
 use crate::optimization::record_selected_eval_interpolation_fallback;
-use crate::poly_variant::check_free_range;
+use crate::poly_variant::{DenseUni, check_free_range};
 use crate::{DivisionByZero, PolyError, PolyVariant};
-use ark_ff::{Field, PrimeField};
-use ark_poly::{DenseUVPolynomial, univariate::DensePolynomial};
-use ark_serialize::{CanonicalSerialize, SerializationError};
 use lang::typ::CRange;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::io::Write;
 use std::ops::{Add, Mul, Sub};
 use std::sync::Arc;
 
@@ -87,7 +84,7 @@ impl SelectedEvalShape {
 ///
 /// # Panics
 /// Panics if the points are empty or of a different count than `evals`.
-pub(crate) fn interpolate_univariate_from_points<F: PrimeField>(
+pub(crate) fn interpolate_univariate_from_points<F: Field>(
     points: &[F],
     evals: &[F],
 ) -> Result<Vec<F>, DivisionByZero> {
@@ -126,7 +123,7 @@ pub(crate) fn interpolate_univariate_from_points<F: PrimeField>(
     Ok(coeffs)
 }
 
-fn divide_by_x_minus_a<F: PrimeField>(p: &[F], a: F) -> Vec<F> {
+fn divide_by_x_minus_a<F: Field>(p: &[F], a: F) -> Vec<F> {
     assert!(p.len() >= 2, "polynomial degree must be at least 1");
     let n = p.len() - 1;
     let mut q = vec![F::zero(); n];
@@ -137,26 +134,14 @@ fn divide_by_x_minus_a<F: PrimeField>(p: &[F], a: F) -> Vec<F> {
     q
 }
 
-fn unit_constant_with_declared_degree<F: PrimeField>(
-    scalar: F,
-    max_degree: usize,
-) -> VirtualPolynomial<F> {
-    let mut coeffs = vec![F::zero(); max_degree + 1];
-    coeffs[0] = scalar;
-    let mut result =
-        VirtualPolynomial::from_poly(PolyVariant::DenseUni(DensePolynomial { coeffs }));
-    result.num_variables = Some(1);
-    result
-}
-
-fn univariate_factor_coeffs<F: PrimeField>(poly: &PolyVariant<F>) -> Option<Vec<F>> {
+fn univariate_factor_coeffs<F: Field>(poly: &PolyVariant<F>) -> Option<Vec<F>> {
     match poly {
-        PolyVariant::DenseMle(mle) if mle.evaluations.len() == 2 => {
-            let v0 = mle.evaluations[0];
-            let v1 = mle.evaluations[1];
+        PolyVariant::DenseMle(mle) if mle.evals().len() == 2 => {
+            let v0 = mle.evals()[0];
+            let v1 = mle.evals()[1];
             Some(vec![v0, v1 - v0])
         }
-        PolyVariant::DenseMle(mle) if mle.evaluations.len() == 1 => Some(vec![mle.evaluations[0]]),
+        PolyVariant::DenseMle(mle) if mle.evals().len() == 1 => Some(vec![mle.evals()[0]]),
         PolyVariant::SparseMle { num_vars: 1, evals } => {
             let mut values = [F::zero(), F::zero()];
             for (idx, value) in evals {
@@ -199,20 +184,26 @@ type KeyedProduct<F> = (F, Vec<(*const PolyVariant<F>, Vec<F>)>);
 /// biggest product, products are summed pointwise, and one inverse FFT gives
 /// the coefficients. Same polynomial as multiplying out each product, in
 /// O(k · n log n) instead of O(n^2) per product.
-fn sum_products_eval_form<F: PrimeField>(products: &[KeyedProduct<F>]) -> Vec<F> {
-    use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
+///
+/// # Panics
+/// Panics if the field has no FFT domain for the biggest product.
+fn sum_products_eval_form<F: Field>(products: &[KeyedProduct<F>]) -> Vec<F> {
     let num_coeffs = products
         .iter()
         .map(|(_, factors)| factors.iter().map(|(_, c)| c.len() - 1).sum::<usize>() + 1)
         .max()
         .unwrap_or(1);
-    let domain = GeneralEvaluationDomain::<F>::new(num_coeffs)
-        .expect("field is not smooth enough to construct domain");
+    let size = num_coeffs.next_power_of_two();
     let mut evals: HashMap<*const PolyVariant<F>, Vec<F>> = HashMap::new();
-    let mut acc = vec![F::zero(); domain.size()];
+    let mut acc = vec![F::zero(); size];
     for (coefficient, factors) in products {
         for (key, coeffs) in factors {
-            evals.entry(*key).or_insert_with(|| domain.fft(coeffs));
+            evals.entry(*key).or_insert_with(|| {
+                let mut v = coeffs.clone();
+                v.resize(size, F::zero());
+                F::fft(&mut v);
+                v
+            });
         }
         let factor_evals: Vec<&[F]> = factors
             .iter()
@@ -226,9 +217,9 @@ fn sum_products_eval_form<F: PrimeField>(products: &[KeyedProduct<F>]) -> Vec<F>
             *a += t;
         });
     }
-    let mut coeffs = domain.ifft(&acc);
-    trim_trailing_zero_coeffs(&mut coeffs);
-    coeffs
+    F::ifft(&mut acc);
+    trim_trailing_zero_coeffs(&mut acc);
+    acc
 }
 
 fn mul_coeffs<F: Field>(left: &[F], right: &[F]) -> Vec<F> {
@@ -369,7 +360,7 @@ pub struct VirtualPolynomial<F: Field> {
     num_variables: Option<usize>,
 }
 
-impl<F: PrimeField> VirtualPolynomial<F> {
+impl<F: Field> VirtualPolynomial<F> {
     /// The constant `scalar` (no products when it is zero) with the given
     /// declared arity.
     fn constant(scalar: F, num_variables: Option<usize>) -> Self {
@@ -533,7 +524,7 @@ impl<F: PrimeField> VirtualPolynomial<F> {
         };
         if let Some(scalar) = constant {
             return Ok(if shape.output_num_vars == 1 {
-                unit_constant_with_declared_degree(scalar, shape.max_degree)
+                Self::univariate(vec![scalar])
             } else {
                 VirtualPolynomial::constant_with_num_vars(scalar, shape.output_num_vars)
             });
@@ -616,9 +607,7 @@ impl<F: PrimeField> VirtualPolynomial<F> {
     /// The univariate polynomial with coefficients `coeffs`, declared as
     /// having one variable.
     fn univariate(coeffs: Vec<F>) -> Self {
-        let mut result = VirtualPolynomial::from_poly(PolyVariant::DenseUni(
-            DensePolynomial::from_coefficients_vec(coeffs),
-        ));
+        let mut result = VirtualPolynomial::from_poly(PolyVariant::DenseUni(DenseUni::new(coeffs)));
         result.num_variables = Some(1);
         result
     }
@@ -675,7 +664,7 @@ impl<F: PrimeField> VirtualPolynomial<F> {
                 .iter()
                 .map(
                     |&idx| match (self.flattened_polys[idx].as_ref(), &sparse_maps[idx]) {
-                        (PolyVariant::DenseMle(mle), _) => MleTable::Dense(&mle.evaluations),
+                        (PolyVariant::DenseMle(mle), _) => MleTable::Dense(mle.evals()),
                         (_, Some(map)) => MleTable::Sparse(map),
                         _ => unreachable!("checked multilinear"),
                     },
@@ -775,7 +764,11 @@ impl<F: PrimeField> VirtualPolynomial<F> {
                     })
                     .collect::<Option<Vec<_>>>()?;
                 let product_len = factors.iter().map(|(_, c)| c.len() - 1).sum::<usize>() + 1;
-                if factors.len() >= 2 && product_len > SCHOOLBOOK_PRODUCT_LEN {
+                // A field without an FFT domain this large multiplies schoolbook.
+                if factors.len() >= 2
+                    && product_len > SCHOOLBOOK_PRODUCT_LEN
+                    && product_len.next_power_of_two().trailing_zeros() <= F::TWO_ADICITY
+                {
                     large.push((*coefficient, factors));
                 } else {
                     let mut term = vec![*coefficient];
@@ -1178,71 +1171,48 @@ impl<F: PrimeField> VirtualPolynomial<F> {
     }
 }
 
-/// Counts the bytes written to it.
-struct ByteCounter(usize);
-
-impl Write for ByteCounter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0 += buf.len();
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-impl<F: PrimeField> CanonicalSerialize for VirtualPolynomial<F> {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        _compress: ark_serialize::Compress,
-    ) -> Result<(), SerializationError> {
+impl<F: Field> VirtualPolynomial<F> {
+    /// Appends the transcript encoding: tag 0 and the normalized polynomial when it
+    /// normalizes, else tag 1 and the explicit sum of products (products from `poly_mul`
+    /// may not collapse to one `PolyVariant`, and hashing a public `Poly` value must not
+    /// fail).
+    pub fn write_bytes(&self, out: &mut Vec<u8>) {
+        let u64_le = |out: &mut Vec<u8>, x: usize| out.extend((x as u64).to_le_bytes());
         if let Ok(normalized) = self.normalize() {
-            0u8.serialize_compressed(&mut writer)?;
-            return normalized.serialize_compressed(&mut writer);
+            out.push(0);
+            normalized.write_bytes(out);
+            return;
         }
-        // Sum-of-products / non-normal shapes (e.g. products from poly_mul) may not
-        // collapse to a single PolyVariant; encode the explicit VP representation so
-        // transcript hashing of public Poly values (e.g. sumcheck) cannot fail.
-        1u8.serialize_compressed(&mut writer)?;
+        out.push(1);
         match self.num_variables {
             Some(n) => {
-                true.serialize_compressed(&mut writer)?;
-                (n as u64).serialize_compressed(&mut writer)?;
+                out.push(1);
+                u64_le(out, n);
             }
-            None => false.serialize_compressed(&mut writer)?,
+            None => out.push(0),
         }
-        (self.products.len() as u64).serialize_compressed(&mut writer)?;
+        u64_le(out, self.products.len());
         for (coeff, indices) in &self.products {
-            coeff.serialize_compressed(&mut writer)?;
-            (indices.len() as u64).serialize_compressed(&mut writer)?;
+            coeff.write_bytes(out);
+            u64_le(out, indices.len());
             for &idx in indices {
-                (idx as u64).serialize_compressed(&mut writer)?;
+                u64_le(out, idx);
             }
         }
-        (self.flattened_polys.len() as u64).serialize_compressed(&mut writer)?;
+        u64_le(out, self.flattened_polys.len());
         for poly in &self.flattened_polys {
-            poly.serialize_compressed(&mut writer)?;
+            poly.write_bytes(out);
         }
-        Ok(())
-    }
-
-    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
-        let mut counter = ByteCounter(0);
-        self.serialize_with_mode(&mut counter, compress)
-            .expect("counting writer never fails");
-        counter.0
     }
 }
 
-impl<F: PrimeField> Default for VirtualPolynomial<F> {
+impl<F: Field> Default for VirtualPolynomial<F> {
     fn default() -> Self {
         VirtualPolynomial::new()
     }
 }
 
-impl<F: PrimeField> Add for &VirtualPolynomial<F> {
+impl<F: Field> Add for &VirtualPolynomial<F> {
     type Output = VirtualPolynomial<F>;
 
     fn add(self, other: Self) -> Self::Output {
@@ -1250,7 +1220,7 @@ impl<F: PrimeField> Add for &VirtualPolynomial<F> {
     }
 }
 
-impl<F: PrimeField> Sub for &VirtualPolynomial<F> {
+impl<F: Field> Sub for &VirtualPolynomial<F> {
     type Output = VirtualPolynomial<F>;
 
     fn sub(self, other: Self) -> Self::Output {
@@ -1258,7 +1228,7 @@ impl<F: PrimeField> Sub for &VirtualPolynomial<F> {
     }
 }
 
-impl<F: PrimeField> Mul for &VirtualPolynomial<F> {
+impl<F: Field> Mul for &VirtualPolynomial<F> {
     type Output = VirtualPolynomial<F>;
 
     fn mul(self, other: Self) -> Self::Output {
@@ -1266,7 +1236,7 @@ impl<F: PrimeField> Mul for &VirtualPolynomial<F> {
     }
 }
 
-impl<F: PrimeField> Add for VirtualPolynomial<F> {
+impl<F: Field> Add for VirtualPolynomial<F> {
     type Output = Self;
 
     fn add(self, other: Self) -> Self {
@@ -1274,7 +1244,7 @@ impl<F: PrimeField> Add for VirtualPolynomial<F> {
     }
 }
 
-impl<F: PrimeField> Sub for VirtualPolynomial<F> {
+impl<F: Field> Sub for VirtualPolynomial<F> {
     type Output = Self;
 
     fn sub(self, other: Self) -> Self {
@@ -1282,7 +1252,7 @@ impl<F: PrimeField> Sub for VirtualPolynomial<F> {
     }
 }
 
-impl<F: PrimeField> Mul for VirtualPolynomial<F> {
+impl<F: Field> Mul for VirtualPolynomial<F> {
     type Output = Self;
 
     fn mul(self, other: Self) -> Self {
@@ -1290,7 +1260,7 @@ impl<F: PrimeField> Mul for VirtualPolynomial<F> {
     }
 }
 
-impl<F: PrimeField> PartialEq for VirtualPolynomial<F> {
+impl<F: Field> PartialEq for VirtualPolynomial<F> {
     fn eq(&self, other: &Self) -> bool {
         // Normalize both and compare the result for semantic equality
         match (self.normalize(), other.normalize()) {
@@ -1339,9 +1309,9 @@ impl<F: PrimeField> PartialEq for VirtualPolynomial<F> {
     }
 }
 
-impl<F: PrimeField> Eq for VirtualPolynomial<F> {}
+impl<F: Field> Eq for VirtualPolynomial<F> {}
 
-impl<F: ark_ff::PrimeField> fmt::Display for VirtualPolynomial<F> {
+impl<F: Field> fmt::Display for VirtualPolynomial<F> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if self.products.is_empty() {
             return write!(f, "0");
@@ -1376,17 +1346,22 @@ impl<F: ark_ff::PrimeField> fmt::Display for VirtualPolynomial<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ArkBls12_381, ArkConfig, ArkScalarOps, Value};
+    use crate::poly_variant::DenseMle;
+    use crate::{ArkBls12_381, Backend, Value};
     use ark_bls12_381::Fr;
-    use ark_ff::{One, UniformRand, Zero};
-    use ark_poly::{DenseMultilinearExtension, DenseUVPolynomial, univariate::DensePolynomial};
+    use ark_poly::{DenseUVPolynomial, univariate::DensePolynomial};
     use ark_std::test_rng;
+
+    /// A random dense univariate polynomial of degree `d`.
+    fn rand_uni(d: usize, rng: &mut impl ark_std::rand::Rng) -> DenseUni<Fr> {
+        DenseUni::new((0..=d).map(|_| Fr::rand(rng)).collect())
+    }
     use lang::ast::BinOp;
 
     /// Reference oracle for the round/marginalize semantics, after HyperPlonk's
     /// sumcheck prover: the explicit-round tests below check the production
     /// paths against it. Not reachable from any language op.
-    fn marginalize<C: ArkConfig>(
+    fn marginalize<C: Backend>(
         poly: &VirtualPolynomial<C::F>,
         num_variables: usize,
         max_degree: usize,
@@ -1520,7 +1495,7 @@ mod tests {
             }
 
             for t_idx in 0..=max_degree {
-                let t = C::FOps::from_usize(t_idx);
+                let t = C::F::from_usize(t_idx);
                 let mut val = C::F::zero();
                 let mut t_pow = C::F::one();
                 for d in 0..=max_degree {
@@ -1532,7 +1507,7 @@ mod tests {
         } else {
             let point_len = num_variables - round;
             for t_idx in 0..=max_degree {
-                let t = C::FOps::from_usize(t_idx);
+                let t = C::F::from_usize(t_idx);
                 let sum: C::F = (0..total)
                     .into_par_iter()
                     .map(|b| {
@@ -1566,15 +1541,12 @@ mod tests {
     fn is_full_point_agrees_with_evaluate_mv() {
         let mut rng = test_rng();
         let mle = |nv: usize, rng: &mut _| {
-            VirtualPolynomial::from_poly(PolyVariant::DenseMle(
-                DenseMultilinearExtension::from_evaluations_vec(
-                    nv,
-                    (0..1 << nv).map(|_| Fr::rand(rng)).collect(),
-                ),
-            ))
+            VirtualPolynomial::from_poly(PolyVariant::DenseMle(DenseMle::new(
+                nv,
+                (0..1 << nv).map(|_| Fr::rand(rng)).collect(),
+            )))
         };
-        let uni =
-            VirtualPolynomial::from_poly(PolyVariant::DenseUni(DensePolynomial::rand(3, &mut rng)));
+        let uni = VirtualPolynomial::from_poly(PolyVariant::DenseUni(rand_uni(3, &mut rng)));
         for poly in [mle(3, &mut rng), mle(1, &mut rng), mle(0, &mut rng), uni] {
             for len in 0..=4 {
                 let point: Vec<Fr> = (0..len).map(|_| Fr::rand(&mut rng)).collect();
@@ -1596,14 +1568,9 @@ mod tests {
         for trial in 0..10 {
             let deg = |k: usize| 20 + (trial * 7 + k * 13) % 90;
             let polys: Vec<Arc<PolyVariant<Fr>>> = (0..5)
-                .map(|k| {
-                    Arc::new(PolyVariant::DenseUni(DensePolynomial::rand(
-                        deg(k),
-                        &mut rng,
-                    )))
-                })
+                .map(|k| Arc::new(PolyVariant::DenseUni(rand_uni(deg(k), &mut rng))))
                 .collect();
-            let small = Arc::new(PolyVariant::DenseUni(DensePolynomial::rand(3, &mut rng)));
+            let small = Arc::new(PolyVariant::DenseUni(rand_uni(3, &mut rng)));
             // Two virtual polynomials sharing factor 0, as a reduce(+) sees them.
             let terms: Vec<Vec<_>> = vec![
                 vec![
@@ -1621,7 +1588,7 @@ mod tests {
                 ],
             ];
             let mut vps = Vec::new();
-            let mut expected = DensePolynomial::<Fr>::zero();
+            let mut expected = DensePolynomial::<Fr>::from_coefficients_vec(vec![]);
             for vp_terms in &terms {
                 let mut vp = VirtualPolynomial::new();
                 for (c, factors) in vp_terms {
@@ -1631,7 +1598,7 @@ mod tests {
                         let PolyVariant::DenseUni(d) = &**f else {
                             unreachable!()
                         };
-                        t = t.naive_mul(d);
+                        t = t.naive_mul(&DensePolynomial::from_coefficients_slice(d.coeffs()));
                     }
                     expected = &expected + &t;
                 }
@@ -1641,7 +1608,9 @@ mod tests {
                 VirtualPolynomial::sum_univariate_products_dense(&vps.iter().collect::<Vec<_>>())
                     .unwrap();
             match got.normalize().unwrap() {
-                PolyVariant::DenseUni(p) => assert_eq!(p, expected, "trial {trial}"),
+                PolyVariant::DenseUni(p) => {
+                    assert_eq!(p.coeffs(), expected.coeffs.as_slice(), "trial {trial}");
+                }
                 other => panic!("expected DenseUni, got {other:?}"),
             }
         }
@@ -1654,15 +1623,13 @@ mod tests {
 
     fn create_vp_from_poly_univariate(coeffs: Vec<u64>) -> VirtualPolynomial<Fr> {
         let coeffs_fr: Vec<Fr> = coeffs.iter().map(|&c| Fr::from(c)).collect();
-        let poly = PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(coeffs_fr));
+        let poly = PolyVariant::DenseUni(DenseUni::new(coeffs_fr));
         VirtualPolynomial::from_poly(poly)
     }
 
     fn create_vp_from_mle(evals: Vec<u64>, num_vars: usize) -> VirtualPolynomial<Fr> {
         let evals_fr: Vec<Fr> = evals.iter().map(|&e| Fr::from(e)).collect();
-        let mle = PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(
-            num_vars, evals_fr,
-        ));
+        let mle = PolyVariant::DenseMle(DenseMle::new(num_vars, evals_fr));
         VirtualPolynomial::from_poly(mle)
     }
 
@@ -1846,9 +1813,9 @@ mod tests {
             );
 
         let mut expected_fft = direct_unit_selected_coeffs(&product, &fixed_tail, 2);
-        <<ArkBls12_381 as ArkConfig>::FOps as ArkScalarOps<Fr>>::vec_fft(&mut expected_fft);
+        Fr::fft(&mut expected_fft);
 
-        let fft_value = selected_value.value_fft();
+        let fft_value = selected_value.value_fft(&crate::ATyp::uni(2));
         let Value::VecScalar(actual_fft) = fft_value else {
             panic!("fft after unit selected eval should return VecScalar evaluations");
         };
@@ -2023,9 +1990,8 @@ mod tests {
         let evals: Vec<Fr> = (0..(1usize << num_vars))
             .map(|_| Fr::rand(&mut rng))
             .collect();
-        let base = VirtualPolynomial::from_poly(PolyVariant::DenseMle(
-            DenseMultilinearExtension::from_evaluations_vec(num_vars, evals),
-        ));
+        let base =
+            VirtualPolynomial::from_poly(PolyVariant::DenseMle(DenseMle::new(num_vars, evals)));
         let mut product = base.clone();
         for _ in 1..max_degree {
             product = product.poly_mul(&base);
@@ -2074,9 +2040,8 @@ mod tests {
         let evals: Vec<Fr> = (0..(1usize << num_vars))
             .map(|_| Fr::rand(&mut rng))
             .collect();
-        let base = VirtualPolynomial::from_poly(PolyVariant::DenseMle(
-            DenseMultilinearExtension::from_evaluations_vec(num_vars, evals),
-        ));
+        let base =
+            VirtualPolynomial::from_poly(PolyVariant::DenseMle(DenseMle::new(num_vars, evals)));
         let mut curr_poly = base.clone();
         for _ in 1..max_degree {
             curr_poly = curr_poly.poly_mul(&base);
@@ -2147,7 +2112,6 @@ mod tests {
 
         assert_eq!(selected.num_vars(), Some(1));
         assert_eq!(selected.evaluate_uv(&Fr::from(11u64)), Fr::from(0u64));
-        assert_eq!(selected.to_coeffs().unwrap().len(), 6);
     }
 
     #[test]
@@ -2160,13 +2124,14 @@ mod tests {
             SelectedEvalShape::new(3, 1, degree),
         );
 
-        let Value::VecScalar(coeffs) = selected_value.value_coef() else {
+        let typ = crate::ATyp::uni(degree);
+        let Value::VecScalar(coeffs) = selected_value.value_coef_typed(&typ) else {
             panic!("coef after unit selected zero should return VecScalar");
         };
         assert_eq!(coeffs.len(), degree + 1);
         assert!(coeffs.iter().all(|c| c.is_zero()));
 
-        let Value::VecScalar(evals) = selected_value.value_fft() else {
+        let Value::VecScalar(evals) = selected_value.value_fft(&typ) else {
             panic!("fft after unit selected zero should return VecScalar");
         };
         assert_eq!(evals.len(), degree + 1);
@@ -2184,14 +2149,15 @@ mod tests {
             SelectedEvalShape::new(3, 1, degree),
         );
 
-        let Value::VecScalar(coeffs) = selected_value.value_coef() else {
+        let typ = crate::ATyp::uni(degree);
+        let Value::VecScalar(coeffs) = selected_value.value_coef_typed(&typ) else {
             panic!("coef after unit selected constant should return VecScalar");
         };
         assert_eq!(coeffs.len(), degree + 1);
         assert_eq!(coeffs[0], scalar);
         assert!(coeffs[1..].iter().all(|c| c.is_zero()));
 
-        let Value::VecScalar(evals) = selected_value.value_fft() else {
+        let Value::VecScalar(evals) = selected_value.value_fft(&typ) else {
             panic!("fft after unit selected constant should return VecScalar");
         };
         assert_eq!(evals.len(), degree + 1);
@@ -2395,14 +2361,8 @@ mod tests {
     #[test]
     fn test_product_representation() {
         // Create a virtual polynomial as a product: (1 + 2x) * (3 + 4x)
-        let poly1 = PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(vec![
-            Fr::from(1u64),
-            Fr::from(2u64),
-        ]));
-        let poly2 = PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(vec![
-            Fr::from(3u64),
-            Fr::from(4u64),
-        ]));
+        let poly1 = PolyVariant::DenseUni(DenseUni::new(vec![Fr::from(1u64), Fr::from(2u64)]));
+        let poly2 = PolyVariant::DenseUni(DenseUni::new(vec![Fr::from(3u64), Fr::from(4u64)]));
 
         let mut vp = VirtualPolynomial::new();
         vp.add_poly_list(vec![Arc::new(poly1), Arc::new(poly2)], Fr::one());
@@ -2419,7 +2379,7 @@ mod tests {
 
         // Normalize should give back the same polynomial
         let normalized = a.normalize().unwrap();
-        let expected = PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(vec![
+        let expected = PolyVariant::DenseUni(DenseUni::new(vec![
             Fr::from(1u64),
             Fr::from(2u64),
             Fr::from(3u64),
@@ -2431,14 +2391,8 @@ mod tests {
     #[test]
     fn test_normalize_product() {
         // (1 + 2x) * (3 + 4x) = 3 + 10x + 8x^2
-        let poly1 = PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(vec![
-            Fr::from(1u64),
-            Fr::from(2u64),
-        ]));
-        let poly2 = PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(vec![
-            Fr::from(3u64),
-            Fr::from(4u64),
-        ]));
+        let poly1 = PolyVariant::DenseUni(DenseUni::new(vec![Fr::from(1u64), Fr::from(2u64)]));
+        let poly2 = PolyVariant::DenseUni(DenseUni::new(vec![Fr::from(3u64), Fr::from(4u64)]));
 
         let mut vp = VirtualPolynomial::new();
         vp.add_poly_list(vec![Arc::new(poly1), Arc::new(poly2)], Fr::one());
@@ -2455,14 +2409,8 @@ mod tests {
 
     #[test]
     fn test_mul_by_poly_and_scalar() {
-        let poly1 = PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(vec![
-            Fr::from(1u64),
-            Fr::from(2u64),
-        ]));
-        let poly2 = PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(vec![
-            Fr::from(3u64),
-            Fr::from(4u64),
-        ]));
+        let poly1 = PolyVariant::DenseUni(DenseUni::new(vec![Fr::from(1u64), Fr::from(2u64)]));
+        let poly2 = PolyVariant::DenseUni(DenseUni::new(vec![Fr::from(3u64), Fr::from(4u64)]));
 
         let vp = VirtualPolynomial::from_poly(poly1)
             .poly_mul(&VirtualPolynomial::from_poly(poly2))

@@ -1,5 +1,5 @@
 use ark_std::UniformRand;
-use backend::{ATyp, ArkBls12_381, ArkConfig, Value};
+use backend::{ATyp, ArkBls12_381, Backend, Value};
 use lang::id::Vid;
 use share::Ctx;
 
@@ -15,12 +15,12 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381
 
     let y = x_vec.clone().dot(a_vec.clone());
 
-    let r_xi = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
-    let r_tau = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
+    let r_xi = <ArkBls12_381 as Backend>::F::rand(&mut rng);
+    let r_tau = <ArkBls12_381 as Backend>::F::rand(&mut rng);
 
     let g_vec = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n));
-    let g = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
-    let h = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
+    let g = <ArkBls12_381 as Backend>::G1::rand(&mut rng);
+    let h = <ArkBls12_381 as Backend>::G1::rand(&mut rng);
 
     let tau_val = match y.clone() {
         Value::Scalar(y_scalar) => g * y_scalar + h * r_tau,

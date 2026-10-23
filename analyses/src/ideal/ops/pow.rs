@@ -1,9 +1,9 @@
 //! Power op encoders: `pow_op`, `pow_const`, `resolve_const_exp`.
 
+use crate::AnalysisBackend;
 use ark_ff::{BigInteger, One, PrimeField};
 
-use backend::op::HasOpFactory;
-use backend::{ATyp, ArkConfig};
+use backend::ATyp;
 use graph::HOp;
 use lang::typ::Nothing;
 use lang::typ::lub::Lub;
@@ -19,7 +19,7 @@ use super::{EncodeCtx, link_to_polys};
 /// Try to resolve a `PolySource` to a compile-time constant exponent.
 /// Returns `Some(k)` if the source is a single constant polynomial whose
 /// value fits in a `usize`; otherwise `None` (dynamic exponent).
-fn resolve_const_exp<C: ArkConfig>(src: &PolySource<C>) -> Option<usize> {
+fn resolve_const_exp<C: AnalysisBackend>(src: &PolySource<C>) -> Option<usize> {
     if src.polys().len() != 1 {
         return None;
     }
@@ -43,7 +43,7 @@ fn resolve_const_exp<C: ArkConfig>(src: &PolySource<C>) -> Option<usize> {
     Some(result)
 }
 
-pub fn pow_const<C: ArkConfig + HasOpFactory>(
+pub fn pow_const<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     target: &Var,
     base: &PolySource<C>,
@@ -102,18 +102,13 @@ pub fn pow_const<C: ArkConfig + HasOpFactory>(
     link_to_polys(ctx.ideal, target, acc.polys);
 }
 
-pub fn pow_op<C: ArkConfig + HasOpFactory>(
-    ctx: &mut EncodeCtx<'_, C>,
-    var: &Var,
-    a: &HOp<C>,
-    b: &HOp<C>,
-) {
+pub fn pow_op<C: AnalysisBackend>(ctx: &mut EncodeCtx<'_, C>, var: &Var, a: &HOp<C>, b: &HOp<C>) {
     let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
     let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
     pow_op_inner(ctx, var, &a_src, &b_src);
 }
 
-fn pow_op_inner<C: ArkConfig + HasOpFactory>(
+fn pow_op_inner<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     a_src: &PolySource<C>,
@@ -168,7 +163,7 @@ mod tests {
     use ark_ff::One;
     use backend::ATyp;
     use backend::ArkBls12_381;
-    use backend::ArkConfig;
+    use backend::Backend;
     use backend::Value;
     use backend::op::mk;
     use graph::Op;
@@ -513,7 +508,7 @@ mod tests {
         );
         assert_eq!(
             poly.constant_coeff(),
-            <ArkBls12_381 as ArkConfig>::F::one(),
+            <ArkBls12_381 as Backend>::F::one(),
             "pow k=0 on Scalar: constant coefficient must be 1"
         );
     }

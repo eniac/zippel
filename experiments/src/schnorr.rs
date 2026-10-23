@@ -18,7 +18,7 @@ use crate::Timing;
 pub mod zippel_side {
     use super::*;
     use ark_std::UniformRand;
-    use backend::{ArkBls12_381, ArkConfig, ArkGroupOps, Value};
+    use backend::{ArkBls12_381, Backend, Value};
     use lang::id::Vid;
     use share::Ctx;
     use std::path::PathBuf;
@@ -83,14 +83,13 @@ pub mod zippel_side {
         /// Panics if the prover or verifier graph fails to execute, or if the
         /// verifier rejects the honestly generated proof.
         pub fn time_protocol(&mut self) -> Timing {
-            type F = <ArkBls12_381 as ArkConfig>::F;
-            type G1 = <ArkBls12_381 as ArkConfig>::G1;
-            type G1Ops = <ArkBls12_381 as ArkConfig>::G1Ops;
+            type F = <ArkBls12_381 as Backend>::F;
+            type G1 = <ArkBls12_381 as Backend>::G1;
 
             let mut rng = rand::rngs::OsRng;
             let x = F::rand(&mut rng);
             let g = G1::rand(&mut rng);
-            let h_affines = G1Ops::vec_mul(&g, &[x]);
+            let h_affines = backend::Group::batch_mul(&g, &[x]);
             let h = h_affines.into_iter().next().unwrap();
             let inputs = crate::harness_inputs([
                 (Vid("x".to_string()), Value::Scalar(x)),

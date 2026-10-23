@@ -2,8 +2,7 @@
 
 use std::{collections::BTreeMap, time::Instant};
 
-use analyses::GbBackendKind;
-use backend::{ArkConfig, HasOpFactory};
+use analyses::{AnalysisBackend, GbBackendKind};
 use clap::{Parser, ValueEnum};
 use zippel::{Analysis, CompileOptions, ParsedModule};
 
@@ -68,10 +67,7 @@ fn measure<T>(
     result
 }
 
-fn benchmark<C: ArkConfig + HasOpFactory>(
-    spec: &common::ExampleSpec<C>,
-    args: &Args,
-) -> Result<(), String> {
+fn benchmark<C: AnalysisBackend>(spec: &common::ExampleSpec<C>, args: &Args) -> Result<(), String> {
     let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(spec.source);
     let module = ParsedModule::load(source).map_err(|e| e.to_string())?;
     let given = if args.sizes.is_empty() {
