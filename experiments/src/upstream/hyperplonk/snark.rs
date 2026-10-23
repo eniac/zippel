@@ -14,11 +14,11 @@ use super::pcs::{
 use super::piop::{
     ProductCheckProof, perm_check_prove, perm_check_verify, zero_check_prove, zero_check_verify,
 };
-use crate::sumcheck_upstream::arithmetic::{
+use crate::upstream::sumcheck::arithmetic::{
     VPAuxInfo, VirtualPolynomial, evaluate_opt, gen_eval_point, identity_permutation,
 };
-use crate::sumcheck_upstream::poly_iop::structs::IOPProof;
-use crate::sumcheck_upstream::transcript::IOPTranscript;
+use crate::upstream::sumcheck::poly_iop::structs::IOPProof;
+use crate::upstream::sumcheck::transcript::IOPTranscript;
 use ark_ec::pairing::Pairing;
 use ark_ff::{One, PrimeField, Zero};
 use ark_poly::DenseMultilinearExtension;

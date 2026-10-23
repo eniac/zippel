@@ -302,46 +302,23 @@ pub static SAMPLES: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
         .unwrap_or(10)
 });
 
-// The `*_upstream` modules below are vendored third-party code (see each
-// module's doc comment for provenance) and are not to be edited to satisfy
-// lints. `#[allow(warnings)]` here — in this non-vendored file, applying
-// recursively to the vendored module tree it annotates — blanket-suppresses
-// lints for them instead.
-#[allow(warnings)]
-pub mod ark_spartan_upstream;
 pub mod cache;
 #[cfg(test)]
 pub mod cross;
 pub mod dekart;
-#[allow(warnings)]
-pub mod dekart_upstream;
 pub mod dory;
-#[allow(warnings)]
-pub mod dory_upstream;
 pub mod groth16;
 pub mod hyperplonk;
-#[allow(warnings)]
-pub mod hyperplonk_upstream;
 pub mod hyrax;
-#[allow(warnings)]
-pub mod hyrax_upstream;
 pub mod ipa;
 pub mod kzg;
 pub mod kzh;
-#[allow(warnings)]
-pub mod kzh_upstream;
-#[cfg(test)]
-#[allow(warnings)]
-mod libspartan_upstream;
 pub mod ncloc;
 pub mod pari;
-#[allow(warnings)]
-pub mod pari_upstream;
 pub mod pst13;
-#[allow(warnings)]
-pub mod pst13_upstream;
 pub mod schnorr;
 pub mod spartan;
 pub mod sumcheck;
+/// Vendored native baselines; each module records its provenance and local changes.
 #[allow(warnings)]
-pub mod sumcheck_upstream;
+pub mod upstream;

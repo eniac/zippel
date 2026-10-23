@@ -1,6 +1,6 @@
 //! KZH-2 multilinear PCS comparison: zippel-compiled `examples/kzh/kzh.zippel`
 //! vs. irondict's KZH-k at k = 2 (ported to arkworks 0.6 in
-//! `src/kzh_upstream/`), both on BLS12-381.
+//! `src/upstream/kzh/`), both on BLS12-381.
 //!
 //! Statement on both sides: the prover knows a multilinear f with 2^N
 //! evaluations; it commits and proves f(x0, y0) = z0 at a public point.
@@ -20,7 +20,7 @@
 use crate::Timing;
 
 pub mod shared {
-    use crate::kzh_upstream::UniversalParams;
+    use crate::upstream::kzh::UniversalParams;
     use ark_bls12_381::{Bls12_381, Fr};
     use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
     use ark_std::UniformRand;
@@ -47,7 +47,7 @@ pub mod shared {
             let f: Vec<Fr> = (0..1usize << n).map(|_| Fr::rand(&mut rng)).collect();
             let point: Vec<Fr> = (0..n).map(|_| Fr::rand(&mut rng)).collect();
             let (pp, _) = srs.trim();
-            let (_, value) = crate::kzh_upstream::open(&pp, &f, &point);
+            let (_, value) = crate::upstream::kzh::open(&pp, &f, &point);
             Shared {
                 n,
                 srs,
@@ -161,7 +161,7 @@ pub mod zippel_side {
 
 pub mod native_side {
     use super::*;
-    use crate::kzh_upstream::{self as kzh, ProverParam, VerifierParam};
+    use crate::upstream::kzh::{self as kzh, ProverParam, VerifierParam};
     use ark_bls12_381::{Bls12_381, Fr};
 
     pub struct Setup {
@@ -210,7 +210,7 @@ pub mod native_side {
 mod cross_tests {
     use super::shared;
     use crate::cross::Direction;
-    use crate::kzh_upstream::{self as kzh, OpeningProof};
+    use crate::upstream::kzh::{self as kzh, OpeningProof};
     use ark_bls12_381::{Bls12_381, Fr, G1Affine};
     use ark_ec::{AffineRepr, CurveGroup};
     use ark_ff::One;

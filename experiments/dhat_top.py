@@ -3,7 +3,7 @@
 
 For each profile, prints the bytes live at the global peak (t-gmax) grouped
 by the innermost frame in our own code: zippel's crates, the benchmark
-harness, or a vendored `*_upstream` baseline. Allocator, std, arkworks and
+harness, or a vendored `upstream` baseline. Allocator, std, arkworks and
 rayon frames are skipped, so a buffer allocated by `Vec::with_capacity`
 inside an arkworks call made from `backend/src/values.rs` is charged to
 that line of `values.rs`. A site with no own frame at all (typically
@@ -29,8 +29,8 @@ import sys
 FRAME = re.compile(r"^0x[0-9a-f]+: (.*) \(([^()]*):(\d+):\d+\)$")
 OWN = re.compile(
     r"^(backend|runtime|graph|lang|share|analyses|zippel)/src/"
-    r"|^src/(eval|[a-z0-9_]+_upstream)/"
-    r"|^[a-z0-9_]+_upstream/"
+    r"|^src/(eval|upstream)/"
+    r"|^upstream/"
     r"|^experiments/src/(?!lib\.rs)"
 )
 # Std, allocator and rayon plumbing: skipped when naming a site that has no

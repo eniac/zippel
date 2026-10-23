@@ -538,7 +538,7 @@ pub mod zippel_side {
 
 pub mod native_side {
     //! Native PARI baseline: the upstream `pari` crate, vendored in-tree
-    //! at `experiments/src/pari_upstream/`. Driven via the SR1CS-direct
+    //! at `experiments/src/upstream/pari/`. Driven via the SR1CS-direct
     //! entry points (`Pari::keygen_from_sr1cs` / `Pari::prove_from_sr1cs`)
     //! so both sides prove the EXACT same SR1CS statement built by
     //! `super::inst_gen::build_random` — same K, same matrices, same z,
@@ -547,7 +547,7 @@ pub mod native_side {
     //! K+1) the verifier's O(n) Lagrange shortcut runs over the small
     //! instance dimension just like the zippel verifier does.
     use super::{Instance, Timing};
-    use crate::pari_upstream::{
+    use crate::upstream::pari::{
         Pari,
         data_structures::{ProvingKey, VerifyingKey},
     };
@@ -588,8 +588,8 @@ pub mod native_side {
             // seeded rng. log_size = log_2(k).
             let log_size = inst.k.trailing_zeros() as usize;
             let (pk, vk) = crate::cache::load_or_build_canonical::<(
-                crate::pari_upstream::data_structures::ProvingKey<E>,
-                crate::pari_upstream::data_structures::VerifyingKey<E>,
+                crate::upstream::pari::data_structures::ProvingKey<E>,
+                crate::upstream::pari::data_structures::VerifyingKey<E>,
             )>("pari_keys", log_size, || {
                 let mut rng = StdRng::seed_from_u64(0xBEEF_u64);
                 Pari::<E>::keygen_from_sr1cs(
@@ -666,7 +666,7 @@ pub mod native_side {
 #[cfg(test)]
 mod cross_tests {
     use crate::cross::{Challenges, Direction};
-    use crate::pari_upstream::{Pari, data_structures::Proof};
+    use crate::upstream::pari::{Pari, data_structures::Proof};
     use ark_bls12_381::{Bls12_381, Fr, G1Affine};
     use ark_ec::{AffineRepr, CurveGroup};
     use ark_ff::{Field, One};

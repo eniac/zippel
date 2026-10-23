@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use zippel::runtime::Challenger;
 use zippel::{CompileOptions, CompiledProver, CompiledVerifier, ParsedModule};
 
-impl<G: ark_ec::CurveGroup> crate::ark_spartan_upstream::transcript::ProofTranscript<G>
+impl<G: ark_ec::CurveGroup> crate::upstream::ark_spartan::transcript::ProofTranscript<G>
     for Challenges
 {
     fn append_message(&mut self, _: &'static [u8], _: &[u8]) {}
@@ -25,11 +25,14 @@ impl<G: ark_ec::CurveGroup> crate::ark_spartan_upstream::transcript::ProofTransc
     }
 }
 
-impl crate::libspartan_upstream::transcript::ProofTranscript for Challenges {
+impl crate::upstream::libspartan::transcript::ProofTranscript for Challenges {
     fn append_message(&mut self, _: &'static [u8], _: &[u8]) {}
 
-    fn challenge_scalar(&mut self, _: &'static [u8]) -> crate::libspartan_upstream::scalar::Scalar {
-        crate::libspartan_upstream::scalar::Scalar::from_bytes_wide(&self.next_bytes())
+    fn challenge_scalar(
+        &mut self,
+        _: &'static [u8],
+    ) -> crate::upstream::libspartan::scalar::Scalar {
+        crate::upstream::libspartan::scalar::Scalar::from_bytes_wide(&self.next_bytes())
     }
 }
 

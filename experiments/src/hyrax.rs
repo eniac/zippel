@@ -192,7 +192,7 @@ pub mod zippel_side {
 }
 
 /// Native Hyrax baseline. Vendored from `ark-poly-commit-0.6.0::hyrax`
-/// (see `crate::hyrax_upstream`) with the matrix-vector multiplication
+/// (see `crate::upstream::hyrax`) with the matrix-vector multiplication
 /// in `open` rewritten to use flat row-major storage and a SAXPY
 /// accumulation — upstream's `Matrix<F>` stores rows as separately
 /// allocated `Vec<F>`s and `Matrix::row_mul` allocates a fresh 16KB
@@ -211,7 +211,7 @@ pub mod native_side {
     use ark_ff::{PrimeField, UniformRand};
     use ark_poly::{DenseMultilinearExtension, MultilinearExtension, Polynomial};
 
-    use crate::hyrax_upstream::{self, CommitterKey, VerifierKey};
+    use crate::upstream::hyrax::{self, CommitterKey, VerifierKey};
 
     /// Vendored-Hyrax keys plus the fixed polynomial, evaluation point, and
     /// claimed value that `time_protocol` is measured on.
@@ -242,9 +242,9 @@ pub mod native_side {
                 ark_poly_commit::hyrax::HyraxUniversalParams<G1Affine>,
             >("hyrax_universal_params", n, || {
                 let mut rng = ark_std::test_rng();
-                hyrax_upstream::setup(n, &mut rng)
+                hyrax::setup(n, &mut rng)
             });
-            let (ck, vk) = hyrax_upstream::trim(&pp);
+            let (ck, vk) = hyrax::trim(&pp);
 
             // Poly/point/value generation runs in `setup_pool` (called
             // here, not in time_protocol). At log_size=20 the rand poly
@@ -278,14 +278,14 @@ pub mod native_side {
             let _ = self.value;
 
             let (prove, prove_peak, (com, proof)) = crate::sample(|| {
-                let (com, state) = hyrax_upstream::commit(&self.ck, &self.poly);
+                let (com, state) = hyrax::commit(&self.ck, &self.poly);
                 let mut sponge = test_sponge::<Fr>();
-                let proof = hyrax_upstream::open(&self.ck, &com, point, &mut sponge, &state);
+                let proof = hyrax::open(&self.ck, &com, point, &mut sponge, &state);
                 (com, proof)
             });
             let (verify, verify_peak, passed) = crate::sample(|| {
                 let mut sponge_v = test_sponge::<Fr>();
-                hyrax_upstream::check(&self.vk, &com, point, &proof, &mut sponge_v)
+                hyrax::check(&self.vk, &com, point, &proof, &mut sponge_v)
             });
             assert!(passed, "vendored Hyrax verification FAILED");
 
@@ -329,7 +329,7 @@ pub mod native_side {
 #[cfg(test)]
 mod cross_tests {
     use crate::cross::{Challenges, Direction};
-    use crate::hyrax_upstream::{self as hyrax, Proof};
+    use crate::upstream::hyrax::{self as hyrax, Proof};
     use ark_bls12_381::{Fr, G1Affine};
     use ark_ec::CurveGroup;
     use ark_ff::{One, UniformRand};

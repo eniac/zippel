@@ -152,7 +152,7 @@ A line counts if it holds code once comments and blank lines are
 removed. Test code (`#[test]` and `#[cfg(test)]` items, and files under
 `tests/`) is reported on its own row rather than in its component, and
 code vendored from other projects as benchmark baselines
-(`experiments/src/*_upstream/`) is left out. The script reads the
+(`experiments/src/upstream/*/`) is left out. The script reads the
 sources directly, so it needs no build.
 
 ## Experiments
@@ -179,7 +179,7 @@ size parameter), with the prover at 1, 2, 4 and 8 threads and the
 verifier at 1 thread. By default each measurement is taken once; the
 paper reports the mean of 10 runs, which you can match with
 `-e BENCH_SAMPLES=10` at roughly ten times the runtime. The pinned
-results in `experiments/results/*_results.csv` use 10 runs.
+results in `artifact/results/*_results.csv` use 10 runs.
 
 To run a subset, pick systems and thread counts:
 

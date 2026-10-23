@@ -5,7 +5,7 @@
 //! permutation check (product check over `frac`/`prod` oracles), and the
 //! deferred batch opening of every claim with multilinear KZG. The
 //! sumcheck, `VirtualPolynomial` and transcript underneath are the ones
-//! already vendored in `crate::sumcheck_upstream`.
+//! already vendored in `crate::upstream::sumcheck`.
 //!
 //! Changes from upstream, none of which touch the algorithms:
 //!   - The `HyperPlonkSNARK`, `PermutationCheck`, `ProductCheck`,
@@ -24,8 +24,8 @@ pub mod pcs;
 pub mod piop;
 pub mod snark;
 
-pub use crate::sumcheck_upstream::poly_iop::errors::PolyIOPErrors;
-pub use crate::sumcheck_upstream::transcript::IOPTranscript;
+pub use crate::upstream::sumcheck::poly_iop::errors::PolyIOPErrors;
+pub use crate::upstream::sumcheck::transcript::IOPTranscript;
 pub use pcs::MultilinearUniversalParams;
 pub use snark::{
     CustomizedGates, HyperPlonkProof, HyperPlonkProvingKey, HyperPlonkVerifyingKey, MockCircuit,

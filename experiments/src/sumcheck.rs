@@ -148,14 +148,14 @@ pub mod zippel_side {
 }
 
 /// Native sumcheck baseline: hyperplonk's `poly_iop::sum_check`,
-/// vendored in-tree under `crate::sumcheck_upstream` and ported to
+/// vendored in-tree under `crate::upstream::sumcheck` and ported to
 /// arkworks 0.6 so it shares the zippel-side curve set. Protocol code
 /// verbatim from EspressoSystems/hyperplonk `main`; only `use` paths
 /// changed.
 pub mod native_side {
     use super::*;
-    use crate::sumcheck_upstream::arithmetic::VirtualPolynomial;
-    use crate::sumcheck_upstream::poly_iop::{PolyIOP, SumCheck};
+    use crate::upstream::sumcheck::arithmetic::VirtualPolynomial;
+    use crate::upstream::sumcheck::poly_iop::{PolyIOP, SumCheck};
     use ark_bls12_381::Fr;
     use ark_ff::{One, UniformRand, Zero};
     use ark_poly::DenseMultilinearExtension;
@@ -251,9 +251,9 @@ pub mod native_side {
 #[cfg(test)]
 mod cross_tests {
     use crate::cross::{Challenges, Direction};
-    use crate::sumcheck_upstream::arithmetic::VirtualPolynomial;
-    use crate::sumcheck_upstream::poly_iop::structs::{IOPProof, IOPProverMessage};
-    use crate::sumcheck_upstream::poly_iop::{PolyIOP, SumCheck};
+    use crate::upstream::sumcheck::arithmetic::VirtualPolynomial;
+    use crate::upstream::sumcheck::poly_iop::structs::{IOPProof, IOPProverMessage};
+    use crate::upstream::sumcheck::poly_iop::{PolyIOP, SumCheck};
     use ark_bls12_381::Fr;
     use ark_ff::{One, UniformRand};
     use ark_poly::DenseMultilinearExtension;
