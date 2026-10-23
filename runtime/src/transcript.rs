@@ -6,14 +6,14 @@
 //! megabytes); the sponge is BLAKE3 (`graph::domain_separator::Sponge`) so
 //! that stays cheap.
 
-use backend::{ArkConfig, Value, value_to_bytes};
+use backend::{Backend, Value, value_to_bytes};
 use lang::ast::Exclusion;
 use petgraph::graph::NodeIndex;
 use spongefish::{DuplexSpongeInterface, ProverState};
 use std::collections::HashMap;
 
 /// A value queued for the sponge, absorbed before the next challenge.
-enum PendingAbsorb<C: ArkConfig> {
+enum PendingAbsorb<C: Backend> {
     /// An instance input, or a verifier's copy of a prover message.
     Owned(Value<C>),
     /// A prover message the transcript also keeps for the proof: queued by
@@ -26,7 +26,7 @@ enum PendingAbsorb<C: ArkConfig> {
 ///
 /// Transcript nodes use it one at a time: the graph chains them in
 /// transcript order, so only one is ever ready.
-pub(crate) struct Transcript<'a, C: ArkConfig, H: DuplexSpongeInterface<U = u8>> {
+pub(crate) struct Transcript<'a, C: Backend, H: DuplexSpongeInterface<U = u8>> {
     sponge: &'a mut ProverState<H>,
     /// Absorbed, in order, only when a challenge is squeezed: the sponge's
     /// only output is challenges, so values after the last challenge (every
@@ -36,7 +36,7 @@ pub(crate) struct Transcript<'a, C: ArkConfig, H: DuplexSpongeInterface<U = u8>>
     messages: Option<HashMap<NodeIndex, Value<C>>>,
 }
 
-impl<'a, C: ArkConfig, H: DuplexSpongeInterface<U = u8>> Transcript<'a, C, H> {
+impl<'a, C: Backend, H: DuplexSpongeInterface<U = u8>> Transcript<'a, C, H> {
     /// A transcript over `sponge`; `keep_messages` for the prover, whose
     /// messages form the proof.
     pub(crate) fn new(sponge: &'a mut ProverState<H>, keep_messages: bool) -> Self {
@@ -71,7 +71,7 @@ impl<'a, C: ArkConfig, H: DuplexSpongeInterface<U = u8>> Transcript<'a, C, H> {
                 PendingAbsorb::Owned(v) => v,
                 PendingAbsorb::Kept(node) => &self.messages.as_ref().expect("kept messages")[node],
             };
-            let bytes = value_to_bytes(value).expect("value serialization should not fail");
+            let bytes = value_to_bytes(value);
             self.sponge.public_message(bytes.as_slice());
         }
         let mut value = Value::<C>::challenge(self.sponge);
@@ -118,5 +118,24 @@ mod tests {
             .collect();
         let excluded = Exclusion::Values(Value::VecScalar(vec![plain[1], plain[0]].into()));
         assert_eq!(challenges(1, Some(&excluded)), [Value::Scalar(plain[2])]);
+    }
+
+    /// The challenges after absorbing instance inputs and prover messages,
+    /// pinned: they depend on the sponge, the value encoding and the
+    /// bytes-to-field reduction, which prover and verifier must share.
+    #[test]
+    fn challenges_are_pinned() {
+        let separator =
+            ZippelDomainSeparator::<C>::new_zippel_domain_separator("test", &UDag::<C>::new());
+        let mut sponge = separator.prover_state();
+        let mut transcript = Transcript::<C, _>::new(&mut sponge, true);
+        let f = |i: u64| <C as backend::Backend>::F::from(i);
+        transcript.instance(Value::Scalar(f(5)));
+        transcript.instance(Value::VecScalar(vec![f(1), f(2)].into()));
+        let first = transcript.challenge(None);
+        transcript.message(NodeIndex::new(0), &Value::Index(3));
+        let second = transcript.challenge(None);
+        let third = transcript.challenge(None);
+        insta::assert_snapshot!(format!("{first}\n{second}\n{third}"));
     }
 }

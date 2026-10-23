@@ -2,26 +2,42 @@
 //! same encoding with the same contents is equal; different encodings of one polynomial are
 //! not.
 
-use ark_ff::PrimeField;
+use crate::Field;
 use std::cmp::Ordering;
 
 use super::PolyVariant;
 
-impl<F: PrimeField> PartialOrd for PolyVariant<F> {
+impl<F: Field> PartialOrd for PolyVariant<F> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
 /// Lexicographic order of field-element sequences, by canonical integer.
-fn cmp_field_seq<'a, F: PrimeField + 'a>(
+fn cmp_field_seq<'a, F: Field + 'a>(
     a: impl Iterator<Item = &'a F>,
     b: impl Iterator<Item = &'a F>,
 ) -> Ordering {
-    a.map(|x| x.into_bigint()).cmp(b.map(|x| x.into_bigint()))
+    a.map(Canonical).cmp(b.map(Canonical))
 }
 
-impl<F: PrimeField> Ord for PolyVariant<F> {
+/// A field element ordered by [`Field::cmp_canonical`].
+#[derive(PartialEq, Eq)]
+struct Canonical<'a, F>(&'a F);
+
+impl<F: Field> PartialOrd for Canonical<'_, F> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<F: Field> Ord for Canonical<'_, F> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.cmp_canonical(other.0)
+    }
+}
+
+impl<F: Field> Ord for PolyVariant<F> {
     /// Univariates < dense MLEs < sparse multivariates < sparse MLEs; within
     /// an encoding, by size and then contents. Consistent with `Eq`: a dense
     /// and a sparse univariate with the same coefficients order dense first.
@@ -46,18 +62,18 @@ impl<F: PrimeField> Ord for PolyVariant<F> {
                         })
                 }
                 (DenseMle(a), DenseMle(b)) => a
-                    .num_vars
-                    .cmp(&b.num_vars)
-                    .then_with(|| cmp_field_seq(a.evaluations.iter(), b.evaluations.iter())),
+                    .num_vars()
+                    .cmp(&b.num_vars())
+                    .then_with(|| cmp_field_seq(a.evals().iter(), b.evals().iter())),
                 (SparseMultivariate(a), SparseMultivariate(b)) => a
-                    .num_vars
-                    .cmp(&b.num_vars)
-                    .then_with(|| a.terms.len().cmp(&b.terms.len()))
+                    .num_vars()
+                    .cmp(&b.num_vars())
+                    .then_with(|| a.terms().len().cmp(&b.terms().len()))
                     .then_with(|| {
-                        a.terms
+                        a.terms()
                             .iter()
-                            .map(|(c, t)| (c.into_bigint(), t))
-                            .cmp(b.terms.iter().map(|(c, t)| (c.into_bigint(), t)))
+                            .map(|(c, t)| (Canonical(c), t))
+                            .cmp(b.terms().iter().map(|(c, t)| (Canonical(c), t)))
                     }),
                 (
                     SparseMle {
@@ -70,8 +86,8 @@ impl<F: PrimeField> Ord for PolyVariant<F> {
                     },
                 ) => n1.cmp(n2).then_with(|| {
                     e1.iter()
-                        .map(|(i, v)| (*i, v.into_bigint()))
-                        .cmp(e2.iter().map(|(i, v)| (*i, v.into_bigint())))
+                        .map(|(i, v)| (*i, Canonical(v)))
+                        .cmp(e2.iter().map(|(i, v)| (*i, Canonical(v))))
                 }),
                 _ => unreachable!("equal ranks are the same encoding"),
             })

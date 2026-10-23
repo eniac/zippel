@@ -1,5 +1,5 @@
 use ark_ff::{One, Zero};
-use backend::{ATyp, ArkBls12_381, ArkConfig, Value};
+use backend::{ATyp, ArkBls12_381, Backend, Value};
 use lang::id::Vid;
 use share::Ctx;
 
@@ -31,8 +31,8 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381
     let p_B = Value::<ArkBls12_381>::vec_scalar(p_b_coeffs).value_poly();
     let p_C = Value::<ArkBls12_381>::vec_scalar(p_c_coeffs).value_poly();
 
-    let zero = <ArkBls12_381 as ArkConfig>::F::zero();
-    let one = <ArkBls12_381 as ArkConfig>::F::one();
+    let zero = <ArkBls12_381 as Backend>::F::zero();
+    let one = <ArkBls12_381 as Backend>::F::one();
     let mut v_h_coeffs = Vec::with_capacity(n_val_const);
     v_h_coeffs.push(one);
     v_h_coeffs.extend(std::iter::repeat_n(zero, n_val_const));

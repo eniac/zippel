@@ -1,12 +1,14 @@
 //! Cryptographic backend for Zippel: the layer that turns the language's
-//! source-level types into concrete `arkworks` field, curve, and pairing
-//! elements and defines the typed IR operation set executed by `runtime`.
+//! source-level types into concrete field, group, and pairing elements and
+//! defines the typed IR operation set executed by `runtime`.
 //!
 //! Three things live here:
 //!
-//! - [`ArkConfig`] and its instances ([`ArkBls12_381`], [`ArkBn254`], …), which
-//!   bundle a scalar field, one or two curve groups, and an optional pairing
-//!   into a single type parameter `C` threaded through the whole compiler.
+//! - [`Backend`] and its instances ([`ArkBls12_381`], [`ArkBn254`], …), which
+//!   bundle a scalar [`Field`], one or two [`Group`]s, and an optional
+//!   [`Pairing`] into a single type parameter `C` threaded through the whole
+//!   compiler. The shipped backends are arkworks'; any library implementing
+//!   the three traits can be one.
 //! - [`ATyp`]/[`ABase`], the IR type level. Unlike the source-level
 //!   `lang::typ::Typ`, `ATyp` splits polynomials into their physical encodings
 //!   (`Uni`, `Mle`, `VPoly`) so layout is unambiguous at runtime.
@@ -15,11 +17,19 @@
 //!   consume and produce.
 
 #![feature(deref_patterns)]
-#![feature(associated_type_defaults)]
-/// The `ArkConfig` trait and its concrete curve/field instantiations.
+/// The `Field`, `Group` and `Pairing` traits a backend implements.
+pub mod algebra;
+/// The arkworks implementation of the algebra traits.
+pub mod ark;
+/// The `Backend` trait and its concrete curve/field instantiations.
 pub mod config;
-/// Stub field, curve, and pairing types used to fill unused `ArkConfig`
-/// associated types on field-only or pairing-free configurations.
+/// A conformance check for a backend: the laws and contracts Zippel relies on.
+pub mod conformance;
+/// The zkcrypto `ff`/`group` implementation of the algebra traits, and the
+/// Ristretto and Pallas backends built from it.
+pub mod ff_group;
+/// Placeholder group and pairing filling the slots of field-only or
+/// pairing-free backends.
 pub mod nothing;
 /// The typed IR operation enum `Op<C, R>` and its hash-consing factory.
 pub mod op;
@@ -37,13 +47,14 @@ pub mod values;
 /// Sum-of-products polynomial representation used by sumcheck-style protocols.
 pub mod virtual_polynomial;
 
+pub use algebra::{DivisionByZero, Field, Group, Pairing};
 pub use config::{
-    ArkBls12_381, ArkBn254, ArkConfig, ArkCurve25519, ArkEd25519, ArkField17, ArkField65537,
-    ArkFieldN, ArkGroupOps, ArkMNT4_298, ArkPairingOps, ArkPallas, ArkScalarOps, ArkSecp256k1,
-    ArkVesta, DivisionByZero,
+    ArkBls12_381, ArkBn254, ArkCurve25519, ArkEd25519, ArkField17, ArkField65537, ArkFieldN,
+    ArkMNT4_298, ArkPallas, ArkSecp256k1, ArkVesta, Backend, G1Affine, G2Affine, GT,
 };
-pub use nothing::{NoCurve, NoField, NoPairing};
-pub use op::{GOp, HasOpFactory, Op, OpExclusion, Ref};
+pub use ff_group::{DalekRistretto, PastaPallas};
+pub use nothing::{NoGroup, NoPairing};
+pub use op::{GOp, Op, OpExclusion, Ref};
 pub use optimization::{OptimizationStats, optimization_stats_snapshot, reset_optimization_stats};
 pub use poly_variant::{PolyError, PolyVariant};
 pub use shared::Shared;

@@ -1,8 +1,10 @@
 //! Polynomials as runtime values: univariate (dense or sparse coefficients), multilinear
 //! (dense or sparse evaluation tables) and general sparse multivariate.
 //!
-//! - `mle`: the evaluation-table algorithms behind both MLE encodings.
-//! - `multivariate`: fixing variables of a sparse multivariate polynomial.
+//! - `uni`: the univariate encodings and their algorithms.
+//! - `mle`: the dense MLE encoding, and the evaluation-table algorithms behind both MLE
+//!   encodings.
+//! - `multivariate`: the sparse multivariate encoding, and fixing its variables.
 //! - `arith`: arithmetic, dispatched on what a polynomial is (univariate, multilinear,
 //!   multivariate) rather than on how it is stored.
 //! - `ord`: a total order, consistent with the derived equality.
@@ -12,32 +14,29 @@ mod error;
 mod mle;
 mod multivariate;
 mod ord;
+mod uni;
 
-use ark_ff::Field;
-use ark_poly::{
-    DenseMultilinearExtension, DenseUVPolynomial, MultilinearExtension, Polynomial,
-    univariate::{DensePolynomial, SparsePolynomial},
-};
-use ark_serialize::{CanonicalSerialize, SerializationError};
+use crate::Field;
 use lang::typ::CRange;
 use std::borrow::Cow;
 use std::fmt;
-use std::io::Write;
 
 pub use error::PolyError;
+pub use mle::DenseMle;
 use mle::Table;
-use multivariate::Multivariate;
+pub use multivariate::{Multivariate, Term};
+pub use uni::{DenseUni, SparseUni};
 
 /// Polynomial types supported by the backend. Equality is structural: the same encoding
 /// with the same contents.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum PolyVariant<F: Field> {
     /// Dense univariate polynomial
-    DenseUni(DensePolynomial<F>),
+    DenseUni(DenseUni<F>),
     /// Sparse univariate polynomial
-    SparseUni(SparsePolynomial<F>),
+    SparseUni(SparseUni<F>),
     /// Dense multilinear extension
-    DenseMle(DenseMultilinearExtension<F>),
+    DenseMle(DenseMle<F>),
     /// Sparse multivariate polynomial
     SparseMultivariate(Multivariate<F>),
     /// Sparse multilinear extension in **evaluation form**: a list of
@@ -97,20 +96,20 @@ fn fixed_index_for_var(free_range: &CRange, var: usize) -> Option<usize> {
 impl<F: Field> PolyVariant<F> {
     /// Create a polynomial from coefficients (univariate)
     pub fn from_coeffs(coeffs: Vec<F>) -> Self {
-        PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(coeffs))
+        PolyVariant::DenseUni(DenseUni::new(coeffs))
     }
 
     /// Create a polynomial from a scalar constant
     pub fn from_scalar(scalar: F) -> Self {
         // Return as degree-0 univariate polynomial
-        PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(vec![scalar]))
+        PolyVariant::DenseUni(DenseUni::new(vec![scalar]))
     }
 
     /// A univariate polynomial's dense coefficients, borrowed when already dense.
-    fn dense_uni(&self) -> Option<Cow<'_, DensePolynomial<F>>> {
+    fn dense_uni(&self) -> Option<Cow<'_, DenseUni<F>>> {
         match self {
             PolyVariant::DenseUni(p) => Some(Cow::Borrowed(p)),
-            PolyVariant::SparseUni(p) => Some(Cow::Owned(p.clone().into())),
+            PolyVariant::SparseUni(p) => Some(Cow::Owned(p.to_dense())),
             _ => None,
         }
     }
@@ -118,7 +117,7 @@ impl<F: Field> PolyVariant<F> {
     /// A multilinear extension's variable count and evaluation table.
     fn mle_table(&self) -> Option<(usize, Table<'_, F>)> {
         match self {
-            PolyVariant::DenseMle(mle) => Some((mle.num_vars, Table::Dense(&mle.evaluations))),
+            PolyVariant::DenseMle(mle) => Some((mle.num_vars(), Table::Dense(mle.evals()))),
             PolyVariant::SparseMle { num_vars, evals } => Some((*num_vars, Table::Sparse(evals))),
             _ => None,
         }
@@ -134,40 +133,25 @@ impl<F: Field> PolyVariant<F> {
         }
     }
 
-    /// An upper bound on the total degree, read from the representation
-    /// rather than its bookkeeping (a dense univariate's coefficient count, a
-    /// sparse one's largest index): unlike [`Self::degree`], an MLE counts
-    /// as its variable count, and a malformed sparse univariate cannot
-    /// understate it.
+    /// An upper bound on the total degree: unlike [`Self::degree`], an MLE
+    /// counts as its variable count.
     pub fn total_degree_bound(&self) -> usize {
-        use ark_poly::multivariate::Term;
         match self {
-            PolyVariant::DenseUni(p) => p.coeffs.len().saturating_sub(1),
-            PolyVariant::SparseUni(p) => p.iter().map(|(i, _)| *i).max().unwrap_or(0),
             PolyVariant::DenseMle(_) | PolyVariant::SparseMle { .. } => self.num_vars(),
-            PolyVariant::SparseMultivariate(p) => {
-                p.terms.iter().map(|(_, t)| t.degree()).max().unwrap_or(0)
-            }
+            _ => self.degree(),
         }
     }
 
-    /// Whether the representation is consistent: a dense MLE has
-    /// `2^num_vars` evaluations, and a sparse MLE's indices and a sparse
-    /// multivariate's variables are in range. Arithmetic assumes this, and
-    /// the arkworks types' fields are public, so a value from outside (a
-    /// proof) is checked.
+    /// Whether the representation is consistent: a sparse MLE's indices are
+    /// in range. Arithmetic assumes this, and a sparse MLE's fields are
+    /// public, so a value from outside (a proof) is checked; the other
+    /// encodings' constructors enforce their invariants.
     pub fn is_well_formed(&self) -> bool {
-        let table_len = |num_vars: usize| 1usize.checked_shl(u32::try_from(num_vars).ok()?);
         match self {
-            PolyVariant::DenseUni(_) | PolyVariant::SparseUni(_) => true,
-            PolyVariant::DenseMle(mle) => table_len(mle.num_vars) == Some(mle.evaluations.len()),
-            PolyVariant::SparseMle { num_vars, evals } => {
-                table_len(*num_vars).is_some_and(|len| evals.iter().all(|(i, _)| *i < len))
-            }
-            PolyVariant::SparseMultivariate(p) => p
-                .terms
-                .iter()
-                .all(|(_, term)| term.iter().all(|(var, _)| *var < p.num_vars)),
+            PolyVariant::SparseMle { num_vars, evals } => 1usize
+                .checked_shl(u32::try_from(*num_vars).unwrap_or(u32::MAX))
+                .is_some_and(|len| evals.iter().all(|(i, _)| *i < len)),
+            _ => true,
         }
     }
 
@@ -175,9 +159,9 @@ impl<F: Field> PolyVariant<F> {
     pub fn num_vars(&self) -> usize {
         match self {
             PolyVariant::DenseUni(_) | PolyVariant::SparseUni(_) => 1,
-            PolyVariant::DenseMle(mle) => mle.num_vars,
+            PolyVariant::DenseMle(mle) => mle.num_vars(),
             PolyVariant::SparseMle { num_vars, .. } => *num_vars,
-            PolyVariant::SparseMultivariate(p) => p.num_vars,
+            PolyVariant::SparseMultivariate(p) => p.num_vars(),
         }
     }
 
@@ -202,11 +186,10 @@ impl<F: Field> PolyVariant<F> {
 
     /// Check if polynomial is zero
     pub fn is_zero(&self) -> bool {
-        use ark_ff::Zero;
         match self {
             PolyVariant::DenseUni(p) => p.is_zero(),
             PolyVariant::SparseUni(p) => p.is_zero(),
-            PolyVariant::DenseMle(mle) => mle.is_zero(),
+            PolyVariant::DenseMle(mle) => mle.evals().iter().all(|v| v.is_zero()),
             PolyVariant::SparseMultivariate(p) => p.is_zero(),
             PolyVariant::SparseMle { evals, .. } => evals.iter().all(|(_, v)| v.is_zero()),
         }
@@ -219,14 +202,14 @@ impl<F: Field> PolyVariant<F> {
         match self {
             // The zero polynomial has degree 0 and no coefficients.
             PolyVariant::DenseUni(p) if p.degree() == 0 => {
-                Some(p.coeffs.first().copied().unwrap_or_else(F::zero))
+                Some(p.coeffs().first().copied().unwrap_or_else(F::zero))
             }
             PolyVariant::SparseUni(p) if p.degree() == 0 => {
-                Some(p.first().map_or_else(F::zero, |&(_, c)| c))
+                Some(p.terms().first().map_or_else(F::zero, |&(_, c)| c))
             }
-            PolyVariant::DenseMle(mle) if mle.num_vars() == 0 => mle.evaluations.first().copied(),
-            PolyVariant::SparseMultivariate(p) if p.degree() == 0 && p.num_vars == 0 => {
-                match p.terms.as_slice() {
+            PolyVariant::DenseMle(mle) if mle.num_vars() == 0 => mle.evals().first().copied(),
+            PolyVariant::SparseMultivariate(p) if p.degree() == 0 && p.num_vars() == 0 => {
+                match p.terms() {
                     [] => Some(F::zero()),
                     [(c, _)] => Some(*c),
                     _ => None,
@@ -239,7 +222,7 @@ impl<F: Field> PolyVariant<F> {
     /// Return MLE evaluation table if this is a DenseMle
     pub fn as_mle_evaluations(&self) -> Option<&[F]> {
         match self {
-            PolyVariant::DenseMle(mle) => Some(mle.evaluations.as_slice()),
+            PolyVariant::DenseMle(mle) => Some(mle.evals()),
             _ => None,
         }
     }
@@ -248,7 +231,7 @@ impl<F: Field> PolyVariant<F> {
     /// `None` for a sparse multivariate polynomial.
     pub fn to_vec(&self) -> Option<Vec<F>> {
         match self {
-            PolyVariant::DenseMle(mle) => Some(mle.evaluations.clone()),
+            PolyVariant::DenseMle(mle) => Some(mle.evals().to_vec()),
             PolyVariant::SparseMle { num_vars, evals } => Some(mle::to_dense(*num_vars, evals)),
             _ => self.to_coeffs(),
         }
@@ -256,7 +239,7 @@ impl<F: Field> PolyVariant<F> {
 
     /// Get coefficients if this is a univariate polynomial
     pub fn to_coeffs(&self) -> Option<Vec<F>> {
-        self.dense_uni().map(|p| p.into_owned().coeffs)
+        self.dense_uni().map(|p| p.into_owned().into_coeffs())
     }
 
     /// The same polynomial in the dense encoding of its kind; a sparse multivariate polynomial,
@@ -300,7 +283,7 @@ impl<F: Field> PolyVariant<F> {
         Ok(match self {
             PolyVariant::DenseUni(p) => p.evaluate(&point[0]),
             PolyVariant::SparseUni(p) => p.evaluate(&point[0]),
-            PolyVariant::SparseMultivariate(p) => p.evaluate(&point.to_vec()),
+            PolyVariant::SparseMultivariate(p) => p.evaluate(point),
             PolyVariant::DenseMle(_) | PolyVariant::SparseMle { .. } => {
                 mle::evaluate(self.mle_table().unwrap().1, point)
             }
@@ -329,7 +312,7 @@ impl<F: Field> PolyVariant<F> {
             PolyVariant::SparseMultivariate(p) => {
                 let rest = multivariate::fix_low(p, points);
                 Ok(if all {
-                    Self::from_scalar(rest.evaluate(&vec![]))
+                    Self::from_scalar(rest.evaluate(&[]))
                 } else {
                     PolyVariant::SparseMultivariate(rest)
                 })
@@ -394,38 +377,51 @@ impl<F: Field> PolyVariant<F> {
         })
     }
 
-    /// Serialize to writer
-    ///
-    /// # Errors
-    /// Returns `SerializationError` if the underlying writer fails or an
-    /// arkworks component rejects the value.
-    pub fn serialize_compressed<W: Write>(&self, mut writer: W) -> Result<(), SerializationError> {
+    /// Appends the transcript encoding: a tag byte for the encoding, then its
+    /// contents, each count and index a little-endian `u64` and each field
+    /// element in its canonical encoding.
+    pub fn write_bytes(&self, out: &mut Vec<u8>) {
+        let u64_le = |out: &mut Vec<u8>, x: usize| out.extend((x as u64).to_le_bytes());
         match self {
             PolyVariant::DenseUni(p) => {
-                0u8.serialize_compressed(&mut writer)?;
-                p.serialize_compressed(&mut writer)
+                out.push(0);
+                u64_le(out, p.coeffs().len());
+                p.coeffs().iter().for_each(|c| c.write_bytes(out));
             }
             PolyVariant::SparseUni(p) => {
-                1u8.serialize_compressed(&mut writer)?;
-                p.serialize_compressed(&mut writer)
+                out.push(1);
+                u64_le(out, p.terms().len());
+                for (d, c) in p.terms() {
+                    u64_le(out, *d);
+                    c.write_bytes(out);
+                }
             }
             PolyVariant::DenseMle(mle) => {
-                2u8.serialize_compressed(&mut writer)?;
-                mle.serialize_compressed(&mut writer)
+                out.push(2);
+                u64_le(out, mle.num_vars());
+                mle.evals().iter().for_each(|v| v.write_bytes(out));
             }
             PolyVariant::SparseMultivariate(p) => {
-                3u8.serialize_compressed(&mut writer)?;
-                p.serialize_compressed(&mut writer)
+                out.push(3);
+                u64_le(out, p.num_vars());
+                u64_le(out, p.terms().len());
+                for (c, term) in p.terms() {
+                    c.write_bytes(out);
+                    u64_le(out, term.powers().len());
+                    for &(var, power) in term.powers() {
+                        u64_le(out, var);
+                        u64_le(out, power);
+                    }
+                }
             }
             PolyVariant::SparseMle { num_vars, evals } => {
-                4u8.serialize_compressed(&mut writer)?;
-                (*num_vars as u64).serialize_compressed(&mut writer)?;
-                (evals.len() as u64).serialize_compressed(&mut writer)?;
-                for (idx, val) in evals {
-                    (*idx as u64).serialize_compressed(&mut writer)?;
-                    val.serialize_compressed(&mut writer)?;
+                out.push(4);
+                u64_le(out, *num_vars);
+                u64_le(out, evals.len());
+                for (i, v) in evals {
+                    u64_le(out, *i);
+                    v.write_bytes(out);
                 }
-                Ok(())
             }
         }
     }
@@ -434,14 +430,14 @@ impl<F: Field> PolyVariant<F> {
 impl<F: Field> fmt::Display for PolyVariant<F> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            PolyVariant::DenseUni(p) => write!(f, "Uni({:?})", p.coeffs),
+            PolyVariant::DenseUni(p) => write!(f, "Uni({:?})", p.coeffs()),
             PolyVariant::SparseUni(_) => write!(f, "SparseUni({:?})", self.to_coeffs().unwrap()),
-            PolyVariant::DenseMle(mle) => write!(f, "Mle({:?})", mle.evaluations),
+            PolyVariant::DenseMle(mle) => write!(f, "Mle({:?})", mle.evals()),
             PolyVariant::SparseMultivariate(p) => write!(
                 f,
                 "SparseMultivariate(nvars={}, nterms={})",
-                p.num_vars,
-                p.terms.len()
+                p.num_vars(),
+                p.terms().len()
             ),
             PolyVariant::SparseMle { num_vars, evals } => {
                 write!(f, "SparseMle(nvars={}, nnz={})", num_vars, evals.len())

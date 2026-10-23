@@ -4,8 +4,9 @@
 //! excluded value, so the encoder states that as a generator, which every
 //! analysis then uses: a division by the sample is then provably defined.
 
-use backend::op::HasOpFactory;
-use backend::{ATyp, ArkConfig, ArkScalarOps, OpExclusion};
+use crate::AnalysisBackend;
+use ark_ff::One;
+use backend::{ATyp, OpExclusion};
 use lang::ast::Exclusion;
 
 use crate::Var;
@@ -14,7 +15,7 @@ use crate::frontend::Polynomial;
 use super::{EncodeCtx, PolySource};
 
 /// Encodes sample `var`, resampled while `exclusion`, if any, excludes it.
-pub(crate) fn sample_op<C: ArkConfig + HasOpFactory>(
+pub(crate) fn sample_op<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     exclusion: Option<&OpExclusion<C>>,
@@ -23,7 +24,7 @@ pub(crate) fn sample_op<C: ArkConfig + HasOpFactory>(
         return;
     };
     let r = Polynomial::var(var);
-    let one = Polynomial::lit(&C::FOps::one());
+    let one = Polynomial::lit(&C::F::one());
     let nonzero = match exclusion {
         Exclusion::Values(values) => PolySource::ref_vars(values, &ctx.ideal.vars)
             .iter()

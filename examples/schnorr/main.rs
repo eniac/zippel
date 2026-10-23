@@ -1,5 +1,5 @@
 use ark_std::UniformRand;
-use backend::{ArkBls12_381, ArkConfig, ArkGroupOps, Value};
+use backend::{ArkBls12_381, Backend, Value};
 use lang::id::Vid;
 use share::Ctx;
 
@@ -7,9 +7,9 @@ use crate::common;
 
 fn make_inputs(_sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
-    let x = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
-    let g = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
-    let h_affines = <ArkBls12_381 as ArkConfig>::G1Ops::vec_mul(&g, &[x]);
+    let x = <ArkBls12_381 as Backend>::F::rand(&mut rng);
+    let g = <ArkBls12_381 as Backend>::G1::rand(&mut rng);
+    let h_affines = backend::Group::batch_mul(&g, &[x]);
     let h = h_affines.into_iter().next().unwrap();
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("x".to_string()), Value::Scalar(x)),

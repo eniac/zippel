@@ -132,6 +132,10 @@ name = "sumcheck"
 path = "src/bin/sumcheck.rs"
 
 [[bin]]
+name = "dalek_msm"
+path = "src/bin/dalek_msm.rs"
+
+[[bin]]
 name = "schnorr"
 path = "src/bin/schnorr.rs"
 

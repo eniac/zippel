@@ -1,5 +1,5 @@
 use crate::{ArgKind, Dag, Node};
-use backend::ArkConfig;
+use backend::Backend;
 use lang::id::Vid;
 #[cfg(test)]
 use log::debug;
@@ -35,13 +35,13 @@ impl Encoding<[u8]> for InstanceBytes {
 /// for one statement cannot be replayed against another. `C` only fixes the
 /// cryptographic backend and is carried phantom-wise; the separator itself is
 /// byte-oriented.
-pub struct ZippelDomainSeparator<C: ArkConfig> {
+pub struct ZippelDomainSeparator<C: Backend> {
     session: String,
     instance_bytes: Vec<u8>,
     _phantom: PhantomData<C>,
 }
 
-impl<C: ArkConfig> ZippelDomainSeparator<C> {
+impl<C: Backend> ZippelDomainSeparator<C> {
     /// Builds a separator that binds only the session string `domsep`.
     ///
     /// The DAG is accepted for signature symmetry with

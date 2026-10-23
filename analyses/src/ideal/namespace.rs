@@ -1,10 +1,10 @@
 //! Namespace for sentinel allocation shared across Ideal builders.
 
+use crate::AnalysisBackend;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 
-use backend::op::HasOpFactory;
-use backend::{ATyp, ArkConfig};
+use backend::ATyp;
 use lang::typ::Qualifier;
 use petgraph::graph::NodeIndex;
 
@@ -19,19 +19,19 @@ pub const GB_GENERATED_NAME_PREFIX: &str = "__zippel::gb::";
 
 /// Namespace for sentinel allocation shared across Ideal builders.
 #[derive(Clone)]
-pub struct IdealNamespace<C: ArkConfig> {
+pub struct IdealNamespace<C: AnalysisBackend> {
     sentinel_counter: usize,
     name_counters: HashMap<String, usize>,
     _phantom: PhantomData<C>,
 }
 
-impl<C: ArkConfig + HasOpFactory> Default for IdealNamespace<C> {
+impl<C: AnalysisBackend> Default for IdealNamespace<C> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<C: ArkConfig + HasOpFactory> IdealNamespace<C> {
+impl<C: AnalysisBackend> IdealNamespace<C> {
     /// Creates an empty namespace whose sentinel indices count down from
     /// `usize::MAX`, keeping them disjoint from the `petgraph` indices of real
     /// `TransClos` nodes, which count up from zero.

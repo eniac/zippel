@@ -1,9 +1,9 @@
 //! Transitive closure of a `QDag` — the flattening step that turns the graph
 //! IR into the linear `(Var, GOp)` list the ideal builder consumes.
 
+use crate::AnalysisBackend;
 use crate::Var;
-use backend::ArkConfig;
-use backend::op::HasOpFactory;
+use backend::Backend;
 use graph::{GOp, Node, Op, OpExclusion, QDag, Ref, mk};
 use petgraph::graph::NodeIndex;
 use std::cmp::Reverse;
@@ -11,7 +11,7 @@ use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::fmt;
 
 fn named_var(
-    dag: &QDag<impl ArkConfig>,
+    dag: &QDag<impl Backend>,
     r: Ref,
     typ: backend::ATyp,
     qualifier: lang::typ::Qualifier,
@@ -28,7 +28,10 @@ fn named_var(
     }
 }
 
-fn collect_reachable_forward<C: ArkConfig>(dag: &QDag<C>, start: NodeIndex) -> HashSet<NodeIndex> {
+fn collect_reachable_forward<C: AnalysisBackend>(
+    dag: &QDag<C>,
+    start: NodeIndex,
+) -> HashSet<NodeIndex> {
     let mut done: HashSet<NodeIndex> = HashSet::new();
     let mut worklist = vec![start];
 
@@ -46,7 +49,7 @@ fn collect_reachable_forward<C: ArkConfig>(dag: &QDag<C>, start: NodeIndex) -> H
     done.into_iter().filter(|&n| dag[n].is_op()).collect()
 }
 
-fn collect_reachable_backward<C: ArkConfig>(
+fn collect_reachable_backward<C: AnalysisBackend>(
     dag: &QDag<C>,
     starts: &[NodeIndex],
     stop_set: Option<&HashSet<NodeIndex>>,
@@ -77,7 +80,10 @@ fn collect_reachable_backward<C: ArkConfig>(
 /// The order depends only on the graph, not on hashing, so the closure, the
 /// generators encoded from it and the auxiliary variables they mint are the
 /// same on every run.
-fn topo_sort_nodes<C: ArkConfig>(dag: &QDag<C>, nodes: &HashSet<NodeIndex>) -> Vec<NodeIndex> {
+fn topo_sort_nodes<C: AnalysisBackend>(
+    dag: &QDag<C>,
+    nodes: &HashSet<NodeIndex>,
+) -> Vec<NodeIndex> {
     let mut in_degree: HashMap<NodeIndex, usize> = HashMap::with_capacity(nodes.len());
     for &node in nodes {
         let deg = dag.nodes_to(node).filter(|dep| nodes.contains(dep)).count();
@@ -147,7 +153,7 @@ fn topo_sort_nodes<C: ArkConfig>(dag: &QDag<C>, nodes: &HashSet<NodeIndex>) -> V
 /// - `verifier()` pre-populates transcript-source nodes so `trans_clos_op`
 ///   doesn't recurse past the transcript boundary.
 #[derive(Clone)]
-pub struct TransClos<C: ArkConfig> {
+pub struct TransClos<C: AnalysisBackend> {
     /// The flattened computation, in topological order: each entry binds a
     /// fresh `Var` to the op that produces it, with `Op::Ref` children already
     /// resolved to the Vars of their targets.
@@ -164,7 +170,7 @@ pub struct TransClos<C: ArkConfig> {
     pub arg_refs: HashSet<Ref>,
 }
 
-impl<C: ArkConfig + HasOpFactory> TransClos<C> {
+impl<C: AnalysisBackend> TransClos<C> {
     // ----------------------------------------------------------------
     // Public constructors
     // ----------------------------------------------------------------
@@ -486,7 +492,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
     }
 }
 
-impl<C: ArkConfig> fmt::Display for TransClos<C> {
+impl<C: AnalysisBackend> fmt::Display for TransClos<C> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(
             f,
@@ -788,7 +794,7 @@ mod tests {
         }
     }
 
-    fn verify_topo_order<C: ArkConfig>(tc: &TransClos<C>) {
+    fn verify_topo_order<C: AnalysisBackend>(tc: &TransClos<C>) {
         let node_to_pos: HashMap<NodeIndex, usize> = tc
             .clos
             .iter()

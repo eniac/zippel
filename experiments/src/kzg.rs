@@ -60,7 +60,7 @@ pub mod zippel_side {
     use ark_ff::One;
     use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
     use ark_std::UniformRand;
-    use backend::{ATyp, ArkBls12_381, ArkConfig, Value};
+    use backend::{ATyp, ArkBls12_381, Backend, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::io::Write;
@@ -68,10 +68,10 @@ pub mod zippel_side {
     use tempfile::NamedTempFile;
     use zippel::{CompileOptions, CompiledProver, CompiledVerifier, ParsedModule};
 
-    type F = <ArkBls12_381 as ArkConfig>::F;
-    type G1 = <ArkBls12_381 as ArkConfig>::G1;
-    type G2 = <ArkBls12_381 as ArkConfig>::G2;
-    type G1Affine = <ArkBls12_381 as ArkConfig>::G1Affine;
+    type F = <ArkBls12_381 as Backend>::F;
+    type G1 = <ArkBls12_381 as Backend>::G1;
+    type G2 = <ArkBls12_381 as Backend>::G2;
+    type G1Affine = backend::G1Affine<ArkBls12_381>;
 
     // Cached SRS artifact. The proto's setup quantities are deterministic
     // in `(seed, n)`, so we seed with `ark_std::test_rng()` and cache

@@ -10,11 +10,11 @@
 
 use crate::config::ArkBls12_381;
 use crate::op::{HOp, Ref, mk};
-use crate::{ATyp, ArkConfig, GOp, Op, Value};
+use crate::{ATyp, Backend, GOp, Op, Value};
 use petgraph::graph::NodeIndex;
 
 type C = ArkBls12_381;
-type F = <C as ArkConfig>::F;
+type F = <C as Backend>::F;
 
 /// Build a constant-valued scalar Op for test fixtures.
 fn scalar(v: u64) -> GOp<C> {

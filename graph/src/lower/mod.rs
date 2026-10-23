@@ -1,7 +1,7 @@
 //! Lowering a concrete module into Graph IR: one [`Dag`] per declaration.
 
 use super::*;
-use ark_ff::PrimeField;
+use backend::Field;
 use backend::{ABase, ATyp, Value, VirtualPolynomial};
 use lang::ast::arg::CArg;
 use lang::ast::range::CRange;
@@ -56,7 +56,7 @@ fn ark_error(kctx: &Ctx<Tid, CKind>, exp: CRef<'_>, typ: &CTyp) -> TypeError {
 }
 
 /// The literal `n` in the field `C::F`, reduced modulo its prime from the complete magnitude.
-fn field_from_literal<C: ArkConfig>(n: &BigUint) -> C::F {
+fn field_from_literal<C: Backend>(n: &BigUint) -> C::F {
     match n.to_u64() {
         Some(v) => C::F::from(v),
         None => C::F::from_le_bytes_mod_order(&n.to_bytes_le()),
@@ -65,7 +65,7 @@ fn field_from_literal<C: ArkConfig>(n: &BigUint) -> C::F {
 
 /// The constant for literal `n` of inferred type `typ`: a field element when `typ` is a
 /// field-only literal or `field` asks for one, otherwise the finite index `n`.
-fn literal_value<C: ArkConfig>(n: &BigUint, typ: &CTyp, field: bool) -> Value<C> {
+fn literal_value<C: Backend>(n: &BigUint, typ: &CTyp, field: bool) -> Value<C> {
     match typ {
         CTyp::Fin(r) if !field => Value::Index(r.start()),
         _ => Value::Scalar(field_from_literal::<C>(n)),
@@ -89,7 +89,7 @@ fn is_fin_shaped(t: &ATyp) -> bool {
 ///
 /// # Panics
 /// Panics if a vector's length differs from the target's, which source typing rules out.
-fn coerce_field_op<C: HasOpFactory>(op: GOp<C>, target: &ATyp, loop_depth: usize) -> GOp<C> {
+fn coerce_field_op<C: Backend>(op: GOp<C>, target: &ATyp, loop_depth: usize) -> GOp<C> {
     let source = op.typ();
     if &source == target {
         return op;
@@ -134,7 +134,7 @@ fn coerce_field_op<C: HasOpFactory>(op: GOp<C>, target: &ATyp, loop_depth: usize
 /// field when the operator's `result` is not finite, so that `GOp::bin` folds field values
 /// (and appends field elements to a field vector). A dynamic
 /// operand is left to the runtime's mixed index/field arithmetic.
-fn field_operand<C: HasOpFactory>(op: GOp<C>, result: &ATyp) -> GOp<C> {
+fn field_operand<C: Backend>(op: GOp<C>, result: &ATyp) -> GOp<C> {
     if matches!(op, Op::Value(_) | Op::Vec(_))
         && is_fin_shaped(&op.typ())
         && !result.into_inner().is_fin()
@@ -147,7 +147,7 @@ fn field_operand<C: HasOpFactory>(op: GOp<C>, result: &ATyp) -> GOp<C> {
 
 /// `GOp::bin(op, a, b, result)` with constant finite operands embedded into the field
 /// first; a finite exponent stays an index.
-fn field_bin<C: HasOpFactory>(op: BinOp, a: GOp<C>, b: GOp<C>, result: ATyp) -> GOp<C> {
+fn field_bin<C: Backend>(op: BinOp, a: GOp<C>, b: GOp<C>, result: ATyp) -> GOp<C> {
     match op {
         BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Dot | BinOp::Concat => GOp::bin(
             op,
@@ -172,7 +172,7 @@ pub enum Relations {
 }
 
 /// A collection of DAGs without annotations
-impl<C: HasOpFactory> UDags<C> {
+impl<C: Backend> UDags<C> {
     /// One DAG per declaration of `m`, in module order. The full signature to body map is
     /// passed to every lowering so that calls can be inlined.
     ///
@@ -196,7 +196,7 @@ impl<C: HasOpFactory> UDags<C> {
 }
 
 /// Constructors for graphs
-impl<C: HasOpFactory> UDag<C> {
+impl<C: Backend> UDag<C> {
     /// Materialize an operation into the DAG.
     ///
     /// If `op` is already `Op::Ref` or `Op::Value`, it is returned as-is.
@@ -623,7 +623,7 @@ impl<C: HasOpFactory> UDag<C> {
 /// The state shared while lowering a tree. A nested expression's variable bindings are undone
 /// when it is lowered (see [`Scope::scoped`]); arena additions and the current transcript node
 /// persist.
-struct Scope<'a, C: HasOpFactory> {
+struct Scope<'a, C: Backend> {
     exprs: &'a mut Arena,
     transcr: &'a mut NodeIndex,
     edge_type: DepType,
@@ -634,7 +634,7 @@ struct Scope<'a, C: HasOpFactory> {
     vars: ScopedCtx<Vid, GOp<C>>,
 }
 
-impl<C: HasOpFactory> Scope<'_, C> {
+impl<C: Backend> Scope<'_, C> {
     fn infer(&mut self, id: ExpId) -> Result<CTyp, TypeError> {
         let Arena { exprs, types } = self.exprs;
         exprs.at(id).infer(
@@ -659,7 +659,7 @@ impl<C: HasOpFactory> Scope<'_, C> {
 
 /// The arms of `UDag::add_exp_raw` kept in this module; the larger groups live in the `call`,
 /// `poly`, `record` and `vector` submodules.
-impl<C: HasOpFactory> UDag<C> {
+impl<C: Backend> UDag<C> {
     /// Lowers one statement of a block, binding its variable in `vctx` and `vars` for the rest
     /// of the block.
     fn lower_stmt(&mut self, scope: &mut Scope<'_, C>, stmt: Stmt) -> Result<(), GraphError> {

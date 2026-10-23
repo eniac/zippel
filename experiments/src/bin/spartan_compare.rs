@@ -71,7 +71,7 @@ fn main() {
             continue;
         }
 
-        let mut z_setup = ZippelSetup::new(m);
+        let mut z_setup = ZippelSetup::<backend::ArkCurve25519>::new(m);
         let z = z_setup.time_protocol();
         assert!(z.passed, "zippel-Hyrax-Spartan FAILED at M={m}");
 

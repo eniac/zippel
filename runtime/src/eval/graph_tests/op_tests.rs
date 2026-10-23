@@ -737,7 +737,7 @@ mod op_integration {
     const BIG: &str = "34545435435435435435435";
 
     /// Lowers `src` and runs its function `name` on `inputs`.
-    fn run<B: graph::HasOpFactory>(
+    fn run<B: backend::Backend>(
         src: &str,
         name: &str,
         inputs: share::Ctx<lang::id::Vid, Value<B>>,
@@ -752,13 +752,13 @@ mod op_integration {
     }
 
     /// `n` in the field of `B`.
-    fn f<B: backend::ArkConfig>(n: u64) -> <B as backend::ArkConfig>::F {
+    fn f<B: backend::Backend>(n: u64) -> <B as backend::Backend>::F {
         n.into()
     }
 
     /// `got` is the field element `expected` (not an index of the same value).
     #[track_caller]
-    fn assert_field<B: backend::ArkConfig>(got: &Value<B>, expected: <B as backend::ArkConfig>::F) {
+    fn assert_field<B: backend::Backend>(got: &Value<B>, expected: <B as backend::Backend>::F) {
         assert!(
             matches!(got, Value::Scalar(x) if *x == expected),
             "expected Scalar({expected}), got {got}"
@@ -767,7 +767,7 @@ mod op_integration {
 
     /// `got` is the field vector `expected`.
     #[track_caller]
-    fn assert_fields<B: backend::ArkConfig>(got: &Value<B>, expected: &[u64]) {
+    fn assert_fields<B: backend::Backend>(got: &Value<B>, expected: &[u64]) {
         let expected: Vec<_> = expected.iter().map(|&n| f::<B>(n)).collect();
         assert!(
             matches!(got, Value::VecScalar(xs) if *xs == expected),
@@ -775,7 +775,7 @@ mod op_integration {
         );
     }
 
-    fn literal_modulo_field<B: graph::HasOpFactory>(residue: u64) {
+    fn literal_modulo_field<B: backend::Backend>(residue: u64) {
         let src = format!("fn f<F: Field>() -> F {{ {BIG} }}");
         assert_field::<B>(&run::<B>(&src, "f", share::Ctx::new()), f::<B>(residue));
     }

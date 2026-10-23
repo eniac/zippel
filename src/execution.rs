@@ -1,5 +1,5 @@
 //! Prover and verifier execution with input and transcript validation.
-use backend::{ATyp, ArkConfig, HasOpFactory, Value};
+use backend::{ATyp, Backend, Value};
 use graph::{ArgKind, Node, UDag, domain_separator::ZippelDomainSeparator};
 use lang::id::Vid;
 use runtime::{MutexGraph, ResultKind, RunResult, RuntimeError};
@@ -9,7 +9,7 @@ use std::{collections::HashMap, sync::Arc};
 ///
 /// Created by [`crate::CompiledProtocol::project_prover`]. It retains no joint protocol
 /// or verifier graph and remains usable after its source protocol is dropped.
-pub struct CompiledProver<C: ArkConfig> {
+pub struct CompiledProver<C: Backend> {
     pub(super) graph: UDag<C>,
     pub(super) domain_separator_session: String,
 }
@@ -18,12 +18,12 @@ pub struct CompiledProver<C: ArkConfig> {
 ///
 /// Created by [`crate::CompiledProtocol::project_verifier`]. It retains no joint protocol
 /// or prover graph and remains usable after its source protocol is dropped.
-pub struct CompiledVerifier<C: ArkConfig> {
+pub struct CompiledVerifier<C: Backend> {
     pub(super) graph: UDag<C>,
     pub(super) domain_separator_session: String,
 }
 
-impl<C: ArkConfig> CompiledProver<C> {
+impl<C: Backend> CompiledProver<C> {
     /// Projected graph, for inspection or PDF export with `graph::WritePdf`.
     #[must_use]
     pub const fn graph(&self) -> &UDag<C> {
@@ -31,7 +31,7 @@ impl<C: ArkConfig> CompiledProver<C> {
     }
 }
 
-impl<C: ArkConfig> CompiledVerifier<C> {
+impl<C: Backend> CompiledVerifier<C> {
     /// Projected graph, for inspection or PDF export with `graph::WritePdf`.
     #[must_use]
     pub const fn graph(&self) -> &UDag<C> {
@@ -39,7 +39,7 @@ impl<C: ArkConfig> CompiledVerifier<C> {
     }
 }
 
-impl<C: ArkConfig + HasOpFactory> CompiledProver<C> {
+impl<C: Backend> CompiledProver<C> {
     /// Run prover, takes inputs by name and returns proof.
     ///
     /// The run owns the values it is passed and frees each after its last
@@ -118,7 +118,7 @@ impl<C: ArkConfig + HasOpFactory> CompiledProver<C> {
     }
 }
 
-impl<C: ArkConfig + HasOpFactory> CompiledVerifier<C> {
+impl<C: Backend> CompiledVerifier<C> {
     /// Run verifier, returning `true` if every verification check passes.
     /// Proof values and inputs are owned as in [`CompiledProver::prove`];
     /// inputs that are not instance arguments are dropped unread.
@@ -223,7 +223,7 @@ impl<C: ArkConfig + HasOpFactory> CompiledVerifier<C> {
 /// # Errors
 /// [`RuntimeError::MalformedInput`] for the first input that is not a value
 /// of its argument's type.
-fn check_input_types<'a, C: ArkConfig>(
+fn check_input_types<'a, C: Backend>(
     args: impl IntoIterator<Item = (&'a Vid, &'a ATyp)>,
     inputs: &HashMap<Vid, Value<C>>,
 ) -> Result<(), RuntimeError> {

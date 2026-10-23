@@ -1,6 +1,6 @@
 use ark_ff::{Field, Zero};
 use ark_std::UniformRand;
-use backend::{ArkConfig, ArkCurve25519, PolyVariant, Value, VirtualPolynomial};
+use backend::{ArkCurve25519, Backend, PolyVariant, Value, VirtualPolynomial};
 use lang::id::Vid;
 use rand::Rng;
 use share::Ctx;
@@ -110,8 +110,8 @@ where
 }
 
 fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkCurve25519>> {
-    type F = <ArkCurve25519 as ArkConfig>::F;
-    type G1 = <ArkCurve25519 as ArkConfig>::G1;
+    type F = <ArkCurve25519 as Backend>::F;
+    type G1 = <ArkCurve25519 as Backend>::G1;
     use ark_ec::CurveGroup;
     let m = size(sizes, "M");
 

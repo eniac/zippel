@@ -1,8 +1,6 @@
 use crate::config::ArkBls12_381;
-use crate::{ABase, ATyp, ArkConfig, PolyVariant, Value};
+use crate::{ABase, ATyp, Backend, Field, G1Affine, Group, PolyVariant, Value};
 use ark_bls12_381::Fr;
-use ark_ec::{AffineRepr, CurveGroup, PrimeGroup};
-use ark_ff::Zero;
 use ark_std::test_rng;
 use lang::typ::CRange;
 use share::assert_deq;
@@ -81,17 +79,35 @@ fn test_mul_comm() {
     assert_deq!(b1, a);
 }
 
+/// FFT runs over the coefficient count the type promises: a `Uni(3)` whose top
+/// coefficients are zero is stored without them, and used to transform over a
+/// two-point domain.
+#[test]
+fn fft_of_a_polynomial_with_zero_top_coefficients_uses_its_declared_domain() {
+    let coeffs = [Fr::from(1u64), Fr::from(2u64), Fr::zero(), Fr::zero()];
+    let poly = Value::<TestConfig>::vec_scalar(coeffs.to_vec()).value_poly();
+    let Value::VecScalar(evals) = poly.value_fft(&ATyp::uni(3)) else {
+        panic!("fft gives a scalar vector");
+    };
+    let mut expected = coeffs.to_vec();
+    <TestConfig as Backend>::F::fft(&mut expected);
+    assert_eq!(evals.to_vec(), expected);
+}
+
 #[test]
 fn coef_eval_test() {
     let mut rng = test_rng();
     let coeffs = Value::<TestConfig>::random(&mut rng, &ATyp::vec_scalar(8));
     let poly = coeffs.value_poly();
-    let recovered_poly = poly.value_fft().value_interpolate(None).unwrap();
+    let recovered_poly = poly
+        .value_fft(&ATyp::uni(7))
+        .value_interpolate(None)
+        .unwrap();
     assert_deq!(&recovered_poly, &poly);
 
     // Vec(F, 8) -[ifft]-> Poly(F, 1, 8) -[fft]-> Vec(F, 8) round-trips.
     let a = Value::<TestConfig>::random(&mut rng, &ATyp::vec_scalar(8));
-    let c = a.value_interpolate(None).unwrap().value_fft();
+    let c = a.value_interpolate(None).unwrap().value_fft(&ATyp::uni(7));
     assert_deq!(&c, &a);
 
     // Poly(F, 1, 7) -[fft]-> Vec(F, 8) -[ifft]-> Poly(F, 1, 7) round-trips.
@@ -99,7 +115,7 @@ fn coef_eval_test() {
     // of two — FFT then produces 8 evaluations and IFFT recovers exactly 8
     // coefficients without padding.
     let p = Value::<TestConfig>::random(&mut rng, &ATyp::uni(7));
-    let p2 = p.value_fft().value_interpolate(None).unwrap();
+    let p2 = p.value_fft(&ATyp::uni(7)).value_interpolate(None).unwrap();
     assert_deq!(&p2.value_coef(), &p.value_coef());
 }
 
@@ -360,7 +376,7 @@ fn test_zero_scalar() {
 fn test_zero_g1() {
     let val = Value::<TestConfig>::zero(&ATyp::g1());
     match val {
-        Value::G1(g) => assert!(g.into_affine().is_zero()),
+        Value::G1(g) => assert!(g.is_zero()),
         _ => panic!("Expected G1"),
     }
 }
@@ -497,13 +513,13 @@ fn test_typ_scalar() {
 
 #[test]
 fn test_typ_g1() {
-    let val = Value::<TestConfig>::G1(Arc::new(<TestConfig as ArkConfig>::G1::generator()));
+    let val = Value::<TestConfig>::G1(Arc::new(<TestConfig as Backend>::G1::generator()));
     assert_eq!(val.typ(), ATyp::g1());
 }
 
 #[test]
 fn test_typ_g2() {
-    let val = Value::<TestConfig>::G2(<TestConfig as ArkConfig>::G2::generator().into());
+    let val = Value::<TestConfig>::G2(<TestConfig as Backend>::G2::generator().into());
     assert_eq!(val.typ(), ATyp::g2());
 }
 
@@ -569,7 +585,7 @@ fn test_value_concat() {
 fn test_discriminant_order() {
     // Just verify it returns something consistent
     let scalar = Value::<TestConfig>::Scalar(Fr::zero());
-    let g1 = Value::<TestConfig>::G1(Arc::new(<TestConfig as ArkConfig>::G1::generator()));
+    let g1 = Value::<TestConfig>::G1(Arc::new(<TestConfig as Backend>::G1::generator()));
     let vec = Value::<TestConfig>::Vec(vec![].into());
 
     assert!(scalar.discriminant_order() < 20);
@@ -866,8 +882,8 @@ fn test_value_concat_extended() {
 #[test]
 fn test_elliptic_curve_pairing() {
     // value_pair and pair() perform pairing operations G1 x G2 -> GT
-    let g1 = Value::<TestConfig>::G1(Arc::new(<TestConfig as ArkConfig>::G1::generator()));
-    let g2 = Value::<TestConfig>::G2(<TestConfig as ArkConfig>::G2::generator().into());
+    let g1 = Value::<TestConfig>::G1(Arc::new(<TestConfig as Backend>::G1::generator()));
+    let g2 = Value::<TestConfig>::G2(<TestConfig as Backend>::G2::generator().into());
 
     let gt_result = g1.pair(g2);
     match gt_result {
@@ -941,23 +957,20 @@ fn test_serialize_value() {
     use crate::values::value_to_bytes;
 
     let scalar = Value::<TestConfig>::scalar_from_usize(42);
-    let bytes = value_to_bytes(&scalar);
-    assert!(bytes.is_ok());
+    assert_eq!(value_to_bytes(&scalar).len(), 32);
 
     let idx = Value::<TestConfig>::Index(10);
-    let bytes = value_to_bytes(&idx);
-    assert!(bytes.is_ok());
+    assert_eq!(value_to_bytes(&idx).len(), 8);
 }
 
 #[test]
 fn test_value_eval() {
     use crate::VirtualPolynomial;
+    use crate::poly_variant::DenseUni;
     // Create a polynomial from coefficients [1, 2, 3]
     // This represents 1 + 2x + 3x^2
     let coeffs_vec = vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)];
-    let poly_variant = PolyVariant::DenseUni(ark_poly::DenseUVPolynomial::from_coefficients_vec(
-        coeffs_vec,
-    ));
+    let poly_variant = PolyVariant::DenseUni(DenseUni::new(coeffs_vec));
     let poly = Value::<TestConfig>::Poly(Arc::new(VirtualPolynomial::from_poly(poly_variant)));
 
     // Evaluate at a single scalar point x = 2: 1 + 2·2 + 3·4 = 17.
@@ -1005,23 +1018,24 @@ fn test_scalar_multiplication_variants() {
     let scalar = Value::<TestConfig>::scalar_from_usize(5);
 
     // Scalar * G1
-    let g1 = Value::<TestConfig>::G1(Arc::new(<TestConfig as ArkConfig>::G1::generator()));
+    let g1 = Value::<TestConfig>::G1(Arc::new(<TestConfig as Backend>::G1::generator()));
     let _result = &scalar * &g1;
     let _result = &g1 * &scalar;
 
     // Scalar * G2
-    let g2 = Value::<TestConfig>::G2(<TestConfig as ArkConfig>::G2::generator().into());
+    let g2 = Value::<TestConfig>::G2(<TestConfig as Backend>::G2::generator().into());
     let _result = &scalar * &g2;
     let _result = &g2 * &scalar;
 
     // Scalar * G1Affine
-    let g1_affine =
-        Value::<TestConfig>::G1Affine(Arc::new(<TestConfig as ArkConfig>::G1Affine::generator()));
+    let g1_affine = Value::<TestConfig>::G1Affine(Arc::new(
+        <TestConfig as Backend>::G1::generator().normalize(),
+    ));
     let _result = &scalar * &g1_affine;
 
     // Scalar * G2Affine
     let g2_affine =
-        Value::<TestConfig>::G2Affine(<TestConfig as ArkConfig>::G2Affine::generator().into());
+        Value::<TestConfig>::G2Affine(<TestConfig as Backend>::G2::generator().normalize().into());
     let _result = &scalar * &g2_affine;
 }
 
@@ -1116,13 +1130,10 @@ fn test_div_by_product_of_constants() {
 #[should_panic(expected = "Cannot divide by non-constant polynomial")]
 fn test_div_by_non_constant_poly_panics() {
     use crate::VirtualPolynomial;
-    use ark_poly::{DenseUVPolynomial, univariate::DensePolynomial};
+    use crate::poly_variant::DenseUni;
 
     // Create a non-constant polynomial: 1 + 2x
-    let poly = PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(vec![
-        Fr::from(1u64),
-        Fr::from(2u64),
-    ]));
+    let poly = PolyVariant::DenseUni(DenseUni::new(vec![Fr::from(1u64), Fr::from(2u64)]));
     let vp = VirtualPolynomial::from_poly(poly);
 
     // Verify it's not constant
@@ -1134,15 +1145,14 @@ fn test_div_by_non_constant_poly_panics() {
     let _result = &scalar_val / &poly_val;
 }
 
-// Regression: `serialize_value(Value::Poly)` must use `VirtualPolynomial`'s
-// `CanonicalSerialize` encoding (same as transcript hashing / `value_to_bytes`).
+// Regression: a product that does not normalize (a degree-10 power of an MLE)
+// still has a transcript encoding, the explicit sum of products, which
+// `value_to_bytes` uses.
 #[test]
 fn sumcheck_style_vp_serializes() {
     use crate::VirtualPolynomial;
-    use crate::values::{serialize_value, value_to_bytes};
-    use ark_poly::DenseMultilinearExtension;
-    use ark_serialize::CanonicalSerialize;
-    use ark_std::UniformRand;
+    use crate::poly_variant::DenseMle;
+    use crate::values::value_to_bytes;
 
     type F = Fr;
     let num_vars = 10usize;
@@ -1151,7 +1161,7 @@ fn sumcheck_style_vp_serializes() {
     let mut rng = test_rng();
     let base_evals: Vec<F> = (0..eval_count).map(|_| F::rand(&mut rng)).collect();
 
-    let mle = DenseMultilinearExtension::from_evaluations_vec(num_vars, base_evals.clone());
+    let mle = DenseMle::new(num_vars, base_evals.clone());
     let base = VirtualPolynomial::from_poly(PolyVariant::DenseMle(mle.clone()));
 
     let mut full_poly = base.clone();
@@ -1159,25 +1169,20 @@ fn sumcheck_style_vp_serializes() {
         full_poly = full_poly.poly_mul(&base);
     }
 
-    let mut buf = Vec::new();
-    assert!(full_poly.serialize_compressed(&mut buf).is_ok());
-
-    let mut buf2 = Vec::new();
-    assert!(
-        serialize_value(
-            &Value::<TestConfig>::Poly(Arc::new(full_poly.clone())),
-            &mut buf2
-        )
-        .is_ok()
+    let mut bytes = Vec::new();
+    full_poly.write_bytes(&mut bytes);
+    assert_eq!(bytes[0], 1, "the explicit sum-of-products encoding");
+    assert_eq!(
+        value_to_bytes(&Value::<TestConfig>::Poly(Arc::new(full_poly))),
+        bytes
     );
-    assert!(value_to_bytes(&Value::<TestConfig>::Poly(Arc::new(full_poly))).is_ok());
 }
 
 #[cfg(test)]
 mod test_into_scalar {
+    use crate::poly_variant::{DenseMle, DenseUni};
     use ark_bls12_381::Fr;
     use ark_ff::Zero;
-    use ark_poly::{DenseMultilinearExtension, DenseUVPolynomial, univariate::DensePolynomial};
     use std::sync::Arc;
 
     #[test]
@@ -1185,31 +1190,21 @@ mod test_into_scalar {
         use crate::PolyVariant;
 
         // Constant univariate
-        let const_uni =
-            PolyVariant::<Fr>::DenseUni(DensePolynomial::from_coefficients_vec(vec![Fr::from(
-                42u64,
-            )]));
+        let const_uni = PolyVariant::<Fr>::DenseUni(DenseUni::new(vec![Fr::from(42u64)]));
         assert_eq!(const_uni.to_scalar(), Some(Fr::from(42u64)));
 
         // Non-constant univariate
-        let non_const = PolyVariant::<Fr>::DenseUni(DensePolynomial::from_coefficients_vec(vec![
-            Fr::from(1u64),
-            Fr::from(2u64),
-        ]));
+        let non_const =
+            PolyVariant::<Fr>::DenseUni(DenseUni::new(vec![Fr::from(1u64), Fr::from(2u64)]));
         assert_eq!(non_const.to_scalar(), None);
 
         // Constant MLE (0 vars)
-        let const_mle = PolyVariant::<Fr>::DenseMle(
-            DenseMultilinearExtension::from_evaluations_vec(0, vec![Fr::from(7u64)]),
-        );
+        let const_mle = PolyVariant::<Fr>::DenseMle(DenseMle::new(0, vec![Fr::from(7u64)]));
         assert_eq!(const_mle.to_scalar(), Some(Fr::from(7u64)));
 
         // Non-constant MLE
         let non_const_mle =
-            PolyVariant::<Fr>::DenseMle(DenseMultilinearExtension::from_evaluations_vec(
-                1,
-                vec![Fr::from(1u64), Fr::from(2u64)],
-            ));
+            PolyVariant::<Fr>::DenseMle(DenseMle::new(1, vec![Fr::from(1u64), Fr::from(2u64)]));
         assert_eq!(non_const_mle.to_scalar(), None);
     }
 
@@ -1237,9 +1232,10 @@ mod test_into_scalar {
         // Mixed with non-constant
         let mut vp_mixed = VirtualPolynomial::<Fr>::new();
         let c = Arc::new(PolyVariant::<Fr>::from_scalar(Fr::from(5u64)));
-        let nc = Arc::new(PolyVariant::<Fr>::DenseUni(
-            DensePolynomial::from_coefficients_vec(vec![Fr::from(1u64), Fr::from(2u64)]),
-        ));
+        let nc = Arc::new(PolyVariant::<Fr>::DenseUni(DenseUni::new(vec![
+            Fr::from(1u64),
+            Fr::from(2u64),
+        ])));
         vp_mixed.add_poly_list(vec![c, nc], Fr::from(1u64));
         assert_eq!(vp_mixed.to_scalar(), None);
 
@@ -1505,11 +1501,9 @@ fn test_value_concat_pbt() {
 #[test]
 fn ram_ref_slice_matches_the_gathered_copy() {
     use crate::values::value_to_bytes;
-    use ark_std::UniformRand;
-    type G1Affine = <TestConfig as ArkConfig>::G1Affine;
     let mut rng = test_rng();
-    let points: Vec<G1Affine> = (0..8)
-        .map(|_| <TestConfig as ArkConfig>::G1::rand(&mut rng).into_affine())
+    let points: Vec<G1Affine<TestConfig>> = (0..8)
+        .map(|_| <TestConfig as Backend>::G1::rand(&mut rng).normalize())
         .collect();
     let scalars: Vec<Fr> = (0..8u64).map(Fr::from).collect();
     let run = Value::<TestConfig>::VecIndex((2..6).collect());
@@ -1525,10 +1519,7 @@ fn ram_ref_slice_matches_the_gathered_copy() {
     ] {
         let view = v.ram_ref(&run);
         assert_eq!(view, copy);
-        assert_eq!(
-            value_to_bytes(&view).unwrap(),
-            value_to_bytes(&copy).unwrap()
-        );
+        assert_eq!(value_to_bytes(&view), value_to_bytes(&copy));
     }
 }
 
@@ -1537,18 +1528,14 @@ fn ram_ref_slice_matches_the_gathered_copy() {
 #[test]
 fn ram_ref_slice_of_prepared_g2_matches_the_copy() {
     use crate::values::{PreparedG2Vec, value_to_bytes};
-    use ark_std::UniformRand;
-    type G2 = <TestConfig as ArkConfig>::G2;
+    type G2 = <TestConfig as Backend>::G2;
     let mut rng = test_rng();
-    let points: Vec<_> = (0..6).map(|_| G2::rand(&mut rng).into_affine()).collect();
+    let points: Vec<_> = (0..6).map(|_| G2::rand(&mut rng).normalize()).collect();
     let v = Value::<TestConfig>::VecG2Prepared(PreparedG2Vec::new(points.clone()));
     let view = v.ram_ref(&Value::VecIndex((1..4).collect()));
     let copy = Value::<TestConfig>::VecG2Prepared(PreparedG2Vec::new(points[1..4].to_vec()));
     assert_eq!(view, copy);
-    assert_eq!(
-        value_to_bytes(&view).unwrap(),
-        value_to_bytes(&copy).unwrap()
-    );
+    assert_eq!(value_to_bytes(&view), value_to_bytes(&copy));
     let Value::VecG2Prepared(p) = &view else {
         unreachable!()
     };
@@ -1592,15 +1579,15 @@ fn heap_payload(v: &Value<ArkBls12_381>) -> Option<*const u8> {
 #[test]
 fn cloning_a_value_shares_its_heap_payload() {
     type C = ArkBls12_381;
-    let g2 = <C as ArkConfig>::G2::zero();
-    let g2a = g2.into_affine();
+    let g2 = <C as Backend>::G2::zero();
+    let g2a = g2.normalize();
     let values: Vec<Value<C>> = vec![
         Value::VecIndex(vec![1, 2, 3].into()),
         Value::vec_scalar(vec![Fr::from(1u64); 3]),
-        Value::vec_g1(vec![<C as ArkConfig>::G1::zero(); 3]),
+        Value::vec_g1(vec![<C as Backend>::G1::zero(); 3]),
         Value::vec_g2(vec![g2; 3]),
         Value::vec_gt(vec![Default::default(); 3]),
-        Value::vec_g1_affine(vec![<C as ArkConfig>::G1Affine::zero(); 3]),
+        Value::vec_g1_affine(vec![<C as Backend>::G1::zero().normalize(); 3]),
         Value::vec_g2_affine(vec![g2a; 3]),
         Value::VecG2Prepared(crate::PreparedG2Vec::new(vec![g2a; 3])),
         Value::Vec(vec![Value::Index(1), Value::Index(2)].into()),
@@ -1627,11 +1614,10 @@ fn a_value_is_forty_bytes() {
 #[test]
 fn conforms_to_accepts_every_representation_of_a_type() {
     use crate::values::PreparedG2Vec;
-    use ark_std::UniformRand;
     use share::Ctx;
     type V = Value<TestConfig>;
-    type G1 = <TestConfig as ArkConfig>::G1;
-    type G2 = <TestConfig as ArkConfig>::G2;
+    type G1 = <TestConfig as Backend>::G1;
+    type G2 = <TestConfig as Backend>::G2;
     let mut rng = test_rng();
     let g1 = G1::rand(&mut rng);
     let g2 = G2::rand(&mut rng);
@@ -1643,8 +1629,8 @@ fn conforms_to_accepts_every_representation_of_a_type() {
         (V::Index(3), ATyp::scalar()),
         (V::Index(6), ATyp::fin(evens.clone())),
         (V::g1(g1), ATyp::g1()),
-        (V::g1_affine(g1.into_affine()), ATyp::g1()),
-        (V::g2_affine(g2.into_affine()), ATyp::g2()),
+        (V::g1_affine(g1.normalize()), ATyp::g1()),
+        (V::g2_affine(g2.normalize()), ATyp::g2()),
         (V::Bool(true), ATyp::bool()),
         (V::vec_scalar(vec![Fr::from(1u64); 3]), ATyp::vec_scalar(3)),
         (
@@ -1652,13 +1638,13 @@ fn conforms_to_accepts_every_representation_of_a_type() {
             vec(ATyp::fin(evens.clone()), 3),
         ),
         (V::vec_g1(vec![g1; 2]), ATyp::vec_g1(2)),
-        (V::vec_g1_affine(vec![g1.into_affine(); 2]), ATyp::vec_g1(2)),
+        (V::vec_g1_affine(vec![g1.normalize(); 2]), ATyp::vec_g1(2)),
         (
-            V::VecG2Prepared(PreparedG2Vec::new(vec![g2.into_affine(); 2])),
+            V::VecG2Prepared(PreparedG2Vec::new(vec![g2.normalize(); 2])),
             ATyp::vec_g2(2),
         ),
         (
-            V::VecG2Prepared(PreparedG2Vec::new(vec![g2.into_affine(); 3]).select(&[0, 1])),
+            V::VecG2Prepared(PreparedG2Vec::new(vec![g2.normalize(); 3]).select(&[0, 1])),
             ATyp::vec_g2(2),
         ),
         (
@@ -1685,7 +1671,7 @@ fn conforms_to_accepts_every_representation_of_a_type() {
         (V::Scalar(Fr::from(3u64)), ATyp::fin(evens.clone())),
         (V::Index(3), ATyp::fin(evens.clone())),
         (V::Index(8), ATyp::fin(evens.clone())),
-        (V::g2_affine(g2.into_affine()), ATyp::g1()),
+        (V::g2_affine(g2.normalize()), ATyp::g1()),
         (V::vec_scalar(vec![Fr::from(1u64); 3]), ATyp::vec_scalar(4)),
         (V::vec_scalar(vec![Fr::from(1u64); 3]), ATyp::scalar()),
         (V::Scalar(Fr::from(1u64)), ATyp::vec_scalar(1)),
@@ -1695,7 +1681,7 @@ fn conforms_to_accepts_every_representation_of_a_type() {
         ),
         (V::vec_g1(vec![g1; 2]), ATyp::vec_g2(2)),
         (
-            V::VecG2Prepared(PreparedG2Vec::new(vec![g2.into_affine(); 3]).select(&[0, 1])),
+            V::VecG2Prepared(PreparedG2Vec::new(vec![g2.normalize(); 3]).select(&[0, 1])),
             ATyp::vec_g2(3),
         ),
         (
@@ -1721,29 +1707,18 @@ fn conforms_to_accepts_every_representation_of_a_type() {
 
 #[test]
 fn conforms_to_bounds_a_polynomial_by_its_type() {
+    use crate::poly_variant::{DenseMle, DenseUni};
     use crate::virtual_polynomial::VirtualPolynomial;
-    use ark_poly::{DenseMultilinearExtension, DenseUVPolynomial, univariate::DensePolynomial};
     type V = Value<TestConfig>;
     let fr = |xs: &[u64]| xs.iter().map(|&x| Fr::from(x)).collect::<Vec<_>>();
-    let uni = |cs: &[u64]| {
-        VirtualPolynomial::from_poly(PolyVariant::DenseUni(
-            DensePolynomial::from_coefficients_vec(fr(cs)),
-        ))
-    };
+    let uni =
+        |cs: &[u64]| VirtualPolynomial::from_poly(PolyVariant::DenseUni(DenseUni::new(fr(cs))));
     let mle = |evals: &[u64]| {
-        VirtualPolynomial::from_poly(PolyVariant::DenseMle(
-            DenseMultilinearExtension::from_evaluations_vec(2, fr(evals)),
-        ))
+        VirtualPolynomial::from_poly(PolyVariant::DenseMle(DenseMle::new(2, fr(evals))))
     };
     let cubic = uni(&[1, 2, 3, 4]);
     let m = mle(&[1, 2, 3, 4]);
     let product = &m * &mle(&[5, 6, 7, 8]);
-    // Two variables, three evaluations.
-    let short_mle =
-        VirtualPolynomial::from_poly(PolyVariant::DenseMle(DenseMultilinearExtension {
-            evaluations: fr(&[1, 2, 3]),
-            num_vars: 2,
-        }));
 
     let cases = [
         (&cubic, ATyp::Uni(3), true),
@@ -1752,7 +1727,6 @@ fn conforms_to_bounds_a_polynomial_by_its_type() {
         (&m, ATyp::Mle(2), true),
         (&m, ATyp::Mle(3), false),
         (&m, ATyp::Uni(4), false),
-        (&short_mle, ATyp::Mle(2), false),
         (&product, ATyp::Mle(2), false),
         // Two 2-variable multilinear factors: total degree up to 4.
         (&product, ATyp::VPoly(2, 4), true),

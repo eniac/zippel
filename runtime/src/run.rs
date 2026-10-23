@@ -1,7 +1,7 @@
 //! One execution of a [`MutexGraph`]: every node runs as a job of one
 //! `rayon::scope` as soon as its dependencies have finished.
 
-use backend::{ArkConfig, Value};
+use backend::{Backend, Value};
 use graph::{ArgKind, Node, Op};
 use lang::id::Vid;
 use log::debug;
@@ -32,7 +32,7 @@ pub enum ResultKind {
 /// - `Prover`: proof transcript values in transcript order.
 /// - `Verifier`: per-Verify pass/fail booleans.
 #[derive(Debug)]
-pub enum RunResult<C: ArkConfig> {
+pub enum RunResult<C: Backend> {
     /// Proof transcript values emitted by the prover, in transcript order.
     Prover(Vec<Value<C>>),
     /// Outcome of the verifier graph's checks.
@@ -68,7 +68,7 @@ impl FirstError {
 ///
 /// The scope returns when the last job does: no thread waits or polls for
 /// work, and the run computes on exactly the pool's threads.
-struct Run<'a, C: ArkConfig, H: DuplexSpongeInterface<U = u8>> {
+struct Run<'a, C: Backend, H: DuplexSpongeInterface<U = u8>> {
     graph: &'a MutexGraph<C>,
     /// The run's inputs, each taken out when its `Arg` node delivers it, so
     /// an input the caller gave up is freed after its last reader.
@@ -81,7 +81,7 @@ struct Run<'a, C: ArkConfig, H: DuplexSpongeInterface<U = u8>> {
     checks: Mutex<HashMap<NodeIndex, bool>>,
 }
 
-impl<C: ArkConfig, H: DuplexSpongeInterface<U = u8> + Send> Run<'_, C, H> {
+impl<C: Backend, H: DuplexSpongeInterface<U = u8> + Send> Run<'_, C, H> {
     /// Runs the ready `node`, then releases its successors.
     ///
     /// # Panics
@@ -235,7 +235,7 @@ impl<C: ArkConfig, H: DuplexSpongeInterface<U = u8> + Send> Run<'_, C, H> {
     }
 }
 
-impl<C: ArkConfig> MutexGraph<C> {
+impl<C: Backend> MutexGraph<C> {
     /// Execute all nodes in the DAG, each as soon as its dependencies have
     /// finished, in parallel on the rayon pool.
     ///

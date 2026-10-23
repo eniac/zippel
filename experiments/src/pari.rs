@@ -223,7 +223,7 @@ pub mod zippel_side {
         univariate::DensePolynomial,
     };
     use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-    use backend::{ArkBls12_381, ArkConfig, Value};
+    use backend::{ArkBls12_381, Backend, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
@@ -232,9 +232,9 @@ pub mod zippel_side {
     };
 
     type C = ArkBls12_381;
-    type F = <C as ArkConfig>::F;
-    type G1 = <C as ArkConfig>::G1;
-    type G2 = <C as ArkConfig>::G2;
+    type F = <C as Backend>::F;
+    type G1 = <C as Backend>::G1;
+    type G2 = <C as Backend>::G2;
 
     // Cached SRS artifact. Deterministic given `(test_rng seed, inst,
     // m_log, n_pub, num_vars)`. The bench reuses the same Instance

@@ -19,7 +19,7 @@ fn shapes_protocol() -> (
     TestInputs,
     Vec<Value<ArkBls12_381>>,
 ) {
-    type F = <ArkBls12_381 as ArkConfig>::F;
+    type F = <ArkBls12_381 as Backend>::F;
     let src = r"
 proto shapes<G: Group, F: Scalar<G>, N: Size>(witness v: [F; N], instance g: G) where 1 == 1 {
     a <- v;
@@ -38,7 +38,7 @@ proto shapes<G: Group, F: Scalar<G>, N: Size>(witness v: [F; N], instance g: G) 
         .expect("compile protocol");
     let mut inputs = HashMap::new();
     inputs.insert("v", Value::vec_scalar((1..=4).map(F::from).collect()));
-    inputs.insert("g", Value::g1(<ArkBls12_381 as ArkConfig>::G1::default()));
+    inputs.insert("g", Value::g1(<ArkBls12_381 as Backend>::G1::default()));
     let prover = protocol.project_prover();
     let verifier = protocol.project_verifier().expect("project verifier");
     drop(protocol);
@@ -72,7 +72,7 @@ fn the_verifier_rejects_a_proof_with_extra_or_missing_elements() {
 
 #[test]
 fn the_verifier_rejects_proof_elements_of_the_wrong_shape() {
-    type F = <ArkBls12_381 as ArkConfig>::F;
+    type F = <ArkBls12_381 as Backend>::F;
     let (_, verifier, inputs, proof) = shapes_protocol();
     let short = Value::vec_scalar(vec![F::from(1u64); 3]);
     let scalar = Value::Scalar(F::from(1u64));
@@ -93,7 +93,7 @@ fn the_verifier_rejects_proof_elements_of_the_wrong_shape() {
 
 #[test]
 fn the_prover_rejects_inputs_of_the_wrong_shape() {
-    type F = <ArkBls12_381 as ArkConfig>::F;
+    type F = <ArkBls12_381 as Backend>::F;
     let (prover, _, inputs, _) = shapes_protocol();
     // `v: [F; 4]` (witness) one short, and `g: G` (instance) a scalar.
     for (name, wrong) in [
@@ -111,7 +111,7 @@ fn the_prover_rejects_inputs_of_the_wrong_shape() {
 
 #[test]
 fn the_verifier_rejects_instance_inputs_of_the_wrong_shape() {
-    type F = <ArkBls12_381 as ArkConfig>::F;
+    type F = <ArkBls12_381 as Backend>::F;
     let (_, verifier, mut inputs, proof) = shapes_protocol();
     inputs.insert("g", Value::Scalar(F::from(1u64)));
     match verifier.verify(proof, inputs) {
@@ -144,14 +144,8 @@ proto eq_proof<F: Field>(witness a: F, witness b: F) where a == b {
     let verifier = protocol.project_verifier().expect("project verifier");
 
     let mut inputs = HashMap::<&str, Value<ArkBls12_381>>::new();
-    inputs.insert(
-        "a",
-        Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(5u64)),
-    );
-    inputs.insert(
-        "b",
-        Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(5u64)),
-    );
+    inputs.insert("a", Value::Scalar(<ArkBls12_381 as Backend>::F::from(5u64)));
+    inputs.insert("b", Value::Scalar(<ArkBls12_381 as Backend>::F::from(5u64)));
 
     let proof = prover.prove(inputs.clone()).expect("run_prover failed");
     let passed = verifier.verify(proof, inputs).expect("run_verifier failed");
@@ -170,7 +164,7 @@ fn compile_src(src: &str) -> CompiledProtocol<ArkBls12_381> {
 }
 
 fn scalar(x: u64) -> Value<ArkBls12_381> {
-    Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(x))
+    Value::Scalar(<ArkBls12_381 as Backend>::F::from(x))
 }
 
 #[test]
@@ -254,10 +248,7 @@ proto repro<F: Field>(witness s: F) where s == s {
     let verifier = protocol.project_verifier().expect("project verifier");
 
     let mut inputs = HashMap::<&str, Value<ArkBls12_381>>::new();
-    inputs.insert(
-        "s",
-        Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(5u64)),
-    );
+    inputs.insert("s", Value::Scalar(<ArkBls12_381 as Backend>::F::from(5u64)));
 
     let proof = prover.prove(inputs.clone()).expect("run_prover failed");
     assert_eq!(
@@ -297,17 +288,11 @@ proto bad_check<F: Field>(witness a: F, witness b: F, instance c: F) where a == 
     let verifier = protocol.project_verifier().expect("project verifier");
 
     let mut inputs = HashMap::<&str, Value<ArkBls12_381>>::new();
-    inputs.insert(
-        "a",
-        Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(5u64)),
-    );
-    inputs.insert(
-        "b",
-        Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(5u64)),
-    );
+    inputs.insert("a", Value::Scalar(<ArkBls12_381 as Backend>::F::from(5u64)));
+    inputs.insert("b", Value::Scalar(<ArkBls12_381 as Backend>::F::from(5u64)));
     inputs.insert(
         "c",
-        Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(42u64)),
+        Value::Scalar(<ArkBls12_381 as Backend>::F::from(42u64)),
     );
 
     let proof = prover.prove(inputs.clone()).expect("run_prover failed");
@@ -329,11 +314,10 @@ fn schnorr() -> CompiledProtocol<ArkBls12_381> {
 
 fn schnorr_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     use ark_std::UniformRand;
-    use backend::ArkGroupOps;
     let mut rng = rand::rngs::OsRng;
-    let x = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
-    let g = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
-    let h = <ArkBls12_381 as ArkConfig>::G1Ops::vec_mul(&g, &[x])
+    let x = <ArkBls12_381 as Backend>::F::rand(&mut rng);
+    let g = <ArkBls12_381 as Backend>::G1::rand(&mut rng);
+    let h = backend::Group::batch_mul(&g, &[x])
         .into_iter()
         .next()
         .unwrap();
@@ -496,4 +480,76 @@ fn analysis_preparation_keeps_the_relation() {
             .run(Analysis::Completeness, analyses::GbBackendKind::ArkGb)
             .is_ok()
     );
+}
+
+/// The diagnostic `source` raises when compiled for `C`.
+fn compile_error<C: backend::Backend>(source: &str, sizes: &[(&str, usize)]) -> String {
+    let module = ParsedModule::parse("test.zippel", source).expect("parses");
+    let sizes: Ctx<Tid, usize> = sizes.iter().map(|(k, v)| (Tid::new(k), *v)).collect();
+    let Err(e) = module.compile::<C>(&sizes, CompileOptions::default()) else {
+        panic!("compiles for {}", std::any::type_name::<C>());
+    };
+    e.diagnostics()
+        .iter()
+        .map(|d| d.summary.clone())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// A backend without what a protocol needs rejects it when the protocol is
+/// compiled, with a diagnostic at the operation, rather than panicking at run
+/// time: a pairing on Curve25519, which has none, and an 8-point FFT over its
+/// scalar field, whose largest FFT domain has 4 points.
+#[test]
+fn compile_rejects_what_the_backend_lacks() {
+    let kzg = std::fs::read_to_string("examples/kzg/kzg.zippel").unwrap();
+    let error = compile_error::<backend::ArkCurve25519>(&kzg, &[("N", 4)]);
+    assert!(error.contains("needs a pairing"), "{error}");
+    assert!(
+        ParsedModule::parse("kzg.zippel", kzg)
+            .unwrap()
+            .compile::<ArkBls12_381>(
+                &Ctx::from_iter([(Tid::new("N"), 4)]),
+                CompileOptions::default()
+            )
+            .is_ok()
+    );
+
+    let fft = "proto f<G: Group, F: Scalar<G>>(instance v: [F; 8]) where v == v {
+    let p = interpolate(v);
+    verify(coef(p) == v)
+}
+";
+    let error = compile_error::<backend::ArkCurve25519>(fft, &[]);
+    assert!(error.contains("an FFT over 8 points"), "{error}");
+}
+
+/// Schnorr proves and verifies on the `ff`/`group` backends, and a tampered proof
+/// fails, as on arkworks.
+#[test]
+fn schnorr_runs_on_ff_group_backends() {
+    fn run<C: backend::Backend>() {
+        use backend::{Field, Group};
+        let protocol = ParsedModule::parse("schnorr.zippel", SCHNORR)
+            .unwrap()
+            .compile::<C>(&Ctx::new(), CompileOptions::default())
+            .unwrap();
+        let mut rng = rand::rngs::OsRng;
+        let x = C::F::rand(&mut rng);
+        let g = C::G1::rand(&mut rng);
+        let inputs = Ctx::from_iter([
+            (Vid("x".to_string()), Value::<C>::Scalar(x)),
+            (Vid("g".to_string()), Value::g1(g)),
+            (Vid("h".to_string()), Value::g1(g * x)),
+        ]);
+        let prover = protocol.project_prover();
+        let verifier = protocol.project_verifier().unwrap();
+        let proof = prover.prove(inputs.clone()).unwrap();
+        assert!(verifier.verify(proof.clone(), inputs.clone()).unwrap());
+        let mut tampered = proof;
+        tampered[0] = Value::g1(g);
+        assert!(!verifier.verify(tampered, inputs).unwrap());
+    }
+    run::<backend::DalekRistretto>();
+    run::<backend::PastaPallas>();
 }

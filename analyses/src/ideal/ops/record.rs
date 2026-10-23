@@ -1,7 +1,7 @@
 //! Record and projection op encoders: `record_op`, `proj_op`.
 
-use backend::op::HasOpFactory;
-use backend::{ATyp, ArkConfig};
+use crate::AnalysisBackend;
+use backend::ATyp;
 use graph::HOp;
 use share::Ctx;
 
@@ -32,7 +32,7 @@ fn record_field_offset(fields: &Ctx<String, ATyp>, field_name: &str) -> usize {
 /// For each field, get the field-level Var via `with_index`,
 /// then expand its sub-slots via `slots()` to get hierarchical
 /// indices (e.g. `[0][0]`, `[0][1]` for a Vec field).
-pub fn record_op<C: ArkConfig + HasOpFactory>(
+pub fn record_op<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     fields: &Ctx<String, HOp<C>>,
@@ -55,7 +55,7 @@ pub fn record_op<C: ArkConfig + HasOpFactory>(
 ///
 /// Non-record inner types are not supported — after IR lowering every
 /// Proj must operate on a Record; any other variant is a compiler bug.
-pub fn proj_op<C: ArkConfig + HasOpFactory>(
+pub fn proj_op<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     inner: &HOp<C>,

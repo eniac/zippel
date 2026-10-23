@@ -24,10 +24,10 @@ pub const DEFAULT_MAX_DEGREE: usize = 10;
 pub mod zippel_side {
     use super::*;
     use ark_ff::Zero;
-    use ark_poly::DenseMultilinearExtension;
     use ark_std::UniformRand;
+    use backend::poly_variant::DenseMle;
     use backend::poly_variant::PolyVariant;
-    use backend::{ArkBls12_381, ArkConfig, Value, VirtualPolynomial};
+    use backend::{ArkBls12_381, Backend, Value, VirtualPolynomial};
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
@@ -112,7 +112,7 @@ pub mod zippel_side {
         /// verifier graph fails to execute, or if the verifier rejects the
         /// honestly generated proof.
         pub fn time_protocol(&mut self) -> Timing {
-            type F = <ArkBls12_381 as ArkConfig>::F;
+            type F = <ArkBls12_381 as Backend>::F;
             let nv = self.num_vars;
             let md = self.max_degree;
             let eval_count = 1usize << nv;
@@ -122,9 +122,8 @@ pub mod zippel_side {
                 .iter()
                 .map(|x| (0..md).fold(F::from(1u64), |acc, _| acc * *x))
                 .fold(F::zero(), |acc, v| acc + v);
-            let base = VirtualPolynomial::from_poly(PolyVariant::DenseMle(
-                DenseMultilinearExtension::from_evaluations_vec(nv, base_evals),
-            ));
+            let base =
+                VirtualPolynomial::from_poly(PolyVariant::DenseMle(DenseMle::new(nv, base_evals)));
             let mut full_poly = base.clone();
             for _ in 1..md {
                 full_poly = full_poly.poly_mul(&base);

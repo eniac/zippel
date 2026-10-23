@@ -1,5 +1,5 @@
 use ark_std::UniformRand;
-use backend::{ArkBls12_381, ArkConfig, Value};
+use backend::{ArkBls12_381, Backend, Value};
 use lang::id::Vid;
 use share::Ctx;
 
@@ -8,14 +8,14 @@ use crate::common;
 fn make_inputs(_sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
 
-    let x = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
-    let y = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
-    let r_x = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
-    let r_y = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
-    let r_z = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
+    let x = <ArkBls12_381 as Backend>::F::rand(&mut rng);
+    let y = <ArkBls12_381 as Backend>::F::rand(&mut rng);
+    let r_x = <ArkBls12_381 as Backend>::F::rand(&mut rng);
+    let r_y = <ArkBls12_381 as Backend>::F::rand(&mut rng);
+    let r_z = <ArkBls12_381 as Backend>::F::rand(&mut rng);
 
-    let g = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
-    let h = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
+    let g = <ArkBls12_381 as Backend>::G1::rand(&mut rng);
+    let h = <ArkBls12_381 as Backend>::G1::rand(&mut rng);
 
     let big_x = g * x + h * r_x;
     let big_y = g * y + h * r_y;

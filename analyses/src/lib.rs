@@ -52,5 +52,13 @@ pub use var::Var;
 
 pub use backend::GbBackendKind;
 
+/// A backend the analyses run over: its scalar field is an arkworks prime field,
+/// where the Gröbner-basis engines compute. The analyses depend only on the field
+/// (group elements are encoded by their discrete logs), so a protocol on another
+/// backend is analyzed on the arkworks backend with the same scalar field.
+pub trait AnalysisBackend: ::backend::Backend<F: ark_ff::PrimeField> {}
+
+impl<C: ::backend::Backend<F: ark_ff::PrimeField>> AnalysisBackend for C {}
+
 #[cfg(test)]
 mod tests;

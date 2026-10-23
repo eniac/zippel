@@ -4,10 +4,10 @@
 //! representation-aware scalar lifting for additive polynomial
 //! operations.
 
+use crate::AnalysisBackend;
 use std::collections::HashMap;
 
-use backend::op::HasOpFactory;
-use backend::{ABase, ATyp, ArkConfig, ArkScalarOps, Value};
+use backend::{ABase, ATyp, Value};
 use graph::{GOp, Op, Ref};
 
 use crate::Var;
@@ -32,12 +32,12 @@ pub fn has_poly_type(typ: &ATyp) -> bool {
 /// Provides element-wise access for `Vec` types (via `at_index`),
 /// zero-padding lifts to wider types (via `lift_to`), and
 /// representation-aware scalar lifting for additive polynomial operations.
-pub struct PolySource<C: ArkConfig> {
+pub struct PolySource<C: AnalysisBackend> {
     pub polys: Vec<Polynomial<C::F>>,
     pub typ: ATyp,
 }
 
-impl<C: ArkConfig> PolySource<C> {
+impl<C: AnalysisBackend> PolySource<C> {
     pub fn new(polys: Vec<Polynomial<C::F>>, typ: ATyp) -> Self {
         PolySource { polys, typ }
     }
@@ -52,7 +52,7 @@ impl<C: ArkConfig> PolySource<C> {
 
     pub fn from_ref_vars(vars: &HashMap<Ref, Var>, op: &GOp<C>) -> Self
     where
-        C: HasOpFactory,
+        C: AnalysisBackend,
     {
         let typ = op.typ();
         let polys = Self::ref_vars(op, vars);
@@ -276,9 +276,9 @@ impl<C: ArkConfig> PolySource<C> {
                 let mut out = vec![Polynomial::<C::F>::zero(); dst_idx.len()];
                 let lit_of = |v: i64| -> Polynomial<C::F> {
                     if v >= 0 {
-                        Polynomial::lit(&C::FOps::from_usize(v as usize))
+                        Polynomial::lit(&C::F::from(v as u64))
                     } else {
-                        -Polynomial::lit(&C::FOps::from_usize((-v) as usize))
+                        -Polynomial::lit(&C::F::from((-v) as u64))
                     }
                 };
                 for (j, src_b) in src_hcube.iter().enumerate() {
@@ -417,13 +417,13 @@ impl<C: ArkConfig> PolySource<C> {
     pub fn to_poly_value(v: &Value<C>) -> Vec<Polynomial<C::F>> {
         match v {
             Value::Scalar(s) => vec![Polynomial::lit(s)],
-            Value::Index(i) => vec![Polynomial::lit(&C::FOps::from_usize(*i))],
+            Value::Index(i) => vec![Polynomial::lit(&C::F::from(*i as u64))],
             Value::Unit => vec![],
             Value::Vec(v) => v.iter().flat_map(|v| Self::to_poly_value(v)).collect(),
             Value::VecScalar(v) => v.iter().map(Polynomial::lit).collect::<Vec<_>>(),
             Value::VecIndex(v) => v
                 .iter()
-                .map(|i| Polynomial::lit(&C::FOps::from_usize(*i)))
+                .map(|i| Polynomial::lit(&C::F::from(*i as u64)))
                 .collect::<Vec<_>>(),
             Value::G1(_)
             | Value::G2(_)

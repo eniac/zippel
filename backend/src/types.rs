@@ -31,7 +31,7 @@ pub fn binomial(n: usize, k: usize) -> usize {
 /// Atomic (non-aggregate) arkworks-level type.
 ///
 /// `ABase` is the leaf of [`ATyp`]: it names a concrete runtime element kind
-/// that a `Value<C>` can hold for a given `ArkConfig`. Source-level base types
+/// that a `Value<C>` can hold for a given `Backend`. Source-level base types
 /// (`Typ::Base(Tid)`) are collapsed onto these variants by
 /// [`ATyp::from_ctyp`], which consults the kind context to decide which
 /// arkworks type a bare `Tid` stands for.
@@ -88,6 +88,16 @@ pub enum ATyp {
 }
 
 impl ATyp {
+    /// Whether `pred` holds for a base type this type is built from.
+    pub fn any_base(&self, pred: &impl Fn(&ABase) -> bool) -> bool {
+        match self {
+            ATyp::Base(b) => pred(b),
+            ATyp::Vec(t, _) => t.any_base(pred),
+            ATyp::Record(fields) => fields.iter().any(|(_, t)| t.any_base(pred)),
+            ATyp::Uni(_) | ATyp::Mle(_) | ATyp::VPoly(_, _) => pred(&ABase::Scalar),
+        }
+    }
+
     /// The scalar-field type of the configured curve.
     pub fn scalar() -> Self {
         ATyp::Base(ABase::Scalar)

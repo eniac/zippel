@@ -1,4 +1,5 @@
-use backend::{ArkConfig, OpExclusion, Value};
+use crate::AnalysisBackend;
+use backend::{OpExclusion, Value};
 use graph::{GOp, Node, Op, QDag, Ref};
 use lang::ast::{BinOp, Exclusion};
 use lang::typ::Distribution;
@@ -25,14 +26,14 @@ pub struct UniformityPropagation {
 }
 
 #[cfg(test)]
-fn op_ancestors_of<C: ArkConfig>(
+fn op_ancestors_of<C: AnalysisBackend>(
     op: &GOp<C>,
     ancestors: &Ctx<NodeIndex, Set<NodeIndex>>,
 ) -> Set<NodeIndex> {
     op_ancestors_of_loops(op, ancestors, &[])
 }
 
-fn op_ancestors_of_loops<C: ArkConfig>(
+fn op_ancestors_of_loops<C: AnalysisBackend>(
     op: &GOp<C>,
     ancestors: &Ctx<NodeIndex, Set<NodeIndex>>,
     loops: &[Set<NodeIndex>],
@@ -84,7 +85,7 @@ fn op_ancestors_of_loops<C: ArkConfig>(
 }
 
 #[cfg(test)]
-fn is_independent<C: ArkConfig>(
+fn is_independent<C: AnalysisBackend>(
     a: &GOp<C>,
     b: &GOp<C>,
     ancestors: &Ctx<NodeIndex, Set<NodeIndex>>,
@@ -92,7 +93,7 @@ fn is_independent<C: ArkConfig>(
     is_independent_loops(a, b, ancestors, &[])
 }
 
-fn is_independent_loops<C: ArkConfig>(
+fn is_independent_loops<C: AnalysisBackend>(
     a: &GOp<C>,
     b: &GOp<C>,
     ancestors: &Ctx<NodeIndex, Set<NodeIndex>>,
@@ -106,7 +107,7 @@ fn is_independent_loops<C: ArkConfig>(
 /// nothing, uniform over the nonzero values when it excludes only zero
 /// (`F - [0]`), and uniform over neither domain otherwise. `node` resolves a
 /// list that the exclusion references.
-fn sample_distribution<C: ArkConfig>(
+fn sample_distribution<C: AnalysisBackend>(
     exclusion: Option<&OpExclusion<C>>,
     node: &dyn Fn(Ref) -> Option<GOp<C>>,
 ) -> Distribution {
@@ -124,7 +125,7 @@ fn sample_distribution<C: ArkConfig>(
 
 /// The entries of `op` if it is a list of constants, inline or behind a
 /// reference that `node` resolves.
-fn constants<C: ArkConfig>(
+fn constants<C: AnalysisBackend>(
     op: &GOp<C>,
     node: &dyn Fn(Ref) -> Option<GOp<C>>,
 ) -> Option<Vec<Value<C>>> {
@@ -143,14 +144,14 @@ fn constants<C: ArkConfig>(
 }
 
 /// The operation of node `r` of `dag`, if it computes one.
-fn node_op<C: ArkConfig>(dag: &QDag<C>, r: Ref) -> Option<GOp<C>> {
+fn node_op<C: AnalysisBackend>(dag: &QDag<C>, r: Ref) -> Option<GOp<C>> {
     match &dag[r.0] {
         Node::Op(op, _) | Node::Transcr(op, _) => Some(op.get().clone()),
         _ => None,
     }
 }
 
-fn compute_distribution<C: ArkConfig>(
+fn compute_distribution<C: AnalysisBackend>(
     op: &GOp<C>,
     ancestors: &Ctx<NodeIndex, Set<NodeIndex>>,
     distributions: &Ctx<Ref, Distribution>,
@@ -160,7 +161,7 @@ fn compute_distribution<C: ArkConfig>(
 
 /// `dist_loops[i]` is the distribution of enclosing loop binder `i`;
 /// `anc_loops[i]` its ancestor set (fed to `is_independent_loops`).
-fn compute_distribution_loops<C: ArkConfig>(
+fn compute_distribution_loops<C: AnalysisBackend>(
     op: &GOp<C>,
     ancestors: &Ctx<NodeIndex, Set<NodeIndex>>,
     distributions: &Ctx<Ref, Distribution>,
@@ -341,7 +342,7 @@ fn compute_distribution_loops<C: ArkConfig>(
 /// distribution and ancestor set as the loop binder, then analyze the body.
 /// Mirrors the old unrolled `Vec`+`Reduce` where each element's
 /// `Ram(domain, i)` carried the domain's distribution and ancestors.
-fn compute_reduce_map_generic<C: ArkConfig>(
+fn compute_reduce_map_generic<C: AnalysisBackend>(
     d: &graph::HOp<C>,
     b: &graph::HOp<C>,
     ancestors: &Ctx<NodeIndex, Set<NodeIndex>>,
@@ -366,7 +367,7 @@ impl UniformityPropagation {
     /// resolved distributions. `Arg` nodes take the distribution declared in
     /// the source; operations derive theirs structurally, and nodes whose
     /// distribution cannot be established are simply left unmapped.
-    pub fn from_dag<C: ArkConfig>(dag: &QDag<C>) -> Self {
+    pub fn from_dag<C: AnalysisBackend>(dag: &QDag<C>) -> Self {
         let mut ancestors: Ctx<NodeIndex, Set<NodeIndex>> = dag
             .node_indices()
             .map(|n| (n, dag.trc(n, Direction::Incoming)))

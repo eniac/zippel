@@ -2,7 +2,7 @@
 
 use super::*;
 
-impl<C: HasOpFactory> UDag<C> {
+impl<C: Backend> UDag<C> {
     pub(super) fn lower_app(
         &mut self,
         scope: &mut Scope<'_, C>,

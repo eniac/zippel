@@ -7,8 +7,7 @@
 
 use std::{collections::BTreeMap, time::Instant};
 
-use analyses::GbBackendKind;
-use backend::{ArkConfig, HasOpFactory};
+use analyses::{AnalysisBackend, GbBackendKind};
 use clap::Parser;
 use zippel::{Analysis, CompileOptions, ParsedModule};
 
@@ -92,7 +91,7 @@ fn measure<T>(times: &mut Times, name: &'static str, f: impl FnOnce() -> T) -> T
     result
 }
 
-fn benchmark<C: ArkConfig + HasOpFactory>(
+fn benchmark<C: AnalysisBackend>(
     spec: &common::ExampleSpec<C>,
     mode: Mode,
     args: &Case,

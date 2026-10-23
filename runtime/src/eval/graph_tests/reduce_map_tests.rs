@@ -299,18 +299,18 @@ fn test_reduce_map_fused_optimization_fires() {
         unreachable!()
     };
     for t_idx in 0..4 {
-        let t = <B as backend::ArkConfig>::F::from(t_idx);
-        let mut expected = <B as backend::ArkConfig>::F::zero();
+        let t = <B as backend::Backend>::F::from(t_idx);
+        let mut expected = <B as backend::Backend>::F::zero();
         for tail_index in 0..4 {
             let b0 = if tail_index & 1 == 1 {
-                <B as backend::ArkConfig>::F::one()
+                <B as backend::Backend>::F::one()
             } else {
-                <B as backend::ArkConfig>::F::zero()
+                <B as backend::Backend>::F::zero()
             };
             let b1 = if (tail_index >> 1) & 1 == 1 {
-                <B as backend::ArkConfig>::F::one()
+                <B as backend::Backend>::F::one()
             } else {
-                <B as backend::ArkConfig>::F::zero()
+                <B as backend::Backend>::F::zero()
             };
             expected += orig_poly.evaluate_mv(&[t, b0, b1]).unwrap();
         }
@@ -368,18 +368,18 @@ fn test_reduce_map_fused_optimization_skips_non_pow_two() {
         unreachable!()
     };
     for t_idx in 0..4 {
-        let t = <B as backend::ArkConfig>::F::from(t_idx);
-        let mut expected = <B as backend::ArkConfig>::F::zero();
+        let t = <B as backend::Backend>::F::from(t_idx);
+        let mut expected = <B as backend::Backend>::F::zero();
         for tail_index in 0..3 {
             let b0 = if tail_index & 1 == 1 {
-                <B as backend::ArkConfig>::F::one()
+                <B as backend::Backend>::F::one()
             } else {
-                <B as backend::ArkConfig>::F::zero()
+                <B as backend::Backend>::F::zero()
             };
             let b1 = if (tail_index >> 1) & 1 == 1 {
-                <B as backend::ArkConfig>::F::one()
+                <B as backend::Backend>::F::one()
             } else {
-                <B as backend::ArkConfig>::F::zero()
+                <B as backend::Backend>::F::zero()
             };
             expected += orig_poly.evaluate_mv(&[t, b0, b1]).unwrap();
         }
@@ -437,18 +437,18 @@ fn test_reduce_map_fused_optimization_skips_multiplicative() {
         unreachable!()
     };
     for t_idx in 0..4 {
-        let t = <B as backend::ArkConfig>::F::from(t_idx);
-        let mut expected = <B as backend::ArkConfig>::F::one();
+        let t = <B as backend::Backend>::F::from(t_idx);
+        let mut expected = <B as backend::Backend>::F::one();
         for tail_index in 0..4 {
             let b0 = if tail_index & 1 == 1 {
-                <B as backend::ArkConfig>::F::one()
+                <B as backend::Backend>::F::one()
             } else {
-                <B as backend::ArkConfig>::F::zero()
+                <B as backend::Backend>::F::zero()
             };
             let b1 = if (tail_index >> 1) & 1 == 1 {
-                <B as backend::ArkConfig>::F::one()
+                <B as backend::Backend>::F::one()
             } else {
-                <B as backend::ArkConfig>::F::zero()
+                <B as backend::Backend>::F::zero()
             };
             expected *= orig_poly.evaluate_mv(&[t, b0, b1]).unwrap();
         }
@@ -460,10 +460,8 @@ fn test_reduce_map_fused_optimization_skips_multiplicative() {
 #[serial]
 fn test_reduce_map_fused_optimization_fallback_on_non_mle() {
     use crate::eval::graph_tests::helpers::execute_graph;
-    use ark_poly::multivariate::{
-        SparsePolynomial as SparseMultivariatePolynomial, SparseTerm as MultiSparseTerm, Term as _,
-    };
     use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
+    use backend::poly_variant::{Multivariate, Term};
     use backend::{PolyVariant, VirtualPolynomial};
 
     // Poly<F, 3, 2> is a polynomial of 3 variables and max degree 2 (non-MLE).
@@ -490,20 +488,11 @@ fn test_reduce_map_fused_optimization_fallback_on_non_mle() {
 
     // We construct a non-MLE polynomial (e.g. X_0^2 + X_1 + X_2) manually
     let terms = vec![
-        (
-            <B as backend::ArkConfig>::F::one(),
-            MultiSparseTerm::new(vec![(0, 2)]),
-        ),
-        (
-            <B as backend::ArkConfig>::F::one(),
-            MultiSparseTerm::new(vec![(1, 1)]),
-        ),
-        (
-            <B as backend::ArkConfig>::F::one(),
-            MultiSparseTerm::new(vec![(2, 1)]),
-        ),
+        (<B as backend::Backend>::F::one(), Term::new(vec![(0, 2)])),
+        (<B as backend::Backend>::F::one(), Term::new(vec![(1, 1)])),
+        (<B as backend::Backend>::F::one(), Term::new(vec![(2, 1)])),
     ];
-    let p = SparseMultivariatePolynomial { num_vars: 3, terms };
+    let p = Multivariate::new(3, terms);
     let poly_variant = PolyVariant::SparseMultivariate(p);
     let poly_val = Value::poly(VirtualPolynomial::from_poly(poly_variant));
     inputs.insert(&lang::id::Vid::from("p"), &poly_val);
@@ -528,9 +517,9 @@ fn test_reduce_map_fused_optimization_fallback_on_non_mle() {
     // R(t) = Sum_{b ∈ {0,1}^2} P(t, b)
     // For P(t, b0, b1) = t^2 + b0 + b1, the sum over b0, b1 in {0,1} is 4*t^2 + 4.
     for t_idx in 0..4 {
-        let t = <B as backend::ArkConfig>::F::from(t_idx);
+        let t = <B as backend::Backend>::F::from(t_idx);
         let expected =
-            t * t * <B as backend::ArkConfig>::F::from(4) + <B as backend::ArkConfig>::F::from(4);
+            t * t * <B as backend::Backend>::F::from(4) + <B as backend::Backend>::F::from(4);
         assert_eq!(got_poly.evaluate_uv(&t), expected);
     }
 }
@@ -585,24 +574,24 @@ fn test_reduce_map_fused_optimization_skips_modified_loop_param() {
         unreachable!()
     };
     for t_idx in 0..4 {
-        let t = <B as backend::ArkConfig>::F::from(t_idx);
-        let mut expected = <B as backend::ArkConfig>::F::zero();
+        let t = <B as backend::Backend>::F::from(t_idx);
+        let mut expected = <B as backend::Backend>::F::zero();
         for tail_index in 0..4 {
             let b0 = if tail_index & 1 == 1 {
-                <B as backend::ArkConfig>::F::one()
+                <B as backend::Backend>::F::one()
             } else {
-                <B as backend::ArkConfig>::F::zero()
+                <B as backend::Backend>::F::zero()
             };
             let b1 = if (tail_index >> 1) & 1 == 1 {
-                <B as backend::ArkConfig>::F::one()
+                <B as backend::Backend>::F::one()
             } else {
-                <B as backend::ArkConfig>::F::zero()
+                <B as backend::Backend>::F::zero()
             };
             expected += orig_poly
                 .evaluate_mv(&[
                     t,
-                    b0 + <B as backend::ArkConfig>::F::one(),
-                    b1 + <B as backend::ArkConfig>::F::one(),
+                    b0 + <B as backend::Backend>::F::one(),
+                    b1 + <B as backend::Backend>::F::one(),
                 ])
                 .unwrap();
         }
@@ -667,13 +656,13 @@ fn test_reduce_map_fused_optimization_skips_non_vec_domain() {
     // The optimization must skip (because domain typ is not Vec), falling back to evaluation which returns a type mismatch error.
     let scalar_t = ATyp::scalar();
     let domain = Op::Value(Value::poly(
-        backend::VirtualPolynomial::constant_with_num_vars(<B as backend::ArkConfig>::F::one(), 1),
+        backend::VirtualPolynomial::constant_with_num_vars(<B as backend::Backend>::F::one(), 1),
     ));
 
     // fixed has LoopParam
     let fixed = mk::<B>(Op::LoopParam(0, scalar_t.clone()));
     let p = mk::<B>(Op::Value(Value::poly(
-        backend::VirtualPolynomial::constant_with_num_vars(<B as backend::ArkConfig>::F::one(), 2),
+        backend::VirtualPolynomial::constant_with_num_vars(<B as backend::Backend>::F::one(), 2),
     )));
     let body = Op::Evaluate(p, Some(lang::ast::CRange::from_raw(0, 1, 1)), Some(fixed));
 
@@ -720,7 +709,7 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_hypercube_domain_with_
     inputs.insert(&lang::id::Vid::from("p"), &poly_val.clone());
 
     // Construct a non-canonical coordinate domain: [[1, 1], [1, 1], [1, 1], [1, 1]]
-    let one = <B as backend::ArkConfig>::F::one();
+    let one = <B as backend::Backend>::F::one();
     let sub_vec = Value::vec_scalar(vec![one, one]);
     let domain_val = Value::Vec(
         vec![
@@ -753,9 +742,9 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_hypercube_domain_with_
         unreachable!()
     };
     for t_idx in 0..4 {
-        let t = <B as backend::ArkConfig>::F::from(t_idx);
-        let expected = orig_poly.evaluate_mv(&[t, one, one]).unwrap()
-            * <B as backend::ArkConfig>::F::from(4u64);
+        let t = <B as backend::Backend>::F::from(t_idx);
+        let expected =
+            orig_poly.evaluate_mv(&[t, one, one]).unwrap() * <B as backend::Backend>::F::from(4u64);
         assert_eq!(got_poly.evaluate_uv(&t), expected);
     }
 }
@@ -816,11 +805,11 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_indices_domain_with_ma
         unreachable!()
     };
     for t_idx in 0..4 {
-        let t = <B as backend::ArkConfig>::F::from(t_idx);
-        let mut expected = <B as backend::ArkConfig>::F::zero();
+        let t = <B as backend::Backend>::F::from(t_idx);
+        let mut expected = <B as backend::Backend>::F::zero();
         for &idx in &[3usize, 2usize, 1usize, 0usize] {
-            let b0 = <B as backend::ArkConfig>::F::from((idx % 2) as u64);
-            let b1 = <B as backend::ArkConfig>::F::from(((idx / 2) % 2) as u64);
+            let b0 = <B as backend::Backend>::F::from((idx % 2) as u64);
+            let b1 = <B as backend::Backend>::F::from(((idx / 2) % 2) as u64);
             expected += orig_poly.evaluate_mv(&[t, b0, b1]).unwrap();
         }
         assert_eq!(got_poly.evaluate_uv(&t), expected);
@@ -878,18 +867,18 @@ fn test_reduce_map_fused_optimization_skips_arity_mismatch() {
         unreachable!()
     };
     for t_idx in 0..4 {
-        let t = <B as backend::ArkConfig>::F::from(t_idx);
-        let mut expected = <B as backend::ArkConfig>::F::zero();
+        let t = <B as backend::Backend>::F::from(t_idx);
+        let mut expected = <B as backend::Backend>::F::zero();
         for i in 0..8 {
             let b0 = if (i % 2) == 1 {
-                <B as backend::ArkConfig>::F::one()
+                <B as backend::Backend>::F::one()
             } else {
-                <B as backend::ArkConfig>::F::zero()
+                <B as backend::Backend>::F::zero()
             };
             let b1 = if ((i / 2) % 2) == 1 {
-                <B as backend::ArkConfig>::F::one()
+                <B as backend::Backend>::F::one()
             } else {
-                <B as backend::ArkConfig>::F::zero()
+                <B as backend::Backend>::F::zero()
             };
             expected += orig_poly.evaluate_mv(&[t, b0, b1]).unwrap();
         }

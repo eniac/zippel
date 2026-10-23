@@ -2,10 +2,10 @@
 
 use crate::{CompileError, CompiledProtocol};
 use analyses::{
-    AnalysisError, CompletenessAnalysis, GbBackendKind, KnowledgeAnalysis, QualifierPropagation,
-    SpecialSoundnessAnalysis,
+    AnalysisBackend, AnalysisError, CompletenessAnalysis, GbBackendKind, KnowledgeAnalysis,
+    QualifierPropagation, SpecialSoundnessAnalysis,
 };
-use backend::{ArkConfig, HasOpFactory};
+use backend::Backend;
 use graph::{Dag, Relations, UDags};
 use lang::typ::Qualifier;
 use std::sync::Arc;
@@ -37,11 +37,11 @@ impl Analysis<'_> {
 ///
 /// Constructed by [`CompiledProtocol::prepare_analysis`]. Reuse this object to measure
 /// multiple passes independently of graph preparation.
-pub struct PreparedAnalysis<C: ArkConfig> {
+pub struct PreparedAnalysis<C: Backend> {
     graph: Dag<C, Qualifier>,
 }
 
-impl<C: ArkConfig + HasOpFactory> CompiledProtocol<C> {
+impl<C: AnalysisBackend> CompiledProtocol<C> {
     /// Lower the full protocol graph, including its relation, and propagate qualifiers.
     ///
     /// Call once before timing passes. This does no polynomial encoding or Gröbner-basis work.
@@ -68,7 +68,7 @@ impl<C: ArkConfig + HasOpFactory> CompiledProtocol<C> {
     }
 }
 
-impl<C: ArkConfig + HasOpFactory> PreparedAnalysis<C> {
+impl<C: AnalysisBackend> PreparedAnalysis<C> {
     /// Prepared graph for lower-level `build_inputs` / `try_from_inputs` / `run` control.
     #[must_use]
     pub const fn graph(&self) -> &Dag<C, Qualifier> {

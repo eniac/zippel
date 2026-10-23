@@ -2,11 +2,10 @@
 //! `IdealBuilder::build()` call. Holds the generating set, polynomial
 //! definitions (`pl`), and the variable namespace.
 
+use crate::AnalysisBackend;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use backend::ArkConfig;
-use backend::op::HasOpFactory;
 use graph::Ref;
 use share::{Ctx, Set};
 
@@ -17,7 +16,7 @@ use crate::frontend::Polynomial;
 /// The ideal of building a Gröbner basis — the basis polynomials, their
 /// polynomial definitions (pl), and the vars used in the basis.
 #[derive(Clone)]
-pub struct Ideal<C: ArkConfig> {
+pub struct Ideal<C: AnalysisBackend> {
     /// The generators of the ideal: what a run of the fragment computes. Its
     /// `conditions` are not among them.
     pub generating_set: Vec<Polynomial<C::F>>,
@@ -44,7 +43,7 @@ pub struct Ideal<C: ArkConfig> {
     pub division_witnesses: HashSet<Ref>,
 }
 
-impl<C: ArkConfig + HasOpFactory> Ideal<C> {
+impl<C: AnalysisBackend> Ideal<C> {
     /// Create an empty ideal: no generators, no definitions, empty namespace.
     pub fn new() -> Self {
         Self {
@@ -152,14 +151,14 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
     }
 }
 
-impl<C: ArkConfig + HasOpFactory> Default for Ideal<C> {
+impl<C: AnalysisBackend> Default for Ideal<C> {
     fn default() -> Self {
         Self::new()
     }
 }
 
 /// `Basis: ` followed by one generator per line, indented.
-impl<C: ArkConfig> fmt::Display for Ideal<C> {
+impl<C: AnalysisBackend> fmt::Display for Ideal<C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("Basis: ")?;
         for p in &self.generating_set {

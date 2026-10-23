@@ -3,8 +3,8 @@
 use super::*;
 use lang::typ::Distribution;
 
-/// Methods requiring hash-consing (HasOpFactory)
-impl<C: HasOpFactory, A> Dag<C, A> {
+/// Methods requiring hash-consing
+impl<C: Backend, A> Dag<C, A> {
     /// Rewrites every `NodeIndex` — both the graph's own and those buried
     /// inside [`Ref`]s in hash-consed operations — through `f`.
     ///

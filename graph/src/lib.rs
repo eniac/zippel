@@ -33,13 +33,13 @@ pub mod testing;
 #[cfg(test)]
 mod tests;
 
-pub use backend::op::{GOp, HOp, HasOpFactory, Op, OpExclusion, Ref, mk};
+pub use backend::op::{GOp, HOp, Op, OpExclusion, Ref, mk};
 pub use dep::{Dep, DepType};
 use log::debug;
 pub use lower::Relations;
 pub use node::{ArgKind, Node};
 
-use backend::{ArkConfig, PolyVariant};
+use backend::{Backend, PolyVariant};
 use lang::ast::spanned::Spanned;
 use lang::diagnostic::{Diagnostic, Phase};
 use lang::id::Vid;
@@ -61,7 +61,7 @@ use thiserror::Error;
 /// It is parameterized by types `A` representing a
 /// node annotation like costs, schedules etc.
 #[derive(Clone)]
-pub struct Dag<C: ArkConfig, A> {
+pub struct Dag<C: Backend, A> {
     /// The underlying `petgraph` structure: each node with the source span that created it
     /// (nodes are never deduplicated, so each has one), and [`Dep`] edges. The span lives here,
     /// not in the hash-consed operation, which every node computing it shares.
@@ -81,7 +81,7 @@ pub type QDag<C> = Dag<C, Qualifier>;
 
 /// A collection of dags
 #[derive(Clone)]
-pub struct Dags<C: ArkConfig, A>(Vec<Dag<C, A>>);
+pub struct Dags<C: Backend, A>(Vec<Dag<C, A>>);
 /// A collection of unannotated DAGs, one per module declaration.
 pub type UDags<C> = Dags<C, Nothing>;
 /// A collection of DAGs after qualifier propagation.
@@ -123,6 +123,16 @@ pub enum GraphError {
     /// the reason and the source span of the offending subexpression.
     #[error("Fun expression contains non-polynomial operations: {0}")]
     NonPolynomialFun(String, std::ops::Range<usize>),
+    /// The protocol needs something the backend lacks (see `GOp::unsupported`).
+    #[error("{backend} cannot run this protocol: it needs {what}")]
+    Unsupported {
+        /// What is missing.
+        what: backend::op::Unsupported,
+        /// The backend's name.
+        backend: String,
+        /// The node that needs it.
+        span: std::ops::Range<usize>,
+    },
 }
 
 /// A value reachable from a verifier check that the verifier cannot know or recompute.
@@ -197,6 +207,16 @@ impl From<&GraphError> for Diagnostic {
                 Diagnostic::error(Phase::Type, name.span.clone(), &e.to_string())
                     .primary_label("declared without a `where` clause")
             }
+            GraphError::Unsupported { what, span, .. } => {
+                let label = match what {
+                    backend::op::Unsupported::Pairing => "needs a pairing",
+                    backend::op::Unsupported::Group => "needs a group",
+                    backend::op::Unsupported::FftDomain { .. } => "needs a larger FFT domain",
+                };
+                Diagnostic::error(Phase::Type, span.clone(), &e.to_string())
+                    .primary_label(label)
+                    .note("compile the protocol for a backend that has it")
+            }
         }
     }
 }
@@ -207,6 +227,14 @@ impl From<GraphError> for Diagnostic {
     }
 }
 
+/// The Rust name of backend `C` (as `compile::<C>` spells it), without its module path.
+fn backend_name<C>() -> String {
+    let full = std::any::type_name::<C>();
+    let head = full.split('<').next().unwrap_or(full);
+    let start = head.rfind("::").map_or(0, |i| i + 2);
+    full[start..].to_string()
+}
+
 impl From<TypeError> for GraphError {
     fn from(e: TypeError) -> Self {
         GraphError::Type(Box::new(e))
@@ -214,7 +242,7 @@ impl From<TypeError> for GraphError {
 }
 
 /// `weight` with its node replaced by `f` of it, keeping the node's span.
-fn respan<C: ArkConfig, A, B>(
+fn respan<C: Backend, A, B>(
     weight: &Spanned<Node<C, A>>,
     f: impl FnOnce(&Node<C, A>) -> Node<C, B>,
 ) -> Spanned<Node<C, B>> {
@@ -282,10 +310,7 @@ impl GraphError {
 /// Compare two `Node` values for isomorphism-compatible equality.
 /// Erases `NodeIndex` inside `GOp` and `Var` so that structurally
 /// identical nodes from different graphs compare as equal.
-fn nodes_isomorphic_eq<C: HasOpFactory, A: PartialEq + Clone>(
-    a: &Node<C, A>,
-    b: &Node<C, A>,
-) -> bool {
+fn nodes_isomorphic_eq<C: Backend, A: PartialEq + Clone>(a: &Node<C, A>, b: &Node<C, A>) -> bool {
     let erase = |_: NodeIndex| NodeIndex::new(0);
     match (a, b) {
         (Node::Inp(v1), Node::Inp(v2)) => v1 == v2,
@@ -303,7 +328,7 @@ fn nodes_isomorphic_eq<C: HasOpFactory, A: PartialEq + Clone>(
     }
 }
 
-impl<C: HasOpFactory, A: PartialEq + Clone> PartialEq for Dag<C, A> {
+impl<C: Backend, A: PartialEq + Clone> PartialEq for Dag<C, A> {
     fn eq(&self, other: &Self) -> bool {
         petgraph::algo::is_isomorphic_matching(
             &self.graph,
@@ -315,13 +340,37 @@ impl<C: HasOpFactory, A: PartialEq + Clone> PartialEq for Dag<C, A> {
     }
 }
 
-impl<C: ArkConfig, A> Default for Dag<C, A> {
+impl<C: Backend, A> Default for Dag<C, A> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<C: ArkConfig, A> Dag<C, A> {
+impl<C: Backend, A> Dag<C, A> {
+    /// Checks that backend `C` can run every node: no pairing or target-group value
+    /// without a pairing, no group value without groups, and no FFT larger than the
+    /// field's largest FFT domain.
+    ///
+    /// # Errors
+    /// [`GraphError::Unsupported`] at the first node that needs what `C` lacks.
+    pub fn check_backend(&self) -> Result<(), GraphError> {
+        for node in self.graph.node_weights() {
+            let what = match &node.node {
+                Node::Arg(_, typ, ..) => backend::op::unsupported_type::<C>(typ),
+                Node::Op(op, _) | Node::Transcr(op, _) => op.unsupported(),
+                Node::Inp(_) | Node::Rel(_) => None,
+            };
+            if let Some(what) = what {
+                return Err(GraphError::Unsupported {
+                    what,
+                    backend: backend_name::<C>(),
+                    span: node.span.clone(),
+                });
+            }
+        }
+        Ok(())
+    }
+
     /// Creates an empty DAG with no nodes and empty name contexts.
     pub fn new() -> Self {
         Dag {
@@ -781,13 +830,13 @@ impl<C: ArkConfig, A> Dag<C, A> {
 }
 
 /// A collection of DAGs
-impl<C: ArkConfig, A> Default for Dags<C, A> {
+impl<C: Backend, A> Default for Dags<C, A> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<C: ArkConfig, A> Dags<C, A> {
+impl<C: Backend, A> Dags<C, A> {
     /// Creates an empty collection.
     pub fn new() -> Self {
         Dags(Vec::new())
@@ -849,20 +898,20 @@ impl<C: ArkConfig, A> Dags<C, A> {
     }
 }
 
-impl<C: ArkConfig, A> Index<NodeIndex> for Dag<C, A> {
+impl<C: Backend, A> Index<NodeIndex> for Dag<C, A> {
     type Output = Node<C, A>;
     fn index(&self, index: NodeIndex) -> &Self::Output {
         &self.graph[index].node
     }
 }
 
-impl<C: ArkConfig, A> std::ops::IndexMut<NodeIndex> for Dag<C, A> {
+impl<C: Backend, A> std::ops::IndexMut<NodeIndex> for Dag<C, A> {
     fn index_mut(&mut self, index: NodeIndex) -> &mut Self::Output {
         &mut self.graph[index].node
     }
 }
 
-impl<C: ArkConfig, A> Index<usize> for Dags<C, A> {
+impl<C: Backend, A> Index<usize> for Dags<C, A> {
     type Output = Dag<C, A>;
     fn index(&self, index: usize) -> &Self::Output {
         &self.0[index]
