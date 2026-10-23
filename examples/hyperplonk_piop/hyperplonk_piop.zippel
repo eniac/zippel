@@ -260,11 +260,10 @@ fn perm_piop_column<F: Field, S: Size, N: 2 ^ S>(
 
     let neg_v_prod = v_tail_0 * -1 * v_tail_1;
     let neg_f1_mle = f1_mle * -1;
-    let f_relation = v_lead_1 + neg_v_prod;
     let alpha_f2_mle = f2_mle * alpha;
-    let alpha_neg_f1 = neg_f1_mle * alpha;
-    let alpha_g = alpha_f2_mle * v_lead_0 + alpha_neg_f1;
-    let h_check = f_relation + alpha_g;
+    // The multilinear part as one table: every sumcheck round folds and sums it.
+    let h_lin = mle(v_lead_1 + neg_f1_mle * alpha);
+    let h_check = h_lin + neg_v_prod + alpha_f2_mle * v_lead_0;
 
     let p_poly = h_check * eq_sau;
 

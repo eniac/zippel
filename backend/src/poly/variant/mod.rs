@@ -123,9 +123,14 @@ impl<F: Field> PolyVariant<F> {
         }
     }
 
-    /// `Σ c·p` over `terms`, when every `p` is a multilinear extension over `num_vars`
-    /// variables; `None` otherwise.
-    pub(crate) fn linear_combination(num_vars: usize, terms: &[(F, &Self)]) -> Option<Self> {
+    /// `constant + Σ c·p` over `terms`, when every `p` is a multilinear extension over
+    /// `num_vars` variables: all entries summed together, the result encoded by its
+    /// density; `None` otherwise.
+    pub(crate) fn multilinear_sum(
+        num_vars: usize,
+        constant: F,
+        terms: &[(F, &Self)],
+    ) -> Option<Self> {
         let tables: Vec<(F, Table<'_, F>)> = terms
             .iter()
             .map(|&(c, p)| match p.mle_table()? {
@@ -133,7 +138,7 @@ impl<F: Field> PolyVariant<F> {
                 _ => None,
             })
             .collect::<Option<_>>()?;
-        Some(mle::linear_combination(num_vars, &tables))
+        Some(mle::sum(num_vars, constant, &tables))
     }
 
     /// Get the degree of the polynomial

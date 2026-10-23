@@ -80,6 +80,17 @@ fn from_entries<F: Field>(
     num_vars: usize,
     entries: impl IntoIterator<Item = (usize, F)>,
 ) -> PolyVariant<F> {
+    let entries = entries.into_iter();
+    from_counted_entries(num_vars, entries.size_hint().0, entries)
+}
+
+/// [`from_entries`] for an iterator of `count` entries whose own size hint does not know
+/// them (a chain of flattened tables, say).
+fn from_counted_entries<F: Field>(
+    num_vars: usize,
+    count: usize,
+    entries: impl IntoIterator<Item = (usize, F)>,
+) -> PolyVariant<F> {
     enum Accumulated<F> {
         Dense(Vec<F>),
         Sparse(HashMap<usize, F>),
@@ -88,7 +99,7 @@ fn from_entries<F: Field>(
     let entries = entries.into_iter();
     let len = 1usize.checked_shl(u32::try_from(num_vars).unwrap_or(u32::MAX));
     let mut sums = match len {
-        Some(len) if len <= entries.size_hint().0.saturating_mul(DENSE_SCRATCH_FACTOR) => {
+        Some(len) if len <= count.saturating_mul(DENSE_SCRATCH_FACTOR) => {
             Accumulated::Dense(accumulate_dense(len, entries))
         }
         _ => {
@@ -164,40 +175,39 @@ pub(super) fn add<F: Field>(num_vars: usize, a: Table<'_, F>, b: Table<'_, F>) -
     }
 }
 
-/// `Σ c·f` over the tables `terms`, all over `num_vars` variables: dense when any table is,
-/// else encoded by density ([`from_entries`]).
-pub(super) fn linear_combination<F: Field>(
+/// `constant + Σ c·f` over the tables `terms`, all over `num_vars` variables: every
+/// entry accumulated together, the result encoded by its density ([`from_entries`]).
+pub(super) fn sum<F: Field>(
     num_vars: usize,
+    constant: F,
     terms: &[(F, Table<'_, F>)],
 ) -> PolyVariant<F> {
-    if terms.iter().all(|(_, t)| matches!(t, Table::Sparse(_))) {
-        return from_entries(
-            num_vars,
-            terms.iter().flat_map(|&(c, table)| {
-                let evals: &[(usize, F)] = match table {
-                    Table::Sparse(evals) => evals,
-                    Table::Dense(_) => &[],
-                };
-                evals.iter().map(move |&(i, v)| (i, c * v))
-            }),
-        );
-    }
-    let mut out = vec![F::zero(); 1 << num_vars];
-    for &(c, table) in terms {
-        match table {
-            Table::Dense(values) => out
-                .par_iter_mut()
-                .zip(values)
-                .with_min_len(PARALLEL_BLOCK)
-                .for_each(|(o, &v)| *o += c * v),
-            Table::Sparse(evals) => {
-                for &(i, v) in evals {
-                    out[i] += c * v;
-                }
-            }
-        }
-    }
-    dense_mle(num_vars, out)
+    let len = 1usize << num_vars;
+    let constants = if constant.is_zero() { 0 } else { len };
+    let count = constants
+        + terms
+            .iter()
+            .map(|(_, table)| match table {
+                Table::Dense(values) => values.len(),
+                Table::Sparse(evals) => evals.len(),
+            })
+            .sum::<usize>();
+    let dense = terms.iter().flat_map(|&(c, table)| {
+        let values: &[F] = match table {
+            Table::Dense(values) => values,
+            Table::Sparse(_) => &[],
+        };
+        values.iter().enumerate().map(move |(i, &v)| (i, c * v))
+    });
+    let sparse = terms.iter().flat_map(|&(c, table)| {
+        let evals: &[(usize, F)] = match table {
+            Table::Sparse(evals) => evals,
+            Table::Dense(_) => &[],
+        };
+        evals.iter().map(move |&(i, v)| (i, c * v))
+    });
+    let constant = (0..constants).map(move |i| (i, constant));
+    from_counted_entries(num_vars, count, dense.chain(sparse).chain(constant))
 }
 
 /// The extension at `point`, which fixes every variable.

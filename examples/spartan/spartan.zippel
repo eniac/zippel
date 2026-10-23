@@ -408,7 +408,9 @@ proto spartan<G: Group, F: Scalar<G>, M: Size>(
     let partial_b = eval(mat_b_t, rx_low_first);
     let partial_c = eval(mat_c_t, rx_low_first);
 
-    let l_mle = partial_a * ra + partial_b * rb + partial_c * rc;
+    // One table: every round of sumcheck #2 folds and sums it, so materializing the
+    // combination once beats carrying three products through each round.
+    let l_mle = mle(partial_a * ra + partial_b * rb + partial_c * rc);
     let z_mle = mle(z);
     let m_poly = l_mle * z_mle;
 
