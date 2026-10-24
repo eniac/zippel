@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common import CATALOG, Command, GitHub, canonical, parse_command, read_json
 from command import Unauthorized, prepare, reply, select_revisions
 from report import change, publish, render, validate_results
-from run import arguments, build, execute, instruction_total, native, parse_profiles, phases
+from run import arguments, build, execute, workload, instruction_total, native, parse_profiles, phases
 
 RUN_URL = "https://github.com/eniac/zippel/actions/runs/500"
 
@@ -328,6 +328,40 @@ class Measurements(unittest.TestCase):
             for side in ("base", "head"):
                 self.assertEqual((directory / side / "Cargo.toml").read_text(), "[package]\nname = 'fixture'\n")
                 self.assertEqual(list((directory / side / "benches").iterdir()), [])
+
+    def test_each_revision_builds_and_hashes_its_own_harness(self):
+        coordinator = (Path(__file__).resolve().parents[4] / "benches/ci/main.rs").read_text()
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root)
+            built = {}
+            for side, own in (("old", None), ("new", "// revision harness\n")):
+                tree = directory / side
+                (tree / "benches").mkdir(parents=True)
+                (tree / "Cargo.toml").write_text("[package]\nname = 'fixture'\n")
+                (tree / "examples/common").mkdir(parents=True)
+                (tree / "examples/main.rs").write_text('#[path = "kzg/main.rs"]\nmod kzg;\n')
+                (tree / "examples/kzg").mkdir()
+                (tree / "examples/kzg/main.rs").write_text("")
+                (tree / "examples/kzg/kzg.zippel").write_text("")
+                if own:
+                    (tree / "benches/ci").mkdir()
+                    (tree / "benches/ci/main.rs").write_text(own)
+                    (tree / "benches/ci/profile.rs").write_text("")
+                def compile_revision(args, cwd, env, timeout, log):
+                    overlay = next(cwd.glob("benches/pr-bench-*"))
+                    built[cwd.name] = (overlay / "main.rs").read_text()
+                    executable = directory / f"{cwd.name}-ci"
+                    executable.write_text("")
+                    log.write_text(json.dumps({"reason": "compiler-artifact", "target": {"name": "pr-bench-ci"},
+                                               "executable": str(executable)}))
+                with patch("run.execute", side_effect=compile_revision):
+                    build(tree, directory / f"{side}-build", directory / "target", 10)
+            # A revision predating the harness gets the coordinator's; one with
+            # its own harness is built with it, since it matches its library.
+            self.assertEqual(built["old"], coordinator.replace('"../../examples/registry.rs"', '"registry.rs"'))
+            self.assertEqual(built["new"], "// revision harness\n")
+            hashes = {side: workload(directory / side, "kzg", "examples/kzg/kzg.zippel") for side in ("old", "new")}
+            self.assertNotEqual(hashes["old"], hashes["new"])
 
     def test_failed_build_removes_harness_overlay_and_restores_manifest(self):
         with tempfile.TemporaryDirectory() as root:

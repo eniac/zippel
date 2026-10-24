@@ -48,21 +48,30 @@ def environment():
     return env
 
 
+def harness(tree):
+    """The revision's own CI harness, which matches its library API; the
+    coordinator's for revisions that predate the harness."""
+    own = tree / "benches/ci"
+    if (own / "main.rs").exists() and (own / "profile.rs").exists():
+        return own
+    return Path(__file__).resolve().parents[3] / "benches/ci"
+
+
 def build(tree, directory, target_directory, timeout):
     directory.mkdir(parents=True, exist_ok=True)
     env = environment()
     env["CARGO_TARGET_DIR"] = str(target_directory)
-    harness = Path(__file__).resolve().parents[3] / "benches/ci"
+    source_harness = harness(tree)
     manifest = tree / "Cargo.toml"
     original = manifest.read_bytes()
     start = time.monotonic()
-    # Historical revisions need not contain the new target. Use the same
-    # coordinator-owned harness against each revision's library and examples.
+    # Historical revisions need not contain the target or the shared
+    # registry, so the harness is built from an overlay with its own registry.
     with tempfile.TemporaryDirectory(prefix="pr-bench-", dir=tree / "benches") as scratch:
         overlay = Path(scratch)
-        main = (harness / "main.rs").read_text().replace('"../../examples/registry.rs"', '"registry.rs"')
+        main = (source_harness / "main.rs").read_text().replace('"../../examples/registry.rs"', '"registry.rs"')
         (overlay / "main.rs").write_text(main)
-        shutil.copy2(harness / "profile.rs", overlay / "profile.rs")
+        shutil.copy2(source_harness / "profile.rs", overlay / "profile.rs")
         registry = tree / "examples/registry.rs"
         definitions = (registry if registry.exists() else tree / "examples/main.rs").read_text()
         entries = re.findall(r'#\[path\s*=\s*"([^"\n]+/main\.rs)"\]\s*(?:pub(?:\(crate\))?\s+)?mod\s+([a-z][a-z0-9_]*)\s*;', definitions)
@@ -78,8 +87,17 @@ def build(tree, directory, target_directory, timeout):
         try:
             manifest.write_bytes(original + addition)
             log = directory / "build.jsonl"
-            execute(["cargo", "build", "--locked", "--release", "--message-format=json",
-                     "-p", "zippel", "--bench", "pr-bench-ci"], tree, env, timeout, log)
+            try:
+                execute(["cargo", "build", "--locked", "--release", "--message-format=json",
+                         "-p", "zippel", "--bench", "pr-bench-ci"], tree, env, timeout, log)
+            except ValueError:
+                # The log is not uploaded; put the compiler's errors in the job log.
+                print(f"{tree.name} build failed:", file=sys.stderr)
+                for line in log.read_text().splitlines() if log.exists() else []:
+                    row = json.loads(line)
+                    if row.get("reason") == "compiler-message" and row["message"]["level"] == "error":
+                        print(row["message"]["rendered"], file=sys.stderr)
+                raise
             executables = {row["executable"] for line in log.read_text().splitlines()
                            if (row := json.loads(line)).get("reason") == "compiler-artifact"
                            and row.get("target", {}).get("name") == "pr-bench-ci" and row.get("executable")}
@@ -219,9 +237,8 @@ os.execv({valgrind!r}, [{valgrind!r}, "--tool=callgrind", "--instr-atstart=yes",
 def workload(tree, name, source):
     common = sorted(path.relative_to(tree).as_posix() for path in (tree / "examples/common").glob("*.rs"))
     paths = [source, *common, f"examples/{name}/main.rs"]
-    harness = Path(__file__).resolve().parents[3] / "benches/ci"
     payload = b"".join(path.encode() + (tree / path).read_bytes() for path in paths)
-    payload += b"".join(name.encode() + (harness / name).read_bytes() for name in ("main.rs", "profile.rs"))
+    payload += b"".join(file.encode() + (harness(tree) / file).read_bytes() for file in ("main.rs", "profile.rs"))
     return hashlib.sha256(payload).hexdigest()
 
 
