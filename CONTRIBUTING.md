@@ -62,83 +62,77 @@ extension, case-insensitively) is a reserved Windows device name (`con`, `prn`,
 `aux`, `nul`, `clock$`, `com1`-`com9`, `lpt1`-`lpt9`), since these cannot be
 checked out on Windows.
 
-## PR benchmarks
+## Benchmarking a pull request
 
-Maintainers with repository write permission can request a comparison on an open
-PR:
+Maintainers can compare a pull request's performance against its base by
+commenting on the PR:
 
 ```text
 /bench run
 /bench analyze
+```
+
+`run` measures compilation, proving and verification. `analyze` measures
+compilation, analysis preparation and one static analysis: the one
+[`suite.json`](.github/scripts/bench/suite.json) names for the example,
+otherwise completeness (or the example's first registered analysis, if it has no
+completeness check). Without example names, both use PST13, KZG and IPA at the
+sizes in `suite.json`. To benchmark other examples, list any registered in
+`examples/registry.rs`:
+
+```text
 /bench run pst13 kzg
 /bench analyze schnorr hyperplonk_zerocheck
+```
+
+Two options change what is compared:
+
+- `--size NAME=VALUE` (or `-s`) sets a size, as with `cargo zrun`. Repeat it for
+  every size the examples declare; explicit sizes replace the defaults for all
+  listed examples.
+- `--base COMMIT` and `--head COMMIT` compare other commits. `COMMIT` is `main`,
+  `pr`, or a SHA of at least seven characters from `main`, this PR, or its base
+  branch.
+
+For example:
+
+```text
 /bench run kzg --base abc1234 --head def5678
-/bench analyze --base main --head pr
 /bench run sumcheck --size NUM_VARS_CONST=4 --size MAX_DEGREE_CONST=2
 ```
 
-Omitting names selects PST13, KZG and IPA. An explicit space-separated list
-replaces that selection. Any example registered in `examples/registry.rs` can be
-selected in either mode. The [CI catalog](.github/scripts/bench/suite.json)
-provides vetted defaults: PST13 and KZG runtime workloads have 2^14 elements,
-IPA has 2^10, and analyses use separate small sizes. Other explicit examples use their registered
-sizes. Analysis chooses the configured pass, or completeness when registered,
-otherwise the first registered pass. Unsupported or failing analyses are
-reported as failures.
+The bot reacts with 👀 when it accepts a command, and replies with the reason
+when it cannot. The report arrives as a PR comment, about ten minutes later for
+the default `run`; each mode keeps one comment, which later requests update. A
+new command cancels a running one of the same mode.
 
-Repeat `--size NAME=VALUE` (or `-s NAME=VALUE`) to override sizes, just as with
-`cargo zrun`. Explicit sizes replace the entire default set and must cover every
-declared size. With multiple examples, the same sizes apply to each; each
-validates its names and constraints. Reports show the actual resolved sizes,
-curve, and analysis parameters from each revision. Changed configurations
-suppress percentage comparisons.
+The report compares base and head for each phase, in executed instructions
+(counted with Valgrind) and in wall time. Both sides run on the same machine,
+and each phase is measured three times. A change marked "(noise)" lies within
+the spread of those samples. Prefer the instruction counts: wall time on shared
+CI machines is only a rough guide.
 
-`--base` and `--head` accept full or abbreviated commit SHAs (at least seven hex
-characters), `main` for the repository's default-branch tip, or `pr` for this
-PR's current head. Commit selections must belong to the history of that default
-branch, this PR, or its base branch. Both sides can select from any of those
-histories, including fork PRs. Omitting a flag uses the PR's base/head tip for
-that side. Selections are resolved to full SHAs before the run starts.
-Explicitly selected historical comparisons remain reportable after later pushes;
-if an automatic tip changes, the report says so instead of showing numbers.
+If the PR changes while a benchmark runs, the report says so instead of showing
+numbers; comment again to measure the new code. Commits chosen with `--base` or
+`--head` are always reported.
 
-An accepted command gets an 👀 reaction; a rejected one gets a reply saying why
-(or a 👎 when the commenter lacks write access). A newer command for the same
-PR and mode cancels the older run. The workflow compares the accepted base/head
-commits on one runner and updates one report per mode. Each phase has three
-native timing samples and three instruction profiles, each sample with fresh
-example inputs; a change inside both sides' sample ranges is marked noise.
-Timing is advisory. Failures and timeouts remain visible. One budget,
-`budget_seconds` in the [CI catalog](.github/scripts/bench/suite.json), bounds
-builds and measurement together; cases that do not fit are reported as budget.
+The benchmark builds and runs the PR's code, so only request it on code you
+trust.
 
-Only request benchmarks on PR code you trust. The CI harness reuses existing
-example specifications and public APIs; normal examples and `experiments` have
-no profiling hooks. Workflows must be deployed on the default branch before
-comment commands work. The benchmark job holds only a read-only token, but it
-runs in the default branch's context, so the code it builds could still write
-the repository's Actions caches. The coordinator supplies the same CI harness to
-both revisions, including commits that predate the benchmark workflow, provided
-their example and public library APIs are compatible.
-
-For local checks:
+If you change the benchmark scripts in `.github/scripts/bench/`, run their
+tests:
 
 ```sh
-python3 -m unittest discover -s .github/scripts/bench/tests -p 'test_*.py'
-cargo clippy --locked -p zippel --bench ci -- -D warnings
+python3 -m unittest discover -s .github/scripts/bench/tests
 ```
 
-Full verification needs Valgrind and Singular on PATH, along with the pinned
-Rust toolchain. Use a fresh output directory:
+To run the whole comparison locally on real examples, with Valgrind and Singular
+on `PATH`, pass `verify.py` a new output directory:
 
 ```sh
 python3 .github/scripts/bench/verification/verify.py \
-  --directory /tmp/zippel-bench-verification-NEW
+  --directory /tmp/zippel-bench
 ```
-
-This runs real native/profiling checks and writes JSON results, raw profiles,
-and Markdown reports. Unit tests live under `bench/tests/`; the real workload
-verification driver and worker-counter probe live under `bench/verification/`.
 
 ## Creating a new protocol with Zippel
 
@@ -176,10 +170,11 @@ macro_rules! with_examples {
 }
 ```
 
-The shared registry registers each module's `spec()` under both `run` and
-`analyze` for the normal CLI and CI harness. Keep the list alphabetical.
-Examples supply input construction and metadata; the common harness handles
-arguments, compilation, timing and results.
+`with_examples!` registers each module's `spec()` under both `run` and
+`analyze`, for `cargo zrun` and for [PR
+benchmarks](#benchmarking-a-pull-request). Keep the list alphabetical. Examples
+supply input construction and metadata; the common harness handles arguments,
+compilation, timing and results.
 
 ### 3. Define the protocol
 
