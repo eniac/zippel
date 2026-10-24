@@ -109,8 +109,8 @@ new command cancels a running one of the same mode.
 The report compares base and head for each phase, in executed instructions
 (counted with Valgrind) and in wall time. Both sides run on the same machine,
 and each phase is measured three times. A change marked "(noise)" lies within
-the spread of those samples. Prefer the instruction counts: wall time on shared
-CI machines is only a rough guide.
+the spread of those samples; a change outside it is in bold. Prefer the
+instruction counts: wall time on shared CI machines is only a rough guide.
 
 If the PR changes while a benchmark runs, the report says so instead of showing
 numbers; comment again to measure the new code. Commits chosen with `--base` or

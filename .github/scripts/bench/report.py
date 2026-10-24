@@ -78,72 +78,54 @@ def validate_results(data, request):
 
 
 def change(base, head):
-    """Median change; a change inside both sides' sample ranges is noise."""
+    """Median change: bold when the two sides' samples do not overlap,
+    "(noise)" when they do."""
     low, high = statistics.median(base), statistics.median(head)
     if low <= 0:
         return "—"
     text = f"{100 * (high / low - 1):+.1f}%"
-    return text + " (noise)" if max(min(base), min(head)) <= min(max(base), max(head)) else text
+    if max(min(base), min(head)) <= min(max(base), max(head)):
+        return f"{text} (noise)"
+    return f"**{text}**"
 
 
-def time_cell(samples):
-    return f"{statistics.median(samples):.3f} [{min(samples):.3f}–{max(samples):.3f}]"
-
-
-def ir_cell(samples):
+def ms_cell(samples):
     median = statistics.median(samples)
-    spread = 100 * (max(samples) - min(samples)) / 2 / median if median else 0
-    return f"{round(median):,} ±{spread:.1f}%"
+    digits = 0 if median >= 100 else 1 if median >= 10 else 2 if median >= 1 else 3
+    return f"{median:.{digits}f}"
 
 
 def describe_config(config):
-    parts = [config["curve"]]
-    parts += [f"{name}={value}" for name, value in config["sizes"].items()]
+    parts = [config["curve"], *(f"{name}={value}" for name, value in config["sizes"].items())]
     if config["analysis"]:
         parts.append(config["analysis"])
     if config["rounds"]:
-        parts.append("rounds=" + ",".join(map(str, config["rounds"])))
+        parts.append("rounds " + ",".join(map(str, config["rounds"])))
     return ", ".join(parts)
 
 
+def describe_example(request, name, row):
+    if row and row["base"]["status"] == "ok" and row["head"]["status"] == "ok":
+        base, head = describe_config(row["base"]["config"]), describe_config(row["head"]["config"])
+        label = base if base == head else f"base {base}; head {head}"
+    else:
+        spec = CATALOG["examples"][name][request["mode"]]
+        sizes = request.get("sizes") if request.get("sizes") is not None else spec["sizes"]
+        label = ", ".join(f"{k}={v}" for k, v in sizes.items())
+        if request["mode"] == "analyze" and spec["pass"]:
+            label = ", ".join(filter(None, (label, spec["pass"])))
+    return f"`{name}` ({label})" if label else f"`{name}`"
+
+
 def render(request, run_url, result=None, failure=None):
-    marker = f"<!-- zippel-benchmark-report:{request['mode']} -->"
-    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    lines = [marker, f"### Zippel benchmarks · {request['mode']}",
-             f"Examples: {', '.join('`' + name + '`' for name in request['examples'])}.",
-             f"Base `{request['base_sha'][:12]}` → head `{request['head_sha'][:12]}` · one Rayon worker · {stamp}",
-             "", f"Native times are milliseconds: median [min–max] of {SAMPLES} samples per process. CI timing is advisory."]
-    if request.get("local_working_trees"):
-        lines.append("Local working-tree verification; commit labels do not include uncommitted changes.")
-    if result is not None:
-        if "build_seconds" in result:
-            builds = result["build_seconds"]
-            lines.append(f"Rust builds: base {builds['base']:.1f}s, head {builds['head']:.1f}s.")
-        if "measurement_seconds" in result:
-            lines.append(f"Measurement: {result['measurement_seconds']:.1f}s (runner setup excluded).")
-    configs = []
-    for name in request["examples"]:
-        row = next((row for row in result["rows"] if row["example"] == name), None) if result else None
-        if row and row["base"]["status"] == "ok" and row["head"]["status"] == "ok":
-            base, head = row["base"]["config"], row["head"]["config"]
-            label = describe_config(base) if base == head else f"base {describe_config(base)} → head {describe_config(head)}"
-        else:
-            spec = CATALOG["examples"][name][request["mode"]]
-            sizes = request.get("sizes") if request.get("sizes") is not None else spec["sizes"]
-            label = ", ".join(f"{k}={v}" for k, v in sizes.items()) or "registered defaults"
-            if request["mode"] == "analyze":
-                label = (spec["pass"] or "registered analysis") + ", " + label
-        configs.append(f"`{name}`: {label}")
-    lines.append("; ".join(configs) + ".")
-    if request["mode"] == "run":
-        lines.append("Existing example inputs and protocol randomness differ per sample, so Ir varies too. Prove/verify exclude input generation.")
-    else:
-        lines.append("Singular; compile, graph preparation, and the selected analysis pass are measured separately. Analysis Ir includes profiled Singular children.")
+    rows = {row["example"]: row for row in result["rows"]} if result else {}
+    lines = [f"<!-- zippel-benchmark-report:{request['mode']} -->",
+             f"### Zippel benchmarks: {request['mode']}", "",
+             f"Base `{request['base_sha'][:12]}` → head `{request['head_sha'][:12]}`", ""]
     if result is None:
-        lines += ["", f"No valid comparison: {failure}."]
+        lines.append(f"No comparison: {failure}.")
     else:
-        lines += ["", f"Ir is the median of {SAMPLES} profiled samples ± half their range.",
-                  "", "| Example / phase | Base Ir | Head Ir | Δ Ir | Base ms | Head ms | Δ time |",
+        lines += ["| Example / phase | Base Ir | Head Ir | Δ Ir | Base ms | Head ms | Δ time |",
                   "|---|---:|---:|---:|---:|---:|---:|"]
         for row in result["rows"]:
             base, head = row["base"], row["head"]
@@ -158,16 +140,34 @@ def render(request, run_url, result=None, failure=None):
                     value = side["instructions"]
                     counts.append([p + c for p, c in zip(value[phase]["parent"], value[phase]["children"])]
                                   if value is not None else None)
-                count_cells = [ir_cell(count) if count is not None else side["instruction_status"]
+                count_cells = [f"{round(statistics.median(count)):,}" if count is not None else side["instruction_status"]
                                for count, side in zip(counts, (base, head))]
                 di = change(*counts) if comparable and all(v is not None for v in counts) else "—"
                 bt, ht = base["ms"][phase], head["ms"][phase]
                 dt = change(bt, ht) if comparable else "—"
                 label = f"{name} / {phase}" + (" (workload changed)" if not comparable else "")
-                lines.append(f"| {label} | {count_cells[0]} | {count_cells[1]} | {di} | {time_cell(bt)} | {time_cell(ht)} | {dt} |")
-        lines += ["", "Ir is executed instructions, not elapsed-time speedup. A change marked (noise) lies inside both sides' sample ranges. Missing/timeout profiles have no instruction delta."]
+                lines.append(f"| {label} | {count_cells[0]} | {count_cells[1]} | {di} | {ms_cell(bt)} | {ms_cell(ht)} | {dt} |")
+    examples = ", ".join(describe_example(request, name, rows.get(name)) for name in request["examples"])
+    samples = f"median of {SAMPLES} per side on one runner with one Rayon worker"
+    if request["mode"] == "run":
+        samples += "; fresh example inputs per sample, generated outside the measured phases"
+    else:
+        samples += "; analysis Ir includes Singular"
+    lines += ["", f"- **Examples:** {examples}"]
+    if result is not None:
+        lines.append(f"- **Samples:** {samples}")
+    if result is not None and "build_seconds" in result:
+        builds = result["build_seconds"]
+        duration = f"builds {builds['base']:.0f} s (base) and {builds['head']:.0f} s (head)"
+        if "measurement_seconds" in result:
+            duration += f"; measurement {result['measurement_seconds']:.0f} s"
+        lines.append(f"- **Duration:** {duration}")
+    run = [datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")]
     if run_url is not None:
-        lines += ["", f"[Workflow run]({run_url}) · [Raw results and profiles]({run_url}#artifacts)"]
+        run += [f"[workflow]({run_url})", f"[raw results and profiles]({run_url}#artifacts)"]
+    if request.get("local_working_trees"):
+        run.append("local working trees, so uncommitted changes are not in the commit labels")
+    lines.append(f"- **Run:** {' · '.join(run)}")
     return "\n".join(lines)
 
 

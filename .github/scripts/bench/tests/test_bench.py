@@ -194,7 +194,7 @@ class Reports(unittest.TestCase):
         api = API()
         self.assertTrue(publish(api, request(), RUN_URL, failure="build failed"))
         self.assertEqual(api.writes[0][0], "repos/eniac/zippel/issues/42/comments")
-        self.assertIn("No valid comparison: build failed", api.writes[0][2]["body"])
+        self.assertIn("No comparison: build failed", api.writes[0][2]["body"])
 
     def test_closed_pr_does_not_write(self):
         api = API()
@@ -233,7 +233,8 @@ class Reports(unittest.TestCase):
         req = request()
         data = results(req)
         body = render(req, RUN_URL, validate_results(canonical(data), req))
-        self.assertIn("+0.0% (noise)", body)
+        self.assertIn("| +0.0% (noise) |", body)
+        self.assertNotIn("**+", body)
         data["rows"][0]["head"]["workload"] = "e" * 64
         body = render(req, RUN_URL, validate_results(canonical(data), req))
         self.assertIn("workload changed", body)
@@ -280,11 +281,11 @@ class Reports(unittest.TestCase):
         data["rows"][0]["head"].update(instructions=None, instruction_status="timeout")
         body = render(req, RUN_URL, validate_results(canonical(data), req))
         self.assertIn("| timeout | — |", body)
-        self.assertIn("2.000 [1.000–3.000]", body)
+        self.assertIn("| 2.00 | 2.00 |", body)
 
-    def test_change_inside_both_sample_ranges_is_noise(self):
+    def test_only_changes_outside_both_sample_ranges_are_bold(self):
         self.assertEqual(change([100, 101, 102], [101, 102, 103]), "+1.0% (noise)")
-        self.assertEqual(change([100, 101, 102], [110, 111, 112]), "+9.9%")
+        self.assertEqual(change([100, 101, 102], [110, 111, 112]), "**+9.9%**")
         self.assertEqual(change([0, 0, 0], [1, 1, 1]), "—")
 
     def test_untrusted_json_limits(self):
