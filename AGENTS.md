@@ -59,34 +59,34 @@ Workspace members (`Cargo.toml`): `lang`, `lang/lang-derive`, `runtime`,
 `share`, `graph`, `backend`, `analyses`, `fmt`, `check`, `experiments`, `tools`.
 Only a subset are **default members** (`.`, `lang`, `runtime`, `share`, `graph`,
 `backend`, `analyses`, `check`) — `fmt`, `experiments` and `tools` require
-`--workspace` or `-p <crate>` explicitly, and `experiments` additionally needs `gcc`, `m4`,
-`pkg-config` (arkworks/GMP) and pulls in upstream comparison libraries.
+`--workspace` or `-p <crate>` explicitly, and `experiments` additionally needs
+`gcc`, `m4`, `pkg-config` (arkworks/GMP) and pulls in upstream comparison
+libraries.
 
 ## Language quick reference
 
-A `.zippel` file declares one or more `proto`s, generic over curve/field
-types (`G: Group`, `F: Scalar<G>`, `GT: Pairing<G1, G2>`), with arguments
-qualified `witness` (prover-secret), `instance` (public to both), or
-`extra` (prover-only, not part of the witness/transcript). An optional
-`where` clause states the relation being proven (used only by the static
-analyses, not executed). Inside the body: `random<T>` samples blinding
-values, `challenge<T>` draws a Fiat–Shamir challenge, `<-` both computes
-and appends a value to the transcript, `let` is a local (non-transcript)
-binding, and `verify(...)` is the final check. A sample is resampled while
-excluded: `F - v` excludes the entries of a vector `v` (`F - [0]` samples a
-nonzero value; for a challenge, `v` is one the verifier computes), and
-`F - roots_of_unity(n)` every `x` with `x^n == 1`. The analyses encode each
-exclusion as a generator, in every analysis. A division by zero fails the run with
-`RuntimeError::DivisionByZero`, and completeness must prove every
-prover/verifier divisor nonzero (see `analyses/src/ideal/ops/div.rs` and
-`sample.rs`), so divide by what the exclusions make nonzero, such as `c - a`
-for `c <- challenge<F - [a]>`. See
-`CONTRIBUTING.md`'s "Creating a new protocol with Zippel" section for a
-full worked example, or any file under `examples/*/*.zippel`. In an expression, a
-bare name's case decides what it is: uppercase is a size (`v[0] * N`), lowercase a
-value. Size parameters may be declared lowercase (`dekart`'s `n: Size`), but are
-then usable only in size positions (types, range bounds, `eval<…>`), not as bare
-expressions; a value must be lowercase to be read.
+A `.zippel` file declares one or more `proto`s, generic over curve/field types
+(`G: Group`, `F: Scalar<G>`, `GT: Pairing<G1, G2>`), with arguments qualified
+`witness` (prover-secret), `instance` (public to both), or `extra` (prover-only,
+not part of the witness/transcript). An optional `where` clause states the
+relation being proven (used only by the static analyses, not executed). Inside
+the body: `random<T>` samples blinding values, `challenge<T>` draws a
+Fiat–Shamir challenge, `<-` both computes and appends a value to the transcript,
+`let` is a local (non-transcript) binding, and `verify(...)` is the final check.
+A sample is resampled while excluded: `F - v` excludes the entries of a vector
+`v` (`F - [0]` samples a nonzero value; for a challenge, `v` is one the verifier
+computes), and `F - roots_of_unity(n)` every `x` with `x^n == 1`. The analyses
+encode each exclusion as a generator, in every analysis. A division by zero
+fails the run with `RuntimeError::DivisionByZero`, and completeness must prove
+every prover/verifier divisor nonzero (see `analyses/src/ideal/ops/div.rs` and
+`sample.rs`), so divide by what the exclusions make nonzero, such as `c - a` for
+`c <- challenge<F - [a]>`. See `CONTRIBUTING.md`'s "Creating a new protocol with
+Zippel" section for a full worked example, or any file under
+`examples/*/*.zippel`. In an expression, a bare name's case decides what it is:
+uppercase is a size (`v[0] * N`), lowercase a value. Size parameters may be
+declared lowercase (`dekart`'s `n: Size`), but are then usable only in size
+positions (types, range bounds, `eval<…>`), not as bare expressions; a value
+must be lowercase to be read.
 
 ## Build, test, and format
 
@@ -128,11 +128,11 @@ case-insensitive, extension ignored).
 
 See `CONTRIBUTING.md` → "Creating a new protocol with Zippel" for the full
 step-by-step (create `examples/<name>/{<name>.zippel,main.rs}`, register it in
-`examples/main.rs`, register an `ExampleSpec<ArkBls12_381>`). Input generators
-read the explicit size context; shared code owns compilation, execution,
-analysis and output. With no size flags, defaults apply. Any explicit sizes
-replace the entire default set and must cover every declared Size. CI runs each
-registration at its defaults.
+`examples/registry.rs`, register an `ExampleSpec<ArkBls12_381>`). Input
+generators read the explicit size context; shared code owns compilation,
+execution, analysis and output. With no size flags, defaults apply. Any explicit
+sizes replace the entire default set and must cover every declared Size. CI runs
+each registration at its defaults.
 
 Iterate on the `.zippel` file with `cargo zcheck` before writing the harness: if
 it passes, compilation and projection will too. It reports errors with source
@@ -158,26 +158,26 @@ unused helpers are still typechecked. Use `--size` to check specific sizes.
   `tests/gb_snapshots`).
 - Expressions live in an append-only arena (`lang::ast::Exprs`, children before
   parents, nodes never rewritten in place). `Exp::Block` owns a `Block` with
-  `Vec<Spanned<Stmt>>` and an optional tail expression. `Stmt::{Let, Log, Discard}`
-  hold expression IDs; statements themselves never go in the arena. `lang` has no
-  expression printer: diagnostics label spans. A pass that doesn't depend on what a
-  node means uses `lang/src/ast/walk.rs` instead of matching every `Exp` variant:
-  `Exp::for_each_child`/`for_each_child_mut`, or `ExpRef::walk` (iterative, evaluation
-  order; `Bind`/`Unbind` events mark where each variable's scope starts and ends, each
-  `Bind` saying what the variable is bound to (`Bound`: a statement's value, a
-  comprehension domain's elements, a `fun` parameter), and `InScope` resolves names
-  from them, holding a pass's record per binding). The binder
-  rules live only there.
-  Direct syntactic effects for purity queries and relation diagnostics are
-  described in `ast/effect.rs`; their different purity policies remain explicit.
-  Type inference is such a walk too: each rule in `lang/src/typ/infer/` types a
-  node from its children's types (`Env::typ`). The `TypeTable` also stores resolved
+  `Vec<Spanned<Stmt>>` and an optional tail expression. `Stmt::{Let, Log,
+  Discard}` hold expression IDs; statements themselves never go in the arena.
+  `lang` has no expression printer: diagnostics label spans. A pass that doesn't
+  depend on what a node means uses `lang/src/ast/walk.rs` instead of matching
+  every `Exp` variant: `Exp::for_each_child`/`for_each_child_mut`, or
+  `ExpRef::walk` (iterative, evaluation order; `Bind`/`Unbind` events mark where
+  each variable's scope starts and ends, each `Bind` saying what the variable is
+  bound to (`Bound`: a statement's value, a comprehension domain's elements, a
+  `fun` parameter), and `InScope` resolves names from them, holding a pass's
+  record per binding). The binder rules live only there. Direct syntactic
+  effects for purity queries and relation diagnostics are described in
+  `ast/effect.rs`; their different purity policies remain explicit. Type
+  inference is such a walk too: each rule in `lang/src/typ/infer/` types a node
+  from its children's types (`Env::typ`). The `TypeTable` also stores resolved
   calls (declaration, instantiated signature and substitution); lowering reads
   these records and infers fresh records for appended bodies. Lowering borrows
   immutable definitions and shares a signature set across scopes. Only lowering
-  and `zippel-fmt` recurse, under `#[lang::stack_guard]`. The formatter's methods
-  share a cursor/style context; documents borrow its per-call arena independently
-  of the context's mutable borrow.
+  and `zippel-fmt` recurse, under `#[lang::stack_guard]`. The formatter's
+  methods share a cursor/style context; documents borrow its per-call arena
+  independently of the context's mutable borrow.
 - No pass relies on a large thread stack: walks are iterative, the rest recurse
   under `#[lang::stack_guard]`, and the workspace sets no `RUST_MIN_STACK` or
   big worker threads. Environments that enter and leave scopes (inference's and

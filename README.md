@@ -4,10 +4,10 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE-MIT)
 [![rustc nightly](https://img.shields.io/badge/rustc-nightly-orange.svg)](rust-toolchain.toml)
 
-[Zippel](https://github.com/eniac/zippel/blob/main/docs/tech-report.pdf) is a choreographic language, compiler, and runtime for cryptographic
-proof systems. A single `.zippel` source file describes a protocol the way a
-cryptography paper would, and Zippel compiles it into a computation graph
-from which it derives:
+[Zippel](https://github.com/eniac/zippel/blob/main/docs/tech-report.pdf) is a
+choreographic language, compiler, and runtime for cryptographic proof systems. A
+single `.zippel` source file describes a protocol the way a cryptography paper
+would, and Zippel compiles it into a computation graph from which it derives:
 
 - optimized, auto-parallelized prover and verifier binaries built on
   [`arkworks`](https://github.com/arkworks-rs), and
@@ -117,8 +117,9 @@ protocol.
 
 ## Reading and citing our paper
 
-Zippel will appear at S&P 2027. You can find our paper [here](https://github.com/eniac/zippel/blob/main/docs/tech-report.pdf).
-If you wish to cite our work, please use this:
+Zippel will appear at S&P 2027. You can find our paper
+[here](https://github.com/eniac/zippel/blob/main/docs/tech-report.pdf). If you
+wish to cite our work, please use this:
 
 ```bibtex
 @inproceedings{angel2027zippel,

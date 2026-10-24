@@ -33,6 +33,9 @@ jobs:
       - name: Check for Windows reserved-name path components
         run: bash .github/scripts/check-windows-reserved-names.sh
 
+      - name: Benchmark script unit tests
+        run: python3 -m unittest discover -s .github/scripts/bench/tests -p 'test_*.py'
+
       # The toolchain and its components come from rust-toolchain.toml.
       - name: Install toolchain
         run: rustup toolchain install

@@ -1,0 +1,125 @@
+name: Benchmarks
+run-name: bench PR ${{ github.event.issue.number }}
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  # Default-branch scripts authorize the comment and fix the commits to compare.
+  request:
+    if: github.event.issue.pull_request && startsWith(github.event.comment.body, '/bench')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      request: ${{ steps.request.outputs.request }}
+      pr: ${{ steps.request.outputs.pr }}
+      mode: ${{ steps.request.outputs.mode }}
+      base_sha: ${{ steps.request.outputs.base_sha }}
+      head_sha: ${{ steps.request.outputs.head_sha }}
+      base_repository: ${{ steps.request.outputs.base_repository }}
+      head_repository: ${{ steps.request.outputs.head_repository }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - id: request
+        name: Authorize and freeze request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/bench/command.py
+
+  # Builds and runs the selected PR code, so it gets only a read-only token.
+  # A newer command for the same PR and mode cancels this one.
+  compare:
+    needs: request
+    if: needs.request.outputs.request != ''
+    runs-on: ubuntu-24.04
+    # Backstop only: suite.json's budget_seconds bounds builds and measurement,
+    # so results are still uploaded; this adds room for setup and uploads.
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    concurrency:
+      group: bench-${{ needs.request.outputs.pr }}-${{ needs.request.outputs.mode }}
+      cancel-in-progress: true
+    steps:
+      - name: Check out trusted coordinator
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          persist-credentials: false
+      - name: Check out base
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: ${{ needs.request.outputs.base_repository }}
+          ref: ${{ needs.request.outputs.base_sha }}
+          path: base
+          persist-credentials: false
+      - name: Check out head
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: ${{ needs.request.outputs.head_repository }}
+          ref: ${{ needs.request.outputs.head_sha }}
+          path: head
+          persist-credentials: false
+      # Both revisions build with the default branch's pinned compiler.
+      - name: Install compiler and measurement tools
+        run: |
+          channel="$(python3 -c 'import tomllib; print(tomllib.load(open("control/rust-toolchain.toml", "rb"))["toolchain"]["channel"])')"
+          rustup toolchain install --profile minimal "$channel"
+          echo "RUSTUP_TOOLCHAIN=$channel" >> "$GITHUB_ENV"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends singular valgrind
+      - name: Build and compare
+        env:
+          REQUEST: ${{ needs.request.outputs.request }}
+        run: python3 control/.github/scripts/bench/run.py compare --base-dir base --head-dir head --output control/results
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bench-results
+          path: control/results/results.json
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Upload raw observations
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bench-raw
+          path: control/results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # Default-branch scripts validate the results and update the PR comment.
+  report:
+    needs: [request, compare]
+    if: always() && needs.request.outputs.request != '' && needs.compare.result != 'cancelled'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          name: bench-results
+          path: ${{ runner.temp }}/results
+      - name: Validate results and update PR report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUEST: ${{ needs.request.outputs.request }}
+        run: python3 .github/scripts/bench/report.py publish --results "$RUNNER_TEMP/results/results.json"

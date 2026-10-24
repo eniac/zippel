@@ -121,3 +121,9 @@ name = "analysis_all"
 path = "benches/analysis/all.rs"
 test = false
 harness = false
+
+[[bench]]
+name = "ci"
+path = "benches/ci/main.rs"
+test = false
+harness = false

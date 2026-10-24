@@ -387,7 +387,7 @@ mod tests {
         );
 
         // Then: Op::Coef reading the VPoly back into a Uni(2) output
-        // (degree 2 = 3 coefficient slots, per docs/poly-encoding.md).
+        // (degree 2 = 3 coefficient slots).
         let var_c = Var::from_node(NodeIndex::new(2), ATyp::Uni(2), Qualifier::Witness);
         let ref_p: GOp<ArkBls12_381> =
             Op::Ref(graph::Ref::new(NodeIndex::new(1)), ATyp::VPoly(1, 2));

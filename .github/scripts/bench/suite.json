@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "budget_seconds": 1800,
+  "defaults": [
+    "pst13",
+    "kzg",
+    "ipa"
+  ],
+  "examples": {
+    "pst13": {
+      "run": {
+        "sizes": {
+          "N": 14
+        }
+      },
+      "analyze": {
+        "pass": "completeness",
+        "sizes": {
+          "N": 2
+        }
+      }
+    },
+    "kzg": {
+      "run": {
+        "sizes": {
+          "N": 16384
+        }
+      },
+      "analyze": {
+        "pass": "completeness",
+        "sizes": {
+          "N": 2
+        }
+      }
+    },
+    "ipa": {
+      "run": {
+        "sizes": {
+          "S": 10
+        }
+      },
+      "analyze": {
+        "pass": "completeness",
+        "sizes": {
+          "S": 1
+        }
+      }
+    },
+    "schnorr": {
+      "run": {
+        "sizes": {}
+      },
+      "analyze": {
+        "pass": "soundness",
+        "sizes": {}
+      }
+    },
+    "hyperplonk_zerocheck": {
+      "analyze": {
+        "pass": "completeness",
+        "sizes": {
+          "S": 3
+        }
+      }
+    },
+    "schnorr_3round": {
+      "analyze": {
+        "pass": "soundness",
+        "sizes": {}
+      }
+    }
+  }
+}

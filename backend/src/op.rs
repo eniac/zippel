@@ -310,8 +310,8 @@ impl<C: ArkConfig, R> Op<C, R> {
                 }
                 ATyp::unit()
             }
-            // Op::Poly(v): v : Vec<F, k> → Uni(k - 1) under the degree
-            // convention (see docs/poly-encoding.md).
+            // Op::Poly(v): k coefficients represent a polynomial with
+            // declared maximum degree k - 1.
             Op::Poly(op) => poly_typ_from_vec(op.typ()),
             Op::Evaluate(p, selector, points) => match (selector, points) {
                 // Grid evaluation: polynomial coefficients → evaluations on the FFT grid.

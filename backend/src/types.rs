@@ -9,7 +9,7 @@ use std::fmt;
 ///
 /// Used by `ATyp::physical_len` to count coefficients of `VPoly(n, m)` — the
 /// number of multi-indices `(i₁, …, iₙ) ∈ ℕⁿ` with `i₁ + ⋯ + iₙ ≤ m`
-/// equals `C(m + n, n)`. See `docs/poly-encoding.md`.
+/// equals `C(m + n, n)`.
 ///
 /// Panics on overflow — this indicates a type whose physical layout
 /// exceeds `usize`, which is a genuine error, not a silent clamp.
@@ -77,14 +77,13 @@ pub enum ATyp {
     Record(Ctx<String, ATyp>),
     /// Univariate polynomial in coefficient form. The parameter is the
     /// **max polynomial degree** (not the coefficient count); coefficient
-    /// count is `m + 1`. See `docs/poly-encoding.md`.
+    /// count is `m + 1`.
     Uni(usize),
     /// Multilinear extension over `n` boolean variables. Coefficient /
-    /// evaluation count is `2^n`. See `docs/poly-encoding.md`.
+    /// evaluation count is `2^n`.
     Mle(usize),
     /// Virtual (multivariate) polynomial `VPoly(n, m)`: `n` variables and
     /// **max total degree** `m`. Coefficient count is `C(m + n, n)`.
-    /// See `docs/poly-encoding.md`.
     VPoly(usize, usize),
 }
 
@@ -156,8 +155,7 @@ impl ATyp {
     }
     /// View this type as `(element, length)`. For `Uni(m)`, the length
     /// is the coefficient count `m + 1` (not the degree). This matches
-    /// `size()` and the `Vec<F, m + 1>` ↔ `Poly<F, 1, m>` consistency
-    /// rule in `docs/poly-encoding.md`.
+    /// `size()` and makes `Vec<F, m + 1>` consistent with `Poly<F, 1, m>`.
     ///
     /// # Panics
     /// Panics if `self` is neither a `Vec` nor a `Uni`, or if the `Uni`
@@ -248,7 +246,7 @@ impl ATyp {
 
     /// Number of flattened scalar slots needed to represent a value of
     /// this type — i.e. the **coefficient count** under the canonical
-    /// polynomial encoding (see `docs/poly-encoding.md`).
+    /// polynomial encoding.
     ///
     /// - `Uni(m)` has `m + 1` coefficients.
     /// - `Mle(n)` has `2^n` evaluations over the boolean hypercube.
@@ -1084,8 +1082,7 @@ mod tests {
     //
     // These tests fix the current ATyp lub semantics for polynomial shapes so
     // that any accidental change to the degree/num_vars arithmetic gets caught
-    // by regressions.  They mirror the Phase-14 m+1 convention documented in
-    // `docs/poly-encoding.md` — `Uni(m)` holds a polynomial of max degree `m`
+    // by regressions. `Uni(m)` holds a polynomial of max degree `m`
     // (so `m+1` coefficients), `Mle(n)` is the multilinear extension over `n`
     // variables (so `2^n` evaluations), and `VPoly(n, m)` is multivariate with
     // `n` variables and max total degree `m`.

@@ -3437,8 +3437,8 @@ impl<C: ArkConfig> Value<C> {
 
     /// Coefficient extraction at a *declared* type.
     ///
-    /// `ATyp::Uni(m)` promises exactly `m + 1` coefficient slots (see
-    /// `docs/poly-encoding.md`), but the canonical Arkworks representation
+    /// `ATyp::Uni(m)` promises exactly `m + 1` coefficient slots, but the
+    /// canonical Arkworks representation
     /// drops trailing zero coefficients, so a value of declared type
     /// `Uni(m)` may carry fewer. Zero-pad the raw extraction up to the
     /// declared width so the runtime value always matches the shape its

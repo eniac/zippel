@@ -4,82 +4,7 @@
 mod cli;
 mod common;
 
-#[path = "bccgp/main.rs"]
-mod bccgp;
-#[path = "cds/main.rs"]
-mod cds;
-#[path = "coin_proof/main.rs"]
-mod coin_proof;
-#[path = "cp/main.rs"]
-mod cp;
-#[path = "dekart/main.rs"]
-mod dekart;
-#[path = "dory_ipa/main.rs"]
-mod dory_ipa;
-#[path = "dory_pcs/main.rs"]
-mod dory_pcs;
-#[path = "groth16/main.rs"]
-mod groth16;
-#[path = "hadamard/main.rs"]
-mod hadamard;
-#[path = "hyperplonk_multiset/main.rs"]
-mod hyperplonk_multiset;
-#[path = "hyperplonk_permutation/main.rs"]
-mod hyperplonk_permutation;
-#[path = "hyperplonk_piop/main.rs"]
-mod hyperplonk_piop;
-#[path = "hyperplonk_productcheck/main.rs"]
-mod hyperplonk_productcheck;
-#[path = "hyperplonk_snark/main.rs"]
-mod hyperplonk_snark;
-#[path = "hyperplonk_zerocheck/main.rs"]
-mod hyperplonk_zerocheck;
-#[path = "hyrax_ipa/main.rs"]
-mod hyrax_ipa;
-#[path = "hyrax_pcs/main.rs"]
-mod hyrax_pcs;
-#[path = "hyrax_podp/main.rs"]
-mod hyrax_podp;
-#[path = "hyrax_pop/main.rs"]
-mod hyrax_pop;
-#[path = "ipa/main.rs"]
-mod ipa;
-#[path = "ipa_weighted/main.rs"]
-mod ipa_weighted;
-#[path = "kzg/main.rs"]
-mod kzg;
-#[path = "kzh/main.rs"]
-mod kzh;
-#[path = "marlin_kzg/main.rs"]
-mod marlin_kzg;
-#[path = "membership/main.rs"]
-mod membership;
-#[path = "mle_sumcheck/main.rs"]
-mod mle_sumcheck;
-#[path = "okamoto/main.rs"]
-mod okamoto;
-#[path = "okamoto_elgamal/main.rs"]
-mod okamoto_elgamal;
-#[path = "pari/main.rs"]
-mod pari;
-#[path = "pedersen_eq/main.rs"]
-mod pedersen_eq;
-#[path = "pst13/main.rs"]
-mod pst13;
-#[path = "r1cs_sigma/main.rs"]
-mod r1cs_sigma;
-#[path = "schnorr/main.rs"]
-mod schnorr;
-#[path = "schnorr_3round/main.rs"]
-mod schnorr_3round;
-#[path = "spartan/main.rs"]
-mod spartan;
-#[path = "sumcheck/main.rs"]
-mod sumcheck;
-#[path = "zerocheck/main.rs"]
-mod zerocheck;
-#[path = "zeromorph_kzg/main.rs"]
-mod zeromorph_kzg;
+mod registry;
 
 /// Register typed example descriptors and positional CLI choices.
 macro_rules! examples {
@@ -93,59 +18,20 @@ macro_rules! examples {
         }
         fn example_help(name: &str) -> String {
             match name {
-                $(stringify!($name) => cli::example_help(&$name::spec()),)*
+                $(stringify!($name) => cli::example_help(&registry::$name::spec()),)*
                 _ => unreachable!("clap validates example names"),
             }
         }
         fn dispatch(name: &str, request: &common::Request) -> u8 {
             match name {
-                $(stringify!($name) => common::run(name, &$name::spec(), request),)*
+                $(stringify!($name) => common::run(name, &registry::$name::spec(), request),)*
                 _ => unreachable!("clap validates example names"),
             }
         }
     };
 }
 
-examples! {
-    bccgp,
-    cds,
-    coin_proof,
-    cp,
-    dekart,
-    dory_ipa,
-    dory_pcs,
-    groth16,
-    hadamard,
-    hyperplonk_multiset,
-    hyperplonk_permutation,
-    hyperplonk_piop,
-    hyperplonk_productcheck,
-    hyperplonk_snark,
-    hyperplonk_zerocheck,
-    hyrax_ipa,
-    hyrax_pcs,
-    hyrax_podp,
-    hyrax_pop,
-    ipa,
-    ipa_weighted,
-    kzg,
-    kzh,
-    marlin_kzg,
-    membership,
-    mle_sumcheck,
-    okamoto,
-    okamoto_elgamal,
-    pari,
-    pedersen_eq,
-    pst13,
-    r1cs_sigma,
-    schnorr,
-    schnorr_3round,
-    spartan,
-    sumcheck,
-    zerocheck,
-    zeromorph_kzg,
-}
+registry::with_examples!(examples);
 
 fn main() -> std::process::ExitCode {
     let mut command = command();
