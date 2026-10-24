@@ -237,18 +237,20 @@ class Reports(unittest.TestCase):
         self.assertNotIn("**+", body)
         data["rows"][0]["head"]["workload"] = "e" * 64
         body = render(req, RUN_URL, validate_results(canonical(data), req))
-        self.assertIn("workload changed", body)
-        self.assertNotIn("+0.0%", next(line for line in body.splitlines() if "pst13 / prove" in line))
+        line = next(line for line in body.splitlines() if "pst13 / prove" in line)
+        self.assertIn("(workload changed)", line)
+        self.assertIn("+0.0% (noise)", line)
 
-    def test_resolved_defaults_are_reported_and_config_changes_have_no_delta(self):
+    def test_resolved_defaults_are_reported_and_config_changes_are_labelled(self):
         req = request("run", ["sumcheck"])
         data = results(req)
         data["rows"][0]["base"]["config"]["sizes"] = {"NUM_VARS_CONST": 3, "MAX_DEGREE_CONST": 2}
         data["rows"][0]["head"]["config"]["sizes"] = {"NUM_VARS_CONST": 4, "MAX_DEGREE_CONST": 2}
         body = render(req, RUN_URL, validate_results(canonical(data), req))
         self.assertIn("NUM_VARS_CONST=4", body)
-        self.assertIn("workload changed", body)
-        self.assertNotIn("+0.0%", body)
+        line = next(line for line in body.splitlines() if "sumcheck / prove" in line)
+        self.assertIn("(workload changed)", line)
+        self.assertIn("+0.0% (noise)", line)
         req["sizes"] = {"NUM_VARS_CONST": 5, "MAX_DEGREE_CONST": 2}
         with self.assertRaises(ValueError):
             validate_results(canonical(data), req)

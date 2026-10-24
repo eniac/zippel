@@ -133,7 +133,7 @@ def render(request, run_url, result=None, failure=None):
             if base["status"] != "ok" or head["status"] != "ok":
                 lines.append(f"| {name} | {base['status']} | {head['status']} | — | — | — | — |")
                 continue
-            comparable = base["workload"] == head["workload"] and base["config"] == head["config"]
+            changed = base["workload"] != head["workload"] or base["config"] != head["config"]
             for phase in phases(request["mode"]):
                 counts = []
                 for side in (base, head):
@@ -142,10 +142,10 @@ def render(request, run_url, result=None, failure=None):
                                   if value is not None else None)
                 count_cells = [f"{round(statistics.median(count)):,}" if count is not None else side["instruction_status"]
                                for count, side in zip(counts, (base, head))]
-                di = change(*counts) if comparable and all(v is not None for v in counts) else "—"
+                di = change(*counts) if all(v is not None for v in counts) else "—"
                 bt, ht = base["ms"][phase], head["ms"][phase]
-                dt = change(bt, ht) if comparable else "—"
-                label = f"{name} / {phase}" + (" (workload changed)" if not comparable else "")
+                dt = change(bt, ht)
+                label = f"{name} / {phase}" + (" (workload changed)" if changed else "")
                 lines.append(f"| {label} | {count_cells[0]} | {count_cells[1]} | {di} | {ms_cell(bt)} | {ms_cell(ht)} | {dt} |")
     examples = ", ".join(describe_example(request, name, rows.get(name)) for name in request["examples"])
     samples = f"median of {SAMPLES} per side on one runner with one Rayon worker"
