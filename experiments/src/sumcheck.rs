@@ -24,10 +24,10 @@ pub const DEFAULT_MAX_DEGREE: usize = 10;
 pub mod zippel_side {
     use super::*;
     use ark_ff::Zero;
-    use ark_poly::DenseMultilinearExtension;
     use ark_std::UniformRand;
-    use backend::poly_variant::PolyVariant;
-    use backend::{ArkBls12_381, ArkConfig, Value, VirtualPolynomial};
+    use backend::poly::variant::DenseMle;
+    use backend::poly::variant::PolyVariant;
+    use backend::{ArkBls12_381, Backend, Value, VirtualPolynomial};
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
@@ -112,7 +112,7 @@ pub mod zippel_side {
         /// verifier graph fails to execute, or if the verifier rejects the
         /// honestly generated proof.
         pub fn time_protocol(&mut self) -> Timing {
-            type F = <ArkBls12_381 as ArkConfig>::F;
+            type F = <ArkBls12_381 as Backend>::F;
             let nv = self.num_vars;
             let md = self.max_degree;
             let eval_count = 1usize << nv;
@@ -122,9 +122,8 @@ pub mod zippel_side {
                 .iter()
                 .map(|x| (0..md).fold(F::from(1u64), |acc, _| acc * *x))
                 .fold(F::zero(), |acc, v| acc + v);
-            let base = VirtualPolynomial::from_poly(PolyVariant::DenseMle(
-                DenseMultilinearExtension::from_evaluations_vec(nv, base_evals),
-            ));
+            let base =
+                VirtualPolynomial::from_poly(PolyVariant::DenseMle(DenseMle::new(nv, base_evals)));
             let mut full_poly = base.clone();
             for _ in 1..md {
                 full_poly = full_poly.poly_mul(&base);
@@ -149,14 +148,14 @@ pub mod zippel_side {
 }
 
 /// Native sumcheck baseline: hyperplonk's `poly_iop::sum_check`,
-/// vendored in-tree under `crate::sumcheck_upstream` and ported to
+/// vendored in-tree under `crate::upstream::sumcheck` and ported to
 /// arkworks 0.6 so it shares the zippel-side curve set. Protocol code
 /// verbatim from EspressoSystems/hyperplonk `main`; only `use` paths
 /// changed.
 pub mod native_side {
     use super::*;
-    use crate::sumcheck_upstream::arithmetic::VirtualPolynomial;
-    use crate::sumcheck_upstream::poly_iop::{PolyIOP, SumCheck};
+    use crate::upstream::sumcheck::arithmetic::VirtualPolynomial;
+    use crate::upstream::sumcheck::poly_iop::{PolyIOP, SumCheck};
     use ark_bls12_381::Fr;
     use ark_ff::{One, UniformRand, Zero};
     use ark_poly::DenseMultilinearExtension;
@@ -240,6 +239,134 @@ pub mod native_side {
                 verify,
                 prove_peak,
                 verify_peak,
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Cross-verification: at the same challenges, each verifier accepts the other's
+// proof, and the native's subclaim holds for both.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod cross_tests {
+    use crate::cross::{Challenges, Direction};
+    use crate::upstream::sumcheck::arithmetic::VirtualPolynomial;
+    use crate::upstream::sumcheck::poly_iop::structs::{IOPProof, IOPProverMessage};
+    use crate::upstream::sumcheck::poly_iop::{PolyIOP, SumCheck};
+    use ark_bls12_381::Fr;
+    use ark_ff::{One, UniformRand};
+    use ark_poly::DenseMultilinearExtension;
+    use backend::poly::variant::{DenseMle, PolyVariant};
+    use backend::{ArkBls12_381, Value};
+    use std::sync::Arc;
+
+    type V = Value<ArkBls12_381>;
+    type Iop = PolyIOP<Fr>;
+
+    fn frs(v: &V) -> Vec<Fr> {
+        match v {
+            Value::VecScalar(f) => f.to_vec(),
+            _ => panic!("expected scalars, got {v}"),
+        }
+    }
+
+    #[test]
+    fn native_prove_then_zippel_verify() {
+        cross_verify(Direction::NativeToZippel);
+    }
+
+    #[test]
+    fn zippel_prove_then_native_verify() {
+        cross_verify(Direction::ZippelToNative);
+    }
+
+    fn cross_verify(direction: Direction) {
+        let mut rng = ark_std::test_rng();
+        for (nv, md) in [(3usize, 2usize), (4, 3), (5, 2)] {
+            let evals: Vec<Fr> = (0..1 << nv).map(|_| Fr::rand(&mut rng)).collect();
+            let sum: Fr = evals
+                .iter()
+                .map(|x| (0..md).fold(Fr::one(), |a, _| a * x))
+                .sum();
+            let mle = Arc::new(DenseMultilinearExtension::from_evaluations_vec(
+                nv,
+                evals.clone(),
+            ));
+            let mut poly = VirtualPolynomial::new(nv);
+            poly.add_mle_list(vec![mle; md], Fr::one()).unwrap();
+            let base = backend::VirtualPolynomial::from_poly(PolyVariant::DenseMle(DenseMle::new(
+                nv, evals,
+            )));
+            let full = (1..md).fold(base.clone(), |p, _| p.poly_mul(&base));
+
+            let (prover, verifier) = crate::cross::compile::<ArkBls12_381>(
+                "sumcheck",
+                &[("NUM_VARS_CONST", nv), ("MAX_DEGREE_CONST", md)],
+            );
+            let inputs = crate::harness_inputs([
+                ("claimed_sum", Value::Scalar(sum)),
+                ("p", Value::poly(full)),
+            ]);
+            // The native's final check: the subclaim is the polynomial at its point.
+            let native_verify = |proof: &IOPProof<Fr>| {
+                let sub = Iop::verify(sum, proof, &poly.aux_info, &mut Iop::init_transcript())
+                    .expect("native verify");
+                poly.evaluate(&sub.point).unwrap() == sub.expected_evaluation
+            };
+
+            match direction {
+                Direction::NativeToZippel => {
+                    let native = Iop::prove(&poly, &mut Iop::init_transcript()).unwrap();
+                    assert!(
+                        native_verify(&native),
+                        "nv = {nv}: native rejects its own proof"
+                    );
+                    let rounds: Vec<V> = native
+                        .proofs
+                        .iter()
+                        .map(|m| Value::vec_scalar(m.evaluations.clone()))
+                        .collect();
+                    assert!(
+                        verifier
+                            .verify_with(
+                                rounds.clone(),
+                                crate::lend(&inputs),
+                                &mut Challenges::default()
+                            )
+                            .unwrap(),
+                        "nv = {nv}: Zippel rejects the native proof"
+                    );
+                    let mut wrong = rounds;
+                    wrong[1] =
+                        Value::vec_scalar(frs(&wrong[1]).iter().map(|e| *e + Fr::one()).collect());
+                    assert!(
+                        !verifier
+                            .verify_with(wrong, crate::lend(&inputs), &mut Challenges::default())
+                            .unwrap(),
+                        "nv = {nv}: Zippel accepts a wrong round"
+                    );
+                }
+                Direction::ZippelToNative => {
+                    let ours = prover
+                        .prove_with(crate::lend(&inputs), &mut Challenges::default())
+                        .unwrap();
+                    assert_eq!(ours.len(), nv, "nv = {nv}: Zippel's message count");
+                    let mut seq = Challenges::default();
+                    let proof = IOPProof {
+                        point: (0..nv).map(|_| seq.next_scalar()).collect(),
+                        proofs: ours
+                            .iter()
+                            .map(|m| IOPProverMessage {
+                                evaluations: frs(m),
+                            })
+                            .collect(),
+                    };
+                    assert!(
+                        native_verify(&proof),
+                        "nv = {nv}: the native verifier rejects Zippel's proof"
+                    );
+                }
             }
         }
     }

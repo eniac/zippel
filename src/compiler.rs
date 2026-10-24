@@ -1,7 +1,7 @@
 //! Source loading, diagnostics and compilation of one protocol.
 
 use crate::{CompiledProver, CompiledVerifier};
-use backend::{ArkConfig, HasOpFactory};
+use backend::Backend;
 use graph::{Relations, UDag, UDags};
 use lang::{
     ast::{TypedModule, UModule},
@@ -161,7 +161,7 @@ impl ParsedModule {
     ///
     /// # Panics
     /// If an internal compiler invariant fails.
-    pub fn compile<C: ArkConfig + HasOpFactory>(
+    pub fn compile<C: Backend>(
         &self,
         sizes: &Ctx<Tid, usize>,
         options: CompileOptions,
@@ -187,6 +187,9 @@ impl ParsedModule {
                 );
                 self.error(vec![Diagnostic::error(Phase::Semantic, 0..0, &message)])
             })?;
+        graph
+            .check_backend()
+            .map_err(|e| self.error(vec![e.into()]))?;
         lang::semantic::check_protocol_instances(
             &self.module,
             typed.module(),
@@ -224,7 +227,7 @@ fn has_errors(diagnostics: &[Diagnostic]) -> bool {
 ///
 /// Constructed by [`ParsedModule::compile`]. Explicit projection produces independent
 /// prover and verifier objects; static-analysis preparation is separately measurable.
-pub struct CompiledProtocol<C: ArkConfig> {
+pub struct CompiledProtocol<C: Backend> {
     pub(super) source_name: String,
     pub(super) source: Arc<str>,
     pub(super) protocol_name: String,
@@ -234,7 +237,7 @@ pub struct CompiledProtocol<C: ArkConfig> {
     diagnostics: Vec<Diagnostic>,
 }
 
-impl<C: ArkConfig> CompiledProtocol<C> {
+impl<C: Backend> CompiledProtocol<C> {
     /// Joint execution graph, with the relation marked but not lowered.
     #[must_use]
     pub const fn graph(&self) -> &UDag<C> {
@@ -254,7 +257,7 @@ impl<C: ArkConfig> CompiledProtocol<C> {
     }
 }
 
-impl<C: ArkConfig + HasOpFactory> CompiledProtocol<C> {
+impl<C: Backend> CompiledProtocol<C> {
     /// Project an owned prover that can execute independently of this protocol.
     ///
     /// # Panics

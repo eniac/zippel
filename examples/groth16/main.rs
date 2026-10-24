@@ -1,13 +1,13 @@
 use ark_ec::PrimeGroup;
 use ark_ff::{Field, One, UniformRand};
-use backend::{ArkBls12_381, ArkConfig, Value};
+use backend::{ArkBls12_381, Backend, Value};
 use lang::id::{Tid, Vid};
 use share::Ctx;
 
 use crate::common::{self, size};
 
 type C = ArkBls12_381;
-type F = <C as ArkConfig>::F;
+type F = <C as Backend>::F;
 
 pub fn spec() -> common::ExampleSpec<C> {
     common::ExampleSpec {
@@ -47,8 +47,8 @@ fn make_inputs(sizes: &Ctx<Tid, usize>) -> Ctx<Vid, Value<C>> {
     c[0] = dot(&a, &assignment) * dot(&b, &assignment)
         - dot(&h_coeffs, &powers) * t
         - dot(&c[1..], &assignment[1..]);
-    let g1 = <C as ArkConfig>::G1::generator();
-    let g2 = <C as ArkConfig>::G2::generator();
+    let g1 = <C as Backend>::G1::generator();
+    let g2 = <C as Backend>::G2::generator();
     let combined: Vec<F> = (0..m + l)
         .map(|i| beta * a[i] + alpha * b[i] + c[i])
         .collect();

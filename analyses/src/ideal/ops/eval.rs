@@ -1,11 +1,11 @@
 //! Evaluation op encoders: `eval_op`, `eval_to_poly`, `eval_to_poly_as`.
 
+use crate::AnalysisBackend;
 use std::collections::HashMap;
 
 use ark_ff::One;
 
-use backend::op::HasOpFactory;
-use backend::{ATyp, ArkConfig};
+use backend::ATyp;
 use graph::{GOp, Ref};
 
 use crate::Var;
@@ -21,7 +21,7 @@ use super::{hypercube, multi_indices};
 /// polynomials for evaluating `p` at `xs`. Panics on unsupported
 /// (p.typ(), |xs|) combinations; the type checker guarantees these
 /// are not expected.
-pub fn eval_to_poly<C: ArkConfig>(
+pub fn eval_to_poly<C: AnalysisBackend>(
     p: &GOp<C>,
     xs: &GOp<C>,
     vars: &HashMap<Ref, Var>,
@@ -145,7 +145,7 @@ pub fn eval_to_poly<C: ArkConfig>(
     }
 }
 
-pub fn eval_to_poly_as<C: ArkConfig>(
+pub fn eval_to_poly_as<C: AnalysisBackend>(
     p: &GOp<C>,
     xs: &GOp<C>,
     target_typ: &ATyp,
@@ -177,7 +177,7 @@ pub fn eval_to_poly_as<C: ArkConfig>(
 /// Selected evaluation: keep variable `range.start` free and substitute
 /// `fixed` for the remaining variables. Returns the residual univariate
 /// coefficient polys, or `None` for unsupported shapes.
-pub fn selected_eval_to_poly<C: ArkConfig>(
+pub fn selected_eval_to_poly<C: AnalysisBackend>(
     p: &GOp<C>,
     range: &lang::ast::CRange,
     fixed: &GOp<C>,
@@ -258,7 +258,7 @@ pub fn selected_eval_to_poly<C: ArkConfig>(
 /// 3. `(p, None, None)` — full-grid DFT.
 ///
 /// `(p, Some(_), None)` is unsupported and panics.
-pub fn eval_op<C: ArkConfig + HasOpFactory>(
+pub fn eval_op<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     p: &GOp<C>,
@@ -304,7 +304,7 @@ mod tests {
     fn test_add_op_eval_univariate_batched() {
         use crate::Var;
         use ark_bls12_381::Fr;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use graph::Ref;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
@@ -375,7 +375,7 @@ mod tests {
         // p(x) = 3 + 5x evaluated at [7, 11] should give [38, 58].
         use crate::Var;
         use ark_bls12_381::Fr;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
@@ -470,12 +470,12 @@ mod tests {
 
         let var = Var::from_node(NodeIndex::new(2), ATyp::scalar(), Qualifier::Witness);
         let op: GOp<ArkBls12_381> = Op::Evaluate(
-            backend::op::mk::<ArkBls12_381>(Op::Ref(
+            backend::ir::op::mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(0)),
                 ATyp::VPoly(2, 2),
             )),
             None,
-            Some(backend::op::mk::<ArkBls12_381>(Op::Ref(
+            Some(backend::ir::op::mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(1)),
                 ATyp::Uni(1),
             ))),
@@ -516,12 +516,12 @@ mod tests {
 
         let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(2, 1), Qualifier::Witness);
         let op: GOp<ArkBls12_381> = Op::Evaluate(
-            backend::op::mk::<ArkBls12_381>(Op::Ref(
+            backend::ir::op::mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(0)),
                 ATyp::VPoly(3, 1),
             )),
             None,
-            Some(backend::op::mk::<ArkBls12_381>(Op::Ref(
+            Some(backend::ir::op::mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(1)),
                 ATyp::Uni(0),
             ))),
@@ -562,12 +562,12 @@ mod tests {
 
         let var = Var::from_node(NodeIndex::new(2), ATyp::scalar(), Qualifier::Witness);
         let op: GOp<ArkBls12_381> = Op::Evaluate(
-            backend::op::mk::<ArkBls12_381>(Op::Ref(
+            backend::ir::op::mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(0)),
                 ATyp::Mle(2),
             )),
             None,
-            Some(backend::op::mk::<ArkBls12_381>(Op::Ref(
+            Some(backend::ir::op::mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(1)),
                 ATyp::Uni(1),
             ))),
@@ -603,12 +603,12 @@ mod tests {
 
         let var = Var::from_node(NodeIndex::new(2), ATyp::Mle(2), Qualifier::Witness);
         let op: GOp<ArkBls12_381> = Op::Evaluate(
-            backend::op::mk::<ArkBls12_381>(Op::Ref(
+            backend::ir::op::mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(0)),
                 ATyp::Mle(3),
             )),
             None,
-            Some(backend::op::mk::<ArkBls12_381>(Op::Ref(
+            Some(backend::ir::op::mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(1)),
                 ATyp::Uni(0),
             ))),

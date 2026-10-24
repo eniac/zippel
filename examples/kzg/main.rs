@@ -1,6 +1,6 @@
 use ark_ff::fields::Field;
 use ark_std::UniformRand;
-use backend::{ATyp, ArkBls12_381, ArkConfig, Value};
+use backend::{ATyp, ArkBls12_381, Backend, Value};
 use lang::id::Vid;
 use share::Ctx;
 
@@ -11,16 +11,16 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381
     let mut rng = rand::rngs::OsRng;
 
     let n_size = size(sizes, "N");
-    let gen_g1_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
+    let gen_g1_input = <ArkBls12_381 as Backend>::G1::rand(&mut rng);
     let gen_g1: Value<ArkBls12_381> = Value::g1(gen_g1_input);
 
-    let gen_g2_input = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
+    let gen_g2_input = <ArkBls12_381 as Backend>::G2::rand(&mut rng);
     let gen_g2: Value<ArkBls12_381> = Value::g2(gen_g2_input);
 
     let poly_x: Value<ArkBls12_381> =
         Value::<ArkBls12_381>::random(&mut rng, &ATyp::uni(n_size - 1));
     let eval_point: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-    let tau_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
+    let tau_input = <ArkBls12_381 as Backend>::F::rand(&mut rng);
 
     let srs_g1: Value<ArkBls12_381> = Value::vec_g1((0..n_size).map(|_| gen_g1_input).collect())
         * Value::vec_scalar((0..n_size).map(|i| tau_input.pow([i as u64])).collect());

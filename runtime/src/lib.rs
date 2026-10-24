@@ -22,6 +22,7 @@ mod transcript;
 pub use error::RuntimeError;
 pub use graph::MutexGraph;
 pub use run::{ResultKind, RunResult};
+pub use transcript::Challenger;
 
 #[cfg(test)]
 mod tests;

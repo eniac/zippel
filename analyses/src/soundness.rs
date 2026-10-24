@@ -1,3 +1,4 @@
+use crate::AnalysisBackend;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::TransClos;
@@ -8,8 +9,7 @@ use crate::extractor::valid_extractor;
 use crate::frontend::{MonoOrder, Polynomial};
 use crate::ideal::{Ideal, IdealBuilder};
 use ark_ff::One;
-use backend::op::HasOpFactory;
-use backend::{ATyp, ArkConfig};
+use backend::ATyp;
 use graph::{QDag, Ref};
 use lang::typ::Qualifier;
 use log::{info, warn};
@@ -26,7 +26,7 @@ use share::Set;
 /// [`SpecialSoundnessAnalysis::try_from_inputs`]. Splitting construction
 /// from GB computation lets callers inspect pre-GB metrics before the
 /// expensive step.
-pub struct SoundnessInputs<C: ArkConfig> {
+pub struct SoundnessInputs<C: AnalysisBackend> {
     /// The generating set for the search GB (d-equations + copy TCs +
     /// relation, definitions substituted).
     pub generating_set: Vec<Polynomial<C::F>>,
@@ -49,7 +49,7 @@ pub struct SoundnessInputs<C: ArkConfig> {
 }
 
 /// Perform a special soundness analysis using Groebner bases.
-pub struct SpecialSoundnessAnalysis<C: ArkConfig> {
+pub struct SpecialSoundnessAnalysis<C: AnalysisBackend> {
     /// Gröbner basis of the search ideal (verifier TC copies + d-equations +
     /// relation) under lex order. Computed in `try_from_inputs`.
     /// Snapshotable.
@@ -102,7 +102,7 @@ fn format_d_name(prefix: &[usize], m: usize, n: usize, k: usize) -> String {
 ///
 /// Returns `Vec<Vec<NodeIndex>>` where each inner vec is the consecutive
 /// challenge nodes forming one vector challenge round.
-fn validate_2n_plus_1<C: ArkConfig>(
+fn validate_2n_plus_1<C: AnalysisBackend>(
     dag: &QDag<C>,
     l_vec: &[usize],
 ) -> Result<Vec<Vec<NodeIndex>>, AnalysisError<C>> {
@@ -149,7 +149,7 @@ fn validate_2n_plus_1<C: ArkConfig>(
     Ok(challenge_rounds)
 }
 
-impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
+impl<C: AnalysisBackend> SpecialSoundnessAnalysis<C> {
     /// Build the inputs to the search Gröbner basis computation:
     /// construct all d-equations, copy TCs, and relation polys, build the
     /// lex elimination ordering, and substitute the `pl` definitions.
@@ -564,7 +564,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
     }
 }
 
-fn build_round_map<C: ArkConfig>(
+fn build_round_map<C: AnalysisBackend>(
     dag: &QDag<C>,
     challenge_rounds: &[Vec<NodeIndex>],
 ) -> HashMap<(Ref, Vec<usize>), usize> {

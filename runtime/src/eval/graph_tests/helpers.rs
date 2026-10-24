@@ -2,8 +2,7 @@
 //! building helpers mirror `graph`'s test helpers.
 
 use crate::eval::eval_op;
-use backend::op::HasOpFactory;
-use backend::{ATyp, ArkBls12_381, ArkConfig, ArkScalarOps, Value};
+use backend::{ATyp, ArkBls12_381, Backend, Field, Value};
 use graph::{ArgKind, Dep, GOp, Node, Op, Ref, UDag, mk};
 use lang::id::Vid;
 use lang::typ::{Distribution, Nothing, Qualifier};
@@ -18,12 +17,12 @@ pub type TestConfig = ArkBls12_381;
 pub use graph::testing::lowered;
 
 /// Helper to create a simple DAG for testing operations
-pub struct GraphBuilder<C: ArkConfig> {
+pub struct GraphBuilder<C: Backend> {
     dag: UDag<C>,
     input_node: NodeIndex,
 }
 
-impl<C: HasOpFactory> GraphBuilder<C> {
+impl<C: Backend> GraphBuilder<C> {
     /// Create a new graph builder with an input node
     pub fn new() -> Self {
         let mut dag = UDag::new();
@@ -65,32 +64,32 @@ impl<C: HasOpFactory> GraphBuilder<C> {
 }
 
 /// Create a scalar field value for testing
-pub fn scalar<C: ArkConfig>(n: u64) -> Value<C> {
-    Value::Scalar(C::FOps::from_usize(n as usize))
+pub fn scalar<C: Backend>(n: u64) -> Value<C> {
+    Value::Scalar(C::F::from_usize(n as usize))
 }
 
 /// Create a zero scalar
-pub fn zero_scalar<C: ArkConfig>() -> Value<C> {
-    Value::Scalar(C::FOps::zero())
+pub fn zero_scalar<C: Backend>() -> Value<C> {
+    Value::Scalar(C::F::zero())
 }
 
 /// Create a one scalar
-pub fn one_scalar<C: ArkConfig>() -> Value<C> {
-    Value::Scalar(C::FOps::one())
+pub fn one_scalar<C: Backend>() -> Value<C> {
+    Value::Scalar(C::F::one())
 }
 
 /// Create test inputs context
-pub fn test_inputs<C: ArkConfig>() -> Ctx<Vid, Value<C>> {
+pub fn test_inputs<C: Backend>() -> Ctx<Vid, Value<C>> {
     Ctx::new()
 }
 
 /// Add a scalar input to context
-pub fn add_scalar_input<C: ArkConfig>(ctx: &mut Ctx<Vid, Value<C>>, name: &str, value: u64) {
+pub fn add_scalar_input<C: Backend>(ctx: &mut Ctx<Vid, Value<C>>, name: &str, value: u64) {
     ctx.insert(&Vid::from(name), &scalar(value));
 }
 
 /// Compare two values for equality (within epsilon for floating point)
-pub fn values_equal<C: ArkConfig>(a: &Value<C>, b: &Value<C>) -> bool {
+pub fn values_equal<C: Backend>(a: &Value<C>, b: &Value<C>) -> bool {
     match (a, b) {
         (Value::Scalar(a), Value::Scalar(b)) => a == b,
         (Value::G1(a), Value::G1(b)) => a == b,
@@ -122,7 +121,7 @@ pub fn values_equal<C: ArkConfig>(a: &Value<C>, b: &Value<C>) -> bool {
 /// the canonical [`eval_op`] — the same dispatcher the runtime
 /// uses for per-node value computation.
 #[track_caller]
-pub fn execute_graph<C: ArkConfig>(dag: &UDag<C>, inputs: Ctx<Vid, Value<C>>) -> Option<Value<C>> {
+pub fn execute_graph<C: Backend>(dag: &UDag<C>, inputs: Ctx<Vid, Value<C>>) -> Option<Value<C>> {
     let (_computed, last) = execute_graph_inner(dag, inputs);
     last
 }
@@ -130,7 +129,7 @@ pub fn execute_graph<C: ArkConfig>(dag: &UDag<C>, inputs: Ctx<Vid, Value<C>>) ->
 /// Execute a graph with given inputs and return all computed node values.
 /// Useful for inspecting individual node results (e.g. multiple Check nodes).
 #[track_caller]
-pub fn execute_graph_all<C: ArkConfig>(
+pub fn execute_graph_all<C: Backend>(
     dag: &UDag<C>,
     inputs: Ctx<Vid, Value<C>>,
 ) -> HashMap<NodeIndex, Value<C>> {
@@ -148,7 +147,7 @@ pub fn execute_graph_all<C: ArkConfig>(
 /// map (used by `execute_graph_all`) and the last computed value (used by
 /// `execute_graph`).
 #[track_caller]
-fn execute_graph_inner<C: ArkConfig>(
+fn execute_graph_inner<C: Backend>(
     dag: &UDag<C>,
     inputs: Ctx<Vid, Value<C>>,
 ) -> (HashMap<NodeIndex, Value<C>>, Option<Value<C>>) {
@@ -190,8 +189,8 @@ fn execute_graph_inner<C: ArkConfig>(
 }
 
 /// The DAG's nodes, each after every node it depends on.
-fn topo_order<C: ArkConfig>(dag: &UDag<C>) -> Vec<NodeIndex> {
-    fn visit<C: ArkConfig>(
+fn topo_order<C: Backend>(dag: &UDag<C>) -> Vec<NodeIndex> {
+    fn visit<C: Backend>(
         dag: &UDag<C>,
         n: NodeIndex,
         seen: &mut HashSet<NodeIndex>,
@@ -216,7 +215,7 @@ fn topo_order<C: ArkConfig>(dag: &UDag<C>) -> Vec<NodeIndex> {
 /// depends on. The relation is lowered into nodes of its own, so the walk
 /// never reaches the body. Only the static analyses read it, so the executor
 /// skips it.
-fn relation_nodes<C: ArkConfig>(dag: &UDag<C>) -> HashSet<NodeIndex> {
+fn relation_nodes<C: Backend>(dag: &UDag<C>) -> HashSet<NodeIndex> {
     let mut seen = HashSet::new();
     let mut worklist: Vec<NodeIndex> = dag
         .node_indices()

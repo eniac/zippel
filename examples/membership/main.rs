@@ -1,6 +1,6 @@
 use ark_ff::fields::Field;
 use ark_std::UniformRand;
-use backend::{ArkBls12_381, ArkConfig, Value};
+use backend::{ArkBls12_381, Backend, Value};
 use lang::id::Vid;
 use share::Ctx;
 
@@ -16,13 +16,13 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381
     let mut rng = rand::rngs::OsRng;
     let s_size = size(sizes, "S");
 
-    let g_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
+    let g_input = <ArkBls12_381 as Backend>::G1::rand(&mut rng);
     let g: Value<ArkBls12_381> = Value::g1(g_input);
 
-    let h_input = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
+    let h_input = <ArkBls12_381 as Backend>::G2::rand(&mut rng);
     let h: Value<ArkBls12_381> = Value::g2(h_input);
 
-    let tau_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
+    let tau_input = <ArkBls12_381 as Backend>::F::rand(&mut rng);
 
     // SRS G1 up to size S
     let ss_g: Value<ArkBls12_381> = Value::vec_g1((0..s_size).map(|_| g_input).collect());
@@ -35,14 +35,14 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381
     // Set S of size M (choose 0, 1, 2, ..., M-1)
     let s_val = Value::vec_scalar(
         (0..m_size)
-            .map(|i| <ArkBls12_381 as ArkConfig>::F::from(i as u64))
+            .map(|i| <ArkBls12_381 as Backend>::F::from(i as u64))
             .collect(),
     );
 
     // f_coeffs. Constant term must be one of the elements of S (we choose S[0] which is 0).
-    let mut f_coeffs_vec = vec![<ArkBls12_381 as ArkConfig>::F::from(0u64)];
+    let mut f_coeffs_vec = vec![<ArkBls12_381 as Backend>::F::from(0u64)];
     for _ in 1..n_size {
-        f_coeffs_vec.push(<ArkBls12_381 as ArkConfig>::F::rand(&mut rng));
+        f_coeffs_vec.push(<ArkBls12_381 as Backend>::F::rand(&mut rng));
     }
     let f_coeffs = Value::vec_scalar(f_coeffs_vec);
 

@@ -1,7 +1,7 @@
 //! Dot-product op encoder: `dot_op`, `dot_op_inner`.
 
-use backend::op::HasOpFactory;
-use backend::{ATyp, ArkConfig};
+use crate::AnalysisBackend;
+use backend::ATyp;
 use graph::HOp;
 use lang::typ::Nothing;
 use lang::typ::lub::Lub;
@@ -17,7 +17,7 @@ use super::{EncodeCtx, link_to_polys};
 /// Element-wise slot-wise mul for non-polynomial types. Returns one
 /// polynomial per physical slot of the result. Handles broadcasting
 /// when one side is a single-slot scalar.
-fn mul_slotwise<C: ArkConfig>(a: &PolySource<C>, b: &PolySource<C>) -> Vec<Polynomial<C::F>> {
+fn mul_slotwise<C: AnalysisBackend>(a: &PolySource<C>, b: &PolySource<C>) -> Vec<Polynomial<C::F>> {
     match (a.typ(), b.typ()) {
         (ATyp::Vec(_, na), ATyp::Vec(_, nb)) if na == nb => {
             let mut out = Vec::new();
@@ -59,7 +59,7 @@ fn mul_slotwise<C: ArkConfig>(a: &PolySource<C>, b: &PolySource<C>) -> Vec<Polyn
 ///
 /// The element operation is always `mul` (element-wise with broadcasting),
 /// not `dot`. Only the outer Vec dimension is summed.
-fn dot_slotwise<C: ArkConfig>(
+fn dot_slotwise<C: AnalysisBackend>(
     var: &Var,
     a: &PolySource<C>,
     b: &PolySource<C>,
@@ -87,18 +87,13 @@ fn dot_slotwise<C: ArkConfig>(
     }
 }
 
-pub fn dot_op<C: ArkConfig + HasOpFactory>(
-    ctx: &mut EncodeCtx<'_, C>,
-    var: &Var,
-    a: &HOp<C>,
-    b: &HOp<C>,
-) {
+pub fn dot_op<C: AnalysisBackend>(ctx: &mut EncodeCtx<'_, C>, var: &Var, a: &HOp<C>, b: &HOp<C>) {
     let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
     let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
     dot_op_inner(ctx, var, &a_src, &b_src);
 }
 
-fn dot_op_inner<C: ArkConfig + HasOpFactory>(
+fn dot_op_inner<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     a: &PolySource<C>,
@@ -165,7 +160,7 @@ mod tests {
     use crate::frontend::Polynomial;
     use backend::ATyp;
     use backend::ArkBls12_381;
-    use backend::op::mk;
+    use backend::ir::op::mk;
     use graph::Op;
 
     #[test]

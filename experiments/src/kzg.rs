@@ -60,7 +60,7 @@ pub mod zippel_side {
     use ark_ff::One;
     use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
     use ark_std::UniformRand;
-    use backend::{ATyp, ArkBls12_381, ArkConfig, Value};
+    use backend::{ATyp, ArkBls12_381, Backend, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::io::Write;
@@ -68,10 +68,10 @@ pub mod zippel_side {
     use tempfile::NamedTempFile;
     use zippel::{CompileOptions, CompiledProver, CompiledVerifier, ParsedModule};
 
-    type F = <ArkBls12_381 as ArkConfig>::F;
-    type G1 = <ArkBls12_381 as ArkConfig>::G1;
-    type G2 = <ArkBls12_381 as ArkConfig>::G2;
-    type G1Affine = <ArkBls12_381 as ArkConfig>::G1Affine;
+    type F = <ArkBls12_381 as Backend>::F;
+    type G1 = <ArkBls12_381 as Backend>::G1;
+    type G2 = <ArkBls12_381 as Backend>::G2;
+    type G1Affine = backend::G1Affine<ArkBls12_381>;
 
     // Cached SRS artifact. The proto's setup quantities are deterministic
     // in `(seed, n)`, so we seed with `ark_std::test_rng()` and cache
@@ -396,6 +396,112 @@ pub mod native_side {
                 verify,
                 prove_peak,
                 verify_peak,
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Cross-verification: on one SRS, each verifier accepts the other's proof.
+// KZG draws no challenges.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod cross_tests {
+    use crate::cross::Direction;
+    use ark_bls12_381::{Bls12_381, Fr, G1Affine, G1Projective};
+    use ark_ec::CurveGroup;
+    use ark_ff::UniformRand;
+    use ark_poly::{DenseUVPolynomial, Polynomial, univariate::DensePolynomial};
+    use ark_poly_commit::kzg10::{Commitment, KZG10, Powers, Proof, VerifierKey};
+    use backend::{ArkBls12_381, Value};
+    use std::borrow::Cow;
+
+    type Kzg = KZG10<Bls12_381, DensePolynomial<Fr>>;
+    type V = Value<ArkBls12_381>;
+
+    fn g1(v: &V) -> G1Affine {
+        match v {
+            Value::G1(g) => g.into_affine(),
+            Value::G1Affine(g) => **g,
+            _ => panic!("expected G1, got {v}"),
+        }
+    }
+
+    #[test]
+    fn native_prove_then_zippel_verify() {
+        cross_verify(Direction::NativeToZippel);
+    }
+
+    #[test]
+    fn zippel_prove_then_native_verify() {
+        cross_verify(Direction::ZippelToNative);
+    }
+
+    fn cross_verify(direction: Direction) {
+        let mut rng = ark_std::test_rng();
+        for n in [2usize, 4, 8] {
+            let pp = Kzg::setup(n - 1, false, &mut rng).expect("kzg setup");
+            let powers = Powers::<Bls12_381> {
+                powers_of_g: Cow::Borrowed(&pp.powers_of_g[..n]),
+                powers_of_gamma_g: Cow::Owned(vec![]),
+            };
+            let vk = VerifierKey {
+                g: pp.powers_of_g[0],
+                gamma_g: pp.powers_of_gamma_g[&0],
+                h: pp.h,
+                beta_h: pp.beta_h,
+                prepared_h: pp.prepared_h.clone(),
+                prepared_beta_h: pp.prepared_beta_h.clone(),
+            };
+            let poly = DensePolynomial::<Fr>::rand(n - 1, &mut rng);
+            let z = Fr::rand(&mut rng);
+            let y = poly.evaluate(&z);
+
+            let (prover, verifier) = crate::cross::compile::<ArkBls12_381>("kzg", &[("N", n)]);
+            let inputs = crate::harness_inputs([
+                (
+                    "poly_x",
+                    Value::vec_scalar(poly.coeffs.clone()).value_poly(),
+                ),
+                ("eval_point", Value::Scalar(z)),
+                ("eval_result", Value::Scalar(y)),
+                ("srs_g1", Value::vec_g1_affine(pp.powers_of_g[..n].to_vec())),
+                ("gen_g1", Value::g1(pp.powers_of_g[0].into())),
+                ("gen_g2", Value::g2(pp.h.into())),
+                ("srs_g2_s", Value::g2(pp.beta_h.into())),
+            ]);
+
+            match direction {
+                Direction::NativeToZippel => {
+                    let (com, _) = Kzg::commit(&powers, &poly, None, None).expect("kzg commit");
+                    let rand = <ark_poly_commit::kzg10::Randomness<Fr, DensePolynomial<Fr>> as ark_poly_commit::PCCommitmentState>::empty();
+                    let open = Kzg::open(&powers, &poly, z, &rand).expect("kzg open");
+                    let native = vec![Value::g1_affine(com.0), Value::g1_affine(open.w)];
+                    assert!(
+                        verifier.verify(native, crate::lend(&inputs)).unwrap(),
+                        "n = {n}: Zippel rejects the native proof"
+                    );
+                    let wrong = vec![
+                        Value::g1_affine(com.0),
+                        Value::g1(G1Projective::from(open.w) + G1Projective::from(open.w)),
+                    ];
+                    assert!(
+                        !verifier.verify(wrong, crate::lend(&inputs)).unwrap(),
+                        "n = {n}: Zippel accepts a wrong opening"
+                    );
+                }
+                Direction::ZippelToNative => {
+                    let ours = prover.prove(crate::lend(&inputs)).unwrap();
+                    assert_eq!(ours.len(), 2, "n = {n}: Zippel's message count");
+                    let proof = Proof {
+                        w: g1(&ours[1]),
+                        random_v: None,
+                    };
+                    assert!(
+                        Kzg::check(&vk, &Commitment(g1(&ours[0])), z, y, &proof).unwrap(),
+                        "n = {n}: the native verifier rejects Zippel's proof"
+                    );
+                }
             }
         }
     }

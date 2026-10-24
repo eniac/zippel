@@ -1,11 +1,11 @@
+use crate::AnalysisBackend;
 use crate::TransClos;
 use crate::Var;
 use graph::{GOp, HOp, Op, Ref};
 use lang::ast::BinOp;
 use std::collections::HashMap;
 
-use backend::op::HasOpFactory;
-use backend::{ATyp, ArkConfig};
+use backend::ATyp;
 
 mod combinatorics;
 
@@ -30,7 +30,7 @@ use ops::{EncodeCtx, link_to_polys};
 /// that persists across `build()` calls. Each call to `build(TransClos)`
 /// returns a fresh `Ideal` with its own `vars` namespace.
 #[derive(Clone)]
-pub struct IdealBuilder<C: ArkConfig> {
+pub struct IdealBuilder<C: AnalysisBackend> {
     /// Name and sentinel allocator, shared by every `build()` call so that
     /// generated division witnesses and sentinels stay globally unique.
     pub ns: IdealNamespace<C>,
@@ -39,13 +39,13 @@ pub struct IdealBuilder<C: ArkConfig> {
     node_ops: HashMap<Ref, GOp<C>>,
 }
 
-impl<C: ArkConfig + HasOpFactory> Default for IdealBuilder<C> {
+impl<C: AnalysisBackend> Default for IdealBuilder<C> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
+impl<C: AnalysisBackend> IdealBuilder<C> {
     /// Creates a builder with an empty namespace and no recorded node
     /// operations.
     pub fn new() -> Self {
@@ -103,7 +103,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     /// asserted `a && b && ...` into one assertion per conjunct as a
     /// canonicalization rule, rather than special-casing it here.
     pub(crate) fn collect_and_leaves(&self, exp: &HOp<C>) -> Vec<HOp<C>> {
-        fn collect<C: ArkConfig + HasOpFactory>(
+        fn collect<C: AnalysisBackend>(
             builder: &IdealBuilder<C>,
             exp: &HOp<C>,
             out: &mut Vec<HOp<C>>,
@@ -117,7 +117,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     if let Some(op) = builder.node_ops.get(r)
                         && matches!(op, Op::Bin(BinOp::And, ..))
                     {
-                        let hop = backend::op::mk::<C>(op.clone());
+                        let hop = backend::ir::op::mk::<C>(op.clone());
                         collect(builder, &hop, out);
                         return;
                     }
@@ -132,7 +132,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     }
 }
 
-impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
+impl<C: AnalysisBackend> IdealBuilder<C> {
     pub(crate) fn add_op(&mut self, var: Var, op: GOp<C>, ideal: &mut Ideal<C>) {
         let mut ctx = EncodeCtx {
             builder: self,
@@ -312,7 +312,7 @@ mod tests {
     use backend::ArkBls12_381;
     use backend::Value;
 
-    use backend::op::mk;
+    use backend::ir::op::mk;
 
     // -----------------------------------------------------------------
     // add_op: Op::Poly / Op::Mle / Op::Coef (identity on coefficient slots)
@@ -322,7 +322,7 @@ mod tests {
     fn test_add_op_poly_binds_coefficient_slots() {
         use crate::Var;
         use ark_bls12_381::Fr;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
@@ -359,7 +359,7 @@ mod tests {
         // Op::Coef(Op::Poly(v)) bound to the same slots should reduce to `v`.
         use crate::Var;
         use ark_bls12_381::Fr;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
@@ -414,7 +414,7 @@ mod tests {
     fn test_add_op_mle_binds_hypercube_slots() {
         use crate::Var;
         use ark_bls12_381::Fr;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
@@ -573,7 +573,7 @@ mod tests {
 
     #[test]
     fn pair_emits_product_without_sentinel() {
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 

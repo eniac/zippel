@@ -1,5 +1,5 @@
 use ark_ff::{One, Zero};
-use backend::{ATyp, ArkConfig, ArkSecp256k1, Value};
+use backend::{ATyp, ArkSecp256k1, Backend, Value};
 use lang::id::Vid;
 use share::Ctx;
 
@@ -8,8 +8,8 @@ use crate::common::{self, size};
 fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkSecp256k1>> {
     let mut rng = rand::rngs::OsRng;
 
-    let zero = <ArkSecp256k1 as ArkConfig>::F::zero();
-    let one = <ArkSecp256k1 as ArkConfig>::F::one();
+    let zero = <ArkSecp256k1 as Backend>::F::zero();
+    let one = <ArkSecp256k1 as Backend>::F::one();
 
     let mut v_coeffs = vec![zero; size(sizes, "S") + 1];
     *v_coeffs.last_mut().unwrap() = one;
@@ -17,8 +17,7 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkSecp256k1
 
     let alpha_val: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::scalar());
     let alpha = alpha_val.into_scalar();
-    let p_coeffs: Vec<<ArkSecp256k1 as ArkConfig>::F> =
-        v_coeffs.iter().map(|c| *c * alpha).collect();
+    let p_coeffs: Vec<<ArkSecp256k1 as Backend>::F> = v_coeffs.iter().map(|c| *c * alpha).collect();
     let p = Value::<ArkSecp256k1>::vec_scalar(p_coeffs).value_poly();
 
     Ctx::<Vid, Value<ArkSecp256k1>>::from_iter([

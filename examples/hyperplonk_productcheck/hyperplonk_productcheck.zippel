@@ -167,10 +167,10 @@ proto hyperplonk_productcheck<F: Field, S: Size, N: 2 ^ S>(
     //   ĝ(X) = ṽ(0, X) - f(X)
     let neg_v_prod = v_tail_0 * -1 * v_tail_1;
     let neg_f_mle = f_mle * -1;
-    let f_hat = v_lead_1 + neg_v_prod; // Poly<F, S, 2>
     let g_hat = v_lead_0 + neg_f_mle; // Mle<F, S>
-    let alpha_g_hat = g_hat * alpha;
-    let h_check = f_hat + alpha_g_hat; // Poly<F, S, 2>
+    // The multilinear part as one table: every sumcheck round folds and sums it.
+    let h_lin = mle(v_lead_1 + g_hat * alpha);
+    let h_check = h_lin + neg_v_prod; // Poly<F, S, 2>
 
     let p_poly = h_check * eq_tau; // Poly<F, S, 3>
 

@@ -1,5 +1,5 @@
 //! Shared compilation, execution and analysis for registered examples.
-use backend::{ArkConfig, HasOpFactory, Value};
+use backend::{Backend, Value};
 use lang::{
     diagnostic::render_diagnostic,
     id::{Tid, Vid},
@@ -53,7 +53,7 @@ type ValidateSizes = fn(&Ctx<Tid, usize>, bool) -> Result<(), String>;
 type MakeInputs<C> = fn(&Ctx<Tid, usize>) -> Ctx<Vid, Value<C>>;
 
 /// Protocol-specific data; orchestration belongs to this module.
-pub struct ExampleSpec<C: ArkConfig> {
+pub struct ExampleSpec<C: Backend> {
     pub source: &'static str,
     /// Complete size set used only when no sizes are supplied.
     pub defaults: &'static [(&'static str, usize)],
@@ -99,11 +99,7 @@ pub fn resolve(
 }
 
 /// Execute one registered example and return its process status.
-pub fn run<C: ArkConfig + HasOpFactory>(
-    name: &str,
-    spec: &ExampleSpec<C>,
-    request: &Request,
-) -> u8 {
+pub fn run<C: Backend>(name: &str, spec: &ExampleSpec<C>, request: &Request) -> u8 {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(spec.source);
     let module = match ParsedModule::load(&path) {
         Ok(module) => module,
@@ -217,7 +213,7 @@ pub fn run<C: ArkConfig + HasOpFactory>(
     }
 }
 
-fn run_analyses<C: ArkConfig + HasOpFactory>(
+fn run_analyses<C: Backend>(
     protocol: &CompiledProtocol<C>,
     analyses: &[Analysis<'_>],
     selected: Option<AnalysisKind>,
@@ -259,7 +255,7 @@ fn run_analyses<C: ArkConfig + HasOpFactory>(
     u8::from(failed)
 }
 
-fn run_protocol<C: ArkConfig + HasOpFactory>(
+fn run_protocol<C: Backend>(
     prover: &CompiledProver<C>,
     verifier: &CompiledVerifier<C>,
     inputs: Ctx<Vid, Value<C>>,

@@ -1,4 +1,4 @@
-use backend::ArkConfig;
+use crate::AnalysisBackend;
 use graph::{Dag, GOp, Node, Op, QDag, UDag};
 use lang::ast::spanned::Spanned;
 use lang::typ::Qualifier;
@@ -17,12 +17,16 @@ pub struct QualifierPropagation {
 /// Propagate qualifiers [witness, local, extra, instance] through the DAG
 impl QualifierPropagation {
     #[allow(clippy::wrong_self_convention)]
-    fn from_op<C: ArkConfig>(&self, op: &GOp<C>) -> Option<Qualifier> {
+    fn from_op<C: AnalysisBackend>(&self, op: &GOp<C>) -> Option<Qualifier> {
         self.from_op_loops(op, &[])
     }
 
     #[allow(clippy::wrong_self_convention)]
-    fn from_op_loops<C: ArkConfig>(&self, op: &GOp<C>, loops: &[Qualifier]) -> Option<Qualifier> {
+    fn from_op_loops<C: AnalysisBackend>(
+        &self,
+        op: &GOp<C>,
+        loops: &[Qualifier],
+    ) -> Option<Qualifier> {
         match op {
             Op::Value(_) => Some(Qualifier::Instance),
             Op::Assert(_) | Op::Verify(_) => Some(Qualifier::Instance),
@@ -97,7 +101,7 @@ impl QualifierPropagation {
     /// # Panics
     /// Panics if `dag` contains no `verify` check, since the verifier side
     /// would then be empty and the projection meaningless.
-    pub fn from_dag<C: ArkConfig>(dag: &UDag<C>) -> QDag<C> {
+    pub fn from_dag<C: AnalysisBackend>(dag: &UDag<C>) -> QDag<C> {
         let mut qp = QualifierPropagation { quals: Ctx::new() };
 
         // Forward-reachable set from args (prover side), stopping at transcripts.
@@ -200,7 +204,7 @@ mod tests {
     use super::*;
     use crate::tests::lowered;
     use backend::ArkBls12_381;
-    use backend::op::mk;
+    use backend::ir::op::mk;
     use graph::Node;
     use lang::typ::Qualifier;
     use share::unwrap;

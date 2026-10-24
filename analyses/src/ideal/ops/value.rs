@@ -1,7 +1,7 @@
 //! Value literal op encoder: `value_op`.
 
-use backend::op::HasOpFactory;
-use backend::{ArkConfig, Value};
+use crate::AnalysisBackend;
+use backend::Value;
 
 use crate::Var;
 use crate::frontend::Polynomial;
@@ -18,7 +18,7 @@ use super::link_to_polys;
 ///
 /// Supports Scalar / Index / Vec and the Vec* flavours, and a group identity.
 /// Everything else (other G1/G2/GT, Poly, Record) panics with `unsupported-value`.
-pub fn value_op<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, var: &Var, v: &Value<C>) {
+pub fn value_op<C: AnalysisBackend>(ctx: &mut EncodeCtx<'_, C>, var: &Var, v: &Value<C>) {
     let polys_opt: Option<Vec<Polynomial<C::F>>> = match v {
         Value::Scalar(_)
         | Value::Index(_)

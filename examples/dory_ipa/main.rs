@@ -1,4 +1,4 @@
-use backend::{ArkBls12_381, ArkConfig, ArkGroupOps, ArkPairingOps, Value};
+use backend::{ArkBls12_381, Backend, Group, Pairing, Value};
 use lang::id::Vid;
 use share::Ctx;
 
@@ -10,23 +10,35 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381
     let n = 1usize << size(sizes, "S");
 
     // Generate random vectors
-    let u_vec = <ArkBls12_381 as ArkConfig>::G1Ops::vec_rand(&mut rng, n);
-    let g_vec = <ArkBls12_381 as ArkConfig>::G2Ops::vec_rand(&mut rng, n);
+    let u_vec = (0..n)
+        .map(|_| <ArkBls12_381 as Backend>::G1::rand(&mut rng))
+        .collect::<Vec<_>>();
+    let g_vec = (0..n)
+        .map(|_| <ArkBls12_381 as Backend>::G2::rand(&mut rng))
+        .collect::<Vec<_>>();
 
-    let gamma1 = <ArkBls12_381 as ArkConfig>::G1Ops::vec_rand(&mut rng, n);
-    let gamma2 = <ArkBls12_381 as ArkConfig>::G2Ops::vec_rand(&mut rng, n);
+    let gamma1 = (0..n)
+        .map(|_| <ArkBls12_381 as Backend>::G1::rand(&mut rng))
+        .collect::<Vec<_>>();
+    let gamma2 = (0..n)
+        .map(|_| <ArkBls12_381 as Backend>::G2::rand(&mut rng))
+        .collect::<Vec<_>>();
 
     // Preprocessing: we need exactly log_2(n) gamma' arrays
     // For n=64, we need level 1 (size 32), ... down to level 6 (size 1).
     // The top-level inputs to dory_eval require just gamma1, gamma2, gamma1_prime, gamma2_prime, and their hashes
     // Since our protocol takes scalar variables directly, we will precompute exactly the hashes for n=64
-    let gamma1_prime = <ArkBls12_381 as ArkConfig>::G1Ops::vec_rand(&mut rng, n / 2);
-    let gamma2_prime = <ArkBls12_381 as ArkConfig>::G2Ops::vec_rand(&mut rng, n / 2);
+    let gamma1_prime = (0..n / 2)
+        .map(|_| <ArkBls12_381 as Backend>::G1::rand(&mut rng))
+        .collect::<Vec<_>>();
+    let gamma2_prime = (0..n / 2)
+        .map(|_| <ArkBls12_381 as Backend>::G2::rand(&mut rng))
+        .collect::<Vec<_>>();
 
     // Compute c1, c2, c3
-    let c1 = <ArkBls12_381 as ArkConfig>::POps::billinear_vec_dot(&u_vec, &g_vec);
-    let c2 = <ArkBls12_381 as ArkConfig>::POps::billinear_vec_dot(&u_vec, &gamma2);
-    let c3 = <ArkBls12_381 as ArkConfig>::POps::billinear_vec_dot(&gamma1, &g_vec);
+    let c1 = <<ArkBls12_381 as Backend>::P as Pairing>::multi_pairing(&u_vec, &g_vec);
+    let c2 = <<ArkBls12_381 as Backend>::P as Pairing>::multi_pairing(&u_vec, &gamma2);
+    let c3 = <<ArkBls12_381 as Backend>::P as Pairing>::multi_pairing(&gamma1, &g_vec);
 
     // Hash levels construction for O(log n) Dory preprocessing
     let mut hash1_l_vec = Vec::new();
@@ -51,11 +63,12 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381
         let cur_g1_prime = gamma1_prime[0..half_n].to_vec();
         let cur_g2_prime = gamma2_prime[0..half_n].to_vec();
 
-        let h1_l = <ArkBls12_381 as ArkConfig>::POps::billinear_vec_dot(&g1_l, &cur_g2_prime);
-        let h1_r = <ArkBls12_381 as ArkConfig>::POps::billinear_vec_dot(&g1_r, &cur_g2_prime);
-        let h2_l = <ArkBls12_381 as ArkConfig>::POps::billinear_vec_dot(&cur_g1_prime, &g2_l);
-        let h2_r = <ArkBls12_381 as ArkConfig>::POps::billinear_vec_dot(&cur_g1_prime, &g2_r);
-        let ipp = <ArkBls12_381 as ArkConfig>::POps::billinear_vec_dot(&cur_gamma1, &cur_gamma2);
+        let h1_l = <<ArkBls12_381 as Backend>::P as Pairing>::multi_pairing(&g1_l, &cur_g2_prime);
+        let h1_r = <<ArkBls12_381 as Backend>::P as Pairing>::multi_pairing(&g1_r, &cur_g2_prime);
+        let h2_l = <<ArkBls12_381 as Backend>::P as Pairing>::multi_pairing(&cur_g1_prime, &g2_l);
+        let h2_r = <<ArkBls12_381 as Backend>::P as Pairing>::multi_pairing(&cur_g1_prime, &g2_r);
+        let ipp =
+            <<ArkBls12_381 as Backend>::P as Pairing>::multi_pairing(&cur_gamma1, &cur_gamma2);
 
         hash1_l_vec.push(h1_l);
         hash1_r_vec.push(h1_r);

@@ -1,9 +1,10 @@
-use backend::op::Ref;
+use crate::AnalysisBackend;
+use backend::ir::op::Ref;
 use graph::{Dag, Node};
 use lang::typ::Qualifier;
 use petgraph::graph::NodeIndex;
 
-use backend::{ABase, ATyp, ArkConfig, binomial};
+use backend::{ABase, ATyp, binomial};
 use std::fmt;
 
 /// A reference to a node in the graph, with all associated metadata.
@@ -256,7 +257,7 @@ impl fmt::Display for Var {
 
 /// Build `Var`s for all input Arg nodes of `dag`, preserving the sort order
 /// of `Dag::input_args()`.
-pub fn dag_args<C: ArkConfig, A>(dag: &Dag<C, A>) -> Vec<Var> {
+pub fn dag_args<C: AnalysisBackend, A>(dag: &Dag<C, A>) -> Vec<Var> {
     dag.input_args()
         .into_iter()
         .filter_map(|n| match &dag[n] {

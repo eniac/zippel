@@ -1,7 +1,7 @@
 //! Record and projection op encoders: `record_op`, `proj_op`.
 
-use backend::op::HasOpFactory;
-use backend::{ATyp, ArkConfig};
+use crate::AnalysisBackend;
+use backend::ATyp;
 use graph::HOp;
 use share::Ctx;
 
@@ -32,7 +32,7 @@ fn record_field_offset(fields: &Ctx<String, ATyp>, field_name: &str) -> usize {
 /// For each field, get the field-level Var via `with_index`,
 /// then expand its sub-slots via `slots()` to get hierarchical
 /// indices (e.g. `[0][0]`, `[0][1]` for a Vec field).
-pub fn record_op<C: ArkConfig + HasOpFactory>(
+pub fn record_op<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     fields: &Ctx<String, HOp<C>>,
@@ -55,7 +55,7 @@ pub fn record_op<C: ArkConfig + HasOpFactory>(
 ///
 /// Non-record inner types are not supported — after IR lowering every
 /// Proj must operate on a Record; any other variant is a compiler bug.
-pub fn proj_op<C: ArkConfig + HasOpFactory>(
+pub fn proj_op<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     inner: &HOp<C>,
@@ -90,7 +90,7 @@ mod tests {
     use backend::ArkBls12_381;
 
     use backend::ATyp;
-    use backend::op::mk;
+    use backend::ir::op::mk;
     use graph::{GOp, HOp, Op};
 
     use share::Ctx;
@@ -421,7 +421,7 @@ mod tests {
         // Build a record {a: Scalar, b: Scalar} from scalar refs, project
         // field "a", assert pl/basis aliases the field directly.
         use crate::Var;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
@@ -448,7 +448,7 @@ mod tests {
         ideal.register(&var_b);
 
         // Build record {a: var_a, b: var_b}.
-        let mut field_ops: Ctx<String, backend::op::HOp<ArkBls12_381>> = Ctx::new();
+        let mut field_ops: Ctx<String, backend::ir::op::HOp<ArkBls12_381>> = Ctx::new();
         field_ops.insert(
             &"a".to_string(),
             &mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), s.clone())),

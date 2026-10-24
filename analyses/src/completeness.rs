@@ -1,7 +1,5 @@
+use crate::AnalysisBackend;
 use std::collections::HashSet;
-
-use backend::ArkConfig;
-use backend::op::HasOpFactory;
 
 use crate::backend::{GbBackendKind, GbBasis};
 use crate::error::AnalysisError;
@@ -32,7 +30,7 @@ pub struct CompletenessInputs<F: ark_ff::PrimeField> {
 /// Perform a completeness analysis using Groebner bases.
 /// This analysis checks if the relation is included in the implementation.
 /// One shared namespace is used for prover, relation, and verifier.
-pub struct CompletenessAnalysis<C: ArkConfig> {
+pub struct CompletenessAnalysis<C: AnalysisBackend> {
     /// Gröbner basis of (prover ∪ relation ∪ verifier-locals) under grevlex.
     /// Computed in `try_from_inputs`.
     pub basis: GbBasis<C::F>,
@@ -40,7 +38,7 @@ pub struct CompletenessAnalysis<C: ArkConfig> {
     pub verifier: Vec<Polynomial<C::F>>,
 }
 
-impl<C: HasOpFactory> CompletenessAnalysis<C> {
+impl<C: AnalysisBackend> CompletenessAnalysis<C> {
     /// Build the inputs to the Gröbner basis computation, in stages: the
     /// prover and the relation with their definitions substituted; the
     /// verifier, whose locals are generators and whose checks are the goals,
@@ -413,7 +411,7 @@ mod tests {
         let r_var = mk_var("r", 3);
         let u_var = mk_var("u", 4);
 
-        type Poly = Polynomial<<ArkBls12_381 as backend::ArkConfig>::F>;
+        type Poly = Polynomial<<ArkBls12_381 as backend::Backend>::F>;
         let var_poly = |p: &Var| -> Poly { Polynomial::var(p) };
 
         let p1 = var_poly(&g_var) * var_poly(&x_var) - var_poly(&h_var);

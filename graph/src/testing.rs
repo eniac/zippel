@@ -1,7 +1,8 @@
 //! Helpers for tests across the workspace: Zippel source to a typed module or to graphs, failing
 //! the test on any error.
 
-use crate::{GraphError, HasOpFactory, Relations, UDags};
+use crate::{GraphError, Relations, UDags};
+use backend::Backend;
 use lang::ast::{TypedModule, UModule};
 use lang::diagnostic::Severity;
 use lang::id::Tid;
@@ -43,9 +44,6 @@ pub fn parse_and_check(src: &str, sizes: &Ctx<Tid, usize>) -> TypedModule {
 /// # Panics
 /// As [`parse_and_check`].
 #[track_caller]
-pub fn lowered<C: HasOpFactory>(
-    src: &str,
-    sizes: &Ctx<Tid, usize>,
-) -> Result<UDags<C>, GraphError> {
+pub fn lowered<C: Backend>(src: &str, sizes: &Ctx<Tid, usize>) -> Result<UDags<C>, GraphError> {
     UDags::lower(&parse_and_check(src, sizes), Relations::Lower)
 }

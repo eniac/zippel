@@ -733,11 +733,90 @@ mod op_integration {
 
     // ── Numeric literals in a field ─────────────────────────────────────
 
+    /// Field-only backends over tiny prime fields, where reducing a literal into the
+    /// field shows with small numbers.
+    mod tiny {
+        use ark_ff::{Fp64, MontBackend, MontConfig, PrimeField};
+        use backend::backends::NoKey;
+        use backend::{Backend, NoGroup, NoPairing};
+        use std::fmt;
+        use std::marker::PhantomData;
+
+        #[derive(MontConfig)]
+        #[modulus = "17"]
+        #[generator = "3"]
+        pub struct F17Config;
+
+        #[derive(MontConfig)]
+        #[modulus = "65537"]
+        #[generator = "3"]
+        pub struct F65537Config;
+
+        /// A backend with field `F` and no groups.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        pub struct FieldOnly<F>(PhantomData<F>);
+
+        impl<F: PrimeField> fmt::Display for FieldOnly<F> {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                write!(f, "Field<{}>", F::MODULUS)
+            }
+        }
+
+        impl<F: PrimeField> Backend for FieldOnly<F> {
+            type F = F;
+            type G1 = NoGroup<F>;
+            type G2 = NoGroup<F>;
+            type P = NoPairing<NoGroup<F>>;
+            type G1Key = NoKey;
+            type G2Key = NoKey;
+            type Analysis = Self;
+            const HAS_PAIRING: bool = false;
+            const HAS_GROUP: bool = false;
+        }
+
+        /// The 17-element field.
+        pub type Field17 = FieldOnly<Fp64<MontBackend<F17Config, 1>>>;
+        /// The 65537-element field.
+        pub type Field65537 = FieldOnly<Fp64<MontBackend<F65537Config, 1>>>;
+    }
+
+    use tiny::{Field17, Field65537};
+
+    /// `mle(p)` of a multilinear sum and `poly(p)` of a univariate product materialize
+    /// it: one table, one coefficient vector, each the value of the expression.
+    #[test]
+    fn mle_and_poly_materialize_a_polynomial() {
+        type B = TestConfig;
+        let input = |name: &str, xs: &[u64]| {
+            (
+                lang::id::Vid::from(name),
+                Value::<B>::vec_scalar(xs.iter().map(|&n| f::<B>(n)).collect()),
+            )
+        };
+        let table = |v: Value<B>| match v {
+            Value::Poly(p) => p.to_vec().expect("one table"),
+            other => panic!("expected a polynomial, got {other}"),
+        };
+        let src = "fn f<F: Field>(witness a: [F; 4], witness b: [F; 4]) -> Poly<F, 2, 1> {
+                       mle(mle(a) * 3 + mle(b) + 1)
+                   }
+                   fn g<F: Field>(witness a: [F; 2], witness b: [F; 2]) -> Poly<F, 1, 2> {
+                       poly(poly(a) * poly(b))
+                   }";
+        let ab = |a: &[u64], b: &[u64]| share::Ctx::from_iter([input("a", a), input("b", b)]);
+        let f_table = table(run::<B>(src, "f", ab(&[1, 2, 3, 4], &[5, 6, 7, 8])));
+        let want: Vec<_> = [9u64, 13, 17, 21].iter().map(|&n| f::<B>(n)).collect();
+        assert_eq!(f_table, want, "3a + b + 1 at each point");
+        let g_coeffs = table(run::<B>(src, "g", ab(&[1, 2], &[3, 4])));
+        let want: Vec<_> = [3u64, 10, 8].iter().map(|&n| f::<B>(n)).collect();
+        assert_eq!(g_coeffs, want, "(1 + 2x)(3 + 4x)");
+    }
+
     /// A literal above `u64::MAX` and both test moduli.
     const BIG: &str = "34545435435435435435435";
 
     /// Lowers `src` and runs its function `name` on `inputs`.
-    fn run<B: graph::HasOpFactory>(
+    fn run<B: backend::Backend>(
         src: &str,
         name: &str,
         inputs: share::Ctx<lang::id::Vid, Value<B>>,
@@ -752,13 +831,13 @@ mod op_integration {
     }
 
     /// `n` in the field of `B`.
-    fn f<B: backend::ArkConfig>(n: u64) -> <B as backend::ArkConfig>::F {
+    fn f<B: backend::Backend>(n: u64) -> <B as backend::Backend>::F {
         n.into()
     }
 
     /// `got` is the field element `expected` (not an index of the same value).
     #[track_caller]
-    fn assert_field<B: backend::ArkConfig>(got: &Value<B>, expected: <B as backend::ArkConfig>::F) {
+    fn assert_field<B: backend::Backend>(got: &Value<B>, expected: <B as backend::Backend>::F) {
         assert!(
             matches!(got, Value::Scalar(x) if *x == expected),
             "expected Scalar({expected}), got {got}"
@@ -767,7 +846,7 @@ mod op_integration {
 
     /// `got` is the field vector `expected`.
     #[track_caller]
-    fn assert_fields<B: backend::ArkConfig>(got: &Value<B>, expected: &[u64]) {
+    fn assert_fields<B: backend::Backend>(got: &Value<B>, expected: &[u64]) {
         let expected: Vec<_> = expected.iter().map(|&n| f::<B>(n)).collect();
         assert!(
             matches!(got, Value::VecScalar(xs) if *xs == expected),
@@ -775,24 +854,24 @@ mod op_integration {
         );
     }
 
-    fn literal_modulo_field<B: graph::HasOpFactory>(residue: u64) {
+    fn literal_modulo_field<B: backend::Backend>(residue: u64) {
         let src = format!("fn f<F: Field>() -> F {{ {BIG} }}");
         assert_field::<B>(&run::<B>(&src, "f", share::Ctx::new()), f::<B>(residue));
     }
 
     #[test]
     fn numeric_literal_modulo_field() {
-        literal_modulo_field::<backend::ArkField17>(14);
-        literal_modulo_field::<backend::ArkField65537>(55512);
+        literal_modulo_field::<Field17>(14);
+        literal_modulo_field::<Field65537>(55512);
         // A finite literal returned as a field element is reduced, not an index.
-        type B = backend::ArkField17;
+        type B = Field17;
         let got = run::<B>("fn f<F: Field>() -> F { 18 }", "f", share::Ctx::new());
         assert_field::<B>(&got, f::<B>(1));
     }
 
     #[test]
     fn numeric_literal_field_uses() {
-        type B = backend::ArkField17;
+        type B = Field17;
         let none = share::Ctx::new;
         let scalar_of = |src: &str| run::<B>(src, "f", none());
 
@@ -879,7 +958,7 @@ mod op_integration {
     /// An integer stored into a field of a record becomes a field element of that field.
     #[test]
     fn numeric_literal_record_update() {
-        type B = backend::ArkField17;
+        type B = Field17;
         let src = "proto p<F: Field>(instance r: {a: F}) where r.a == r.a {
                        s <- r.set(a, 18);
                        verify(s.a == 1)

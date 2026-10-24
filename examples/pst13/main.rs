@@ -1,6 +1,6 @@
 use ark_std::One;
 use ark_std::UniformRand;
-use backend::{ArkBls12_381, ArkConfig, Value};
+use backend::{ArkBls12_381, Backend, Value};
 use lang::id::Vid;
 use share::Ctx;
 
@@ -13,12 +13,12 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381
     let mut rng = rand::rngs::OsRng;
     let size = 1usize << n;
 
-    let gen_g = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
-    let gen_h = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
+    let gen_g = <ArkBls12_381 as Backend>::G1::rand(&mut rng);
+    let gen_h = <ArkBls12_381 as Backend>::G2::rand(&mut rng);
 
-    let one = <ArkBls12_381 as ArkConfig>::F::one();
+    let one = <ArkBls12_381 as Backend>::F::one();
     let alpha: Vec<_> = (0..n)
-        .map(|_| <ArkBls12_381 as ArkConfig>::F::rand(&mut rng))
+        .map(|_| <ArkBls12_381 as Backend>::F::rand(&mut rng))
         .collect();
     let one_m_alpha: Vec<_> = alpha.iter().map(|a| one - a).collect();
 
@@ -37,16 +37,16 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381
     let ck_n = Value::vec_g1(ck_n_scalars.iter().map(|s| gen_g * s).collect());
 
     let p_scalars: Vec<_> = (0..size)
-        .map(|_| <ArkBls12_381 as ArkConfig>::F::rand(&mut rng))
+        .map(|_| <ArkBls12_381 as Backend>::F::rand(&mut rng))
         .collect();
     let p = Value::vec_scalar(p_scalars.clone());
 
     let z_scalars: Vec<_> = (0..n)
-        .map(|_| <ArkBls12_381 as ArkConfig>::F::rand(&mut rng))
+        .map(|_| <ArkBls12_381 as Backend>::F::rand(&mut rng))
         .collect();
     let z = Value::vec_scalar(z_scalars.clone());
 
-    let y_val = (0..size).fold(<ArkBls12_381 as ArkConfig>::F::from(0u64), |acc, i| {
+    let y_val = (0..size).fold(<ArkBls12_381 as Backend>::F::from(0u64), |acc, i| {
         let eq_z_i = (0..n).fold(one, |prod, j| {
             let bit = (i >> (n - 1 - j)) & 1;
             if bit == 1 {

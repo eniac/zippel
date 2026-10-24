@@ -1,7 +1,7 @@
 use ark_ff::{Field, One, UniformRand, Zero};
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 use ark_std::test_rng;
-use backend::{ArkBls12_381, ArkConfig, Value};
+use backend::{ArkBls12_381, Backend, Value};
 use lang::id::Vid;
 use share::Ctx;
 
@@ -9,9 +9,9 @@ use crate::common;
 use crate::common::size;
 
 type C = ArkBls12_381;
-type F = <C as ArkConfig>::F;
-type G1 = <C as ArkConfig>::G1;
-type G2 = <C as ArkConfig>::G2;
+type F = <C as Backend>::F;
+type G1 = <C as Backend>::G1;
+type G2 = <C as Backend>::G2;
 
 fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<C>> {
     let n_size = size(sizes, "n");

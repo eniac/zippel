@@ -13,8 +13,7 @@
 use std::collections::HashSet;
 use std::process::ExitCode;
 
-use backend::ArkBls12_381;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use graph::{Relations, UDags};
 use lang::ast::{MAX_DEFAULT_SIZE, SizeSearchError, TypedModule, UModule, minimal_sizes};
 use lang::diagnostic::{Diagnostic, Phase, Severity, render_diagnostic};
@@ -22,9 +21,21 @@ use lang::id::Tid;
 use lang::typ::Kind;
 use share::Ctx;
 
-/// Graph construction and projection are curve-independent; this backend just has to support
-/// every operation, including pairings.
-type Backend = ArkBls12_381;
+/// The backend to check against: graph construction and projection are curve-independent,
+/// but a backend may lack a pairing or large FFT domains, which checking reports.
+#[derive(Clone, Copy, Default, ValueEnum)]
+enum Backend {
+    /// BLS12-381, which supports every operation.
+    #[default]
+    Bls12_381,
+    Bn254,
+    Mnt4_298,
+    Curve25519,
+    Ed25519,
+    Secp256k1,
+    Pallas,
+    Vesta,
+}
 
 /// Runs every compile-time check on `.zippel` files without running the protocol or supplying
 /// inputs.
@@ -35,6 +46,10 @@ struct Cli {
     /// smallest values (by sum) that satisfy size constraints and cover function overloads.
     #[arg(short = 's', long = "size", value_name = "NAME=VALUE", value_parser = parse_size)]
     sizes: Vec<(Tid, usize)>,
+
+    /// The backend to check against.
+    #[arg(short = 'b', long, value_enum, default_value_t)]
+    backend: Backend,
 
     /// Files to check.
     #[arg(required = true, value_name = "FILE")]
@@ -63,7 +78,7 @@ fn main() -> ExitCode {
     let mut unused: Vec<Tid> = given.iter().map(|(name, _)| name.clone()).collect();
     let mut failed = false;
     for path in &cli.files {
-        match check_file(path, &given) {
+        match check_file(path, &given, cli.backend) {
             Some(report) => {
                 failed |= report.errors() > 0;
                 match &report.sizes {
@@ -90,7 +105,7 @@ fn main() -> ExitCode {
 
 /// Check one file, printing its diagnostics and status line. Returns the report, or `None` if the
 /// file could not be read or the checker panicked.
-fn check_file(path: &str, given: &Ctx<Tid, usize>) -> Option<Report> {
+fn check_file(path: &str, given: &Ctx<Tid, usize>, backend: Backend) -> Option<Report> {
     let src = match std::fs::read_to_string(path) {
         Ok(src) => src,
         Err(e) => {
@@ -99,7 +114,7 @@ fn check_file(path: &str, given: &Ctx<Tid, usize>) -> Option<Report> {
         }
     };
     // A panic is a compiler bug: report it for this file and go on to the next.
-    let report = std::panic::catch_unwind(|| check(&src, given));
+    let report = std::panic::catch_unwind(|| check(&src, given, backend));
     let Ok(report) = report else {
         eprintln!("error: internal compiler error while checking {path}");
         return None;
@@ -155,7 +170,7 @@ impl Report {
 /// Everything `ParsedModule::compile` does short of running the protocol: parse, concretize
 /// sizes, type-check, then build the Graph IR and project each protocol. A stage runs only if
 /// the ones before it reported no errors, which would otherwise cascade.
-fn check(src: &str, given: &Ctx<Tid, usize>) -> Report {
+fn check(src: &str, given: &Ctx<Tid, usize>, backend: Backend) -> Report {
     let (module, diagnostics) = UModule::parse(src);
     let mut report = Report {
         diagnostics,
@@ -214,7 +229,7 @@ fn check(src: &str, given: &Ctx<Tid, usize>) -> Report {
         Err(e) => report.diagnostics.push(e.into()),
         Ok(cmodule) => match cmodule.typecheck() {
             Err(diagnostics) => report.diagnostics.extend(diagnostics),
-            Ok(typed) if report.errors() == 0 => report.diagnostics.extend(lower(&typed)),
+            Ok(typed) if report.errors() == 0 => report.diagnostics.extend(lower(&typed, backend)),
             Ok(_) => {}
         },
     }
@@ -257,16 +272,34 @@ fn no_default_sizes(
     diagnostic.note("set the sizes with `--size NAME=VALUE` to check a specific configuration")
 }
 
-/// Build the Graph IR and project the prover and verifier of every protocol, as
-/// compilation followed by explicit projection does for one.
-fn lower(module: &TypedModule) -> Vec<Diagnostic> {
-    let dags = match UDags::<Backend>::lower(module, Relations::Lower) {
+/// [`lower_for`] on the chosen backend.
+fn lower(module: &TypedModule, backend: Backend) -> Vec<Diagnostic> {
+    match backend {
+        Backend::Bls12_381 => lower_for::<backend::ArkBls12_381>(module),
+        Backend::Bn254 => lower_for::<backend::ArkBn254>(module),
+        Backend::Mnt4_298 => lower_for::<backend::ArkMNT4_298>(module),
+        Backend::Curve25519 => lower_for::<backend::ArkCurve25519>(module),
+        Backend::Ed25519 => lower_for::<backend::ArkEd25519>(module),
+        Backend::Secp256k1 => lower_for::<backend::ArkSecp256k1>(module),
+        Backend::Pallas => lower_for::<backend::ArkPallas>(module),
+        Backend::Vesta => lower_for::<backend::ArkVesta>(module),
+    }
+}
+
+/// Build the Graph IR, check that backend `C` can run every protocol, and project the prover
+/// and verifier of each, as compilation followed by explicit projection does for one.
+fn lower_for<C: backend::Backend>(module: &TypedModule) -> Vec<Diagnostic> {
+    let dags = match UDags::<C>::lower(module, Relations::Lower) {
         Ok(dags) => dags,
         Err(e) => return vec![e.into()],
     };
     let mut diags = Vec::new();
     let mut seen = HashSet::new();
     for proto in dags.protocols() {
+        if let Err(e) = proto.check_backend() {
+            diags.push(Diagnostic::from(e));
+            continue;
+        }
         // Also project the prover: it can only fail by
         // panicking on a broken internal invariant, reported as an internal compiler error.
         let _ = proto.project_prover();

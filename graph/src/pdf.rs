@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 /// Write graphs with string annotations to PDF
-impl<C: ArkConfig> WritePdf for Dag<C, String> {
+impl<C: Backend> WritePdf for Dag<C, String> {
     /// Write graph to PDF
     fn write_pdf(&self, filename: &str) -> std::io::Result<()> {
         let fdot: String = format!("{filename}.dot");
@@ -60,21 +60,21 @@ impl<C: ArkConfig> WritePdf for Dag<C, String> {
     }
 }
 
-impl<C: ArkConfig> WritePdf for UDag<C> {
+impl<C: Backend> WritePdf for UDag<C> {
     fn write_pdf(&self, filename: &str) -> std::io::Result<()> {
         self.map_annotations(&|_, _| "".to_string())
             .write_pdf(filename)
     }
 }
 
-impl<C: ArkConfig> WritePdf for QDag<C> {
+impl<C: Backend> WritePdf for QDag<C> {
     fn write_pdf(&self, filename: &str) -> std::io::Result<()> {
         self.map_annotations(&|_, q| q.to_string())
             .write_pdf(filename)
     }
 }
 
-impl<C: ArkConfig> WritePdf for Dags<C, String> {
+impl<C: Backend> WritePdf for Dags<C, String> {
     fn write_pdf(&self, filename: &str) -> std::io::Result<()> {
         let mut joined_graph = Dag::new();
         for g in self.0.iter() {
@@ -84,14 +84,14 @@ impl<C: ArkConfig> WritePdf for Dags<C, String> {
     }
 }
 
-impl<C: ArkConfig> WritePdf for UDags<C> {
+impl<C: Backend> WritePdf for UDags<C> {
     fn write_pdf(&self, filename: &str) -> std::io::Result<()> {
         self.map_annotations(&|_, _| "".to_string())
             .write_pdf(filename)
     }
 }
 
-impl<C: ArkConfig> WritePdf for QDags<C> {
+impl<C: Backend> WritePdf for QDags<C> {
     fn write_pdf(&self, filename: &str) -> std::io::Result<()> {
         self.map_annotations(&|_, q| q.to_string())
             .write_pdf(filename)

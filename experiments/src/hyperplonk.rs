@@ -1,6 +1,6 @@
 //! HyperPlonk comparison, end to end (PIOP + PCS): zippel-compiled
 //! `examples/hyperplonk_snark/hyperplonk_snark.zippel` vs. Espresso's
-//! HyperPlonk (ported to arkworks 0.6 in `src/hyperplonk_upstream/`), both on
+//! HyperPlonk (ported to arkworks 0.6 in `src/upstream/hyperplonk/`), both on
 //! BLS12-381 with multilinear KZG.
 //!
 //! Statement on both sides: a vanilla-Plonk circuit of 2^N gates (three
@@ -23,7 +23,7 @@
 use crate::Timing;
 
 pub mod shared {
-    use crate::hyperplonk_upstream::{
+    use crate::upstream::hyperplonk::{
         CustomizedGates, HyperPlonkProvingKey, HyperPlonkVerifyingKey, MockCircuit,
         MultilinearUniversalParams, preprocess,
     };
@@ -68,8 +68,8 @@ pub mod shared {
                 selectors: c.index.selectors,
             }
         });
-        let index = crate::hyperplonk_upstream::snark::HyperPlonkIndex {
-            params: crate::hyperplonk_upstream::snark::HyperPlonkParams {
+        let index = crate::upstream::hyperplonk::snark::HyperPlonkIndex {
+            params: crate::upstream::hyperplonk::snark::HyperPlonkParams {
                 num_constraints: 1 << nv,
                 num_pub_input: stored.public_inputs.len(),
                 gate_func: gate,
@@ -109,17 +109,9 @@ pub mod zippel_side {
 
     impl Setup {
         pub fn new(sh: &shared::Shared) -> Self {
-            Self::with_proto(
-                sh,
-                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("..")
-                    .join("examples/hyperplonk_snark/hyperplonk_snark.zippel"),
-            )
-        }
-
-        /// Same inputs, a different proto source (the cross-check test runs a
-        /// copy that echoes the challenges).
-        pub fn with_proto(sh: &shared::Shared, proto: PathBuf) -> Self {
+            let proto = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("examples/hyperplonk_snark/hyperplonk_snark.zippel");
             let nv = sh.nv;
             let ((prover, verifier), compile_time) = crate::sample_compile(|| {
                 let module = ParsedModule::load(&proto).expect("parse protocol");
@@ -187,14 +179,32 @@ pub mod zippel_side {
             }
         }
 
-        /// One prover run; the proof is the list of prover messages in order.
+        /// One prover run under `challenger`; the proof is the list of prover
+        /// messages in order.
         ///
         /// # Panics
         /// Panics if the prover graph fails to execute.
-        pub fn prove_once(&mut self) -> Vec<Value<ArkBls12_381>> {
+        pub fn prove_with(
+            &self,
+            challenger: &mut (impl zippel::runtime::Challenger<ArkBls12_381> + Send),
+        ) -> Vec<Value<ArkBls12_381>> {
             self.prover
-                .prove(crate::lend(&self.inputs))
+                .prove_with(crate::lend(&self.inputs), challenger)
                 .expect("run_prover failed")
+        }
+
+        /// Whether the verifier accepts `proof` under `challenger`.
+        ///
+        /// # Panics
+        /// Panics if the verifier graph fails to execute.
+        pub fn verify_with(
+            &self,
+            proof: Vec<Value<ArkBls12_381>>,
+            challenger: &mut (impl zippel::runtime::Challenger<ArkBls12_381> + Send),
+        ) -> bool {
+            self.verifier
+                .verify_with(proof, crate::lend(&self.inputs), challenger)
+                .expect("run_verifier failed")
         }
 
         pub fn compile_time(&self) -> Vec<std::time::Duration> {
@@ -229,7 +239,7 @@ pub mod zippel_side {
 
 pub mod native_side {
     use super::*;
-    use crate::hyperplonk_upstream::{IOPTranscript, prove, verify};
+    use crate::upstream::hyperplonk::{IOPTranscript, prove, verify};
 
     pub struct Setup<'a> {
         sh: &'a shared::Shared,
@@ -274,136 +284,151 @@ pub mod native_side {
 }
 
 // ---------------------------------------------------------------------------
-// Cross-check: the two provers compute the same messages. The zippel proto is
-// rerun with every challenge echoed as a prover message, the native prover is
-// replayed under those challenges, and every message must match exactly.
+// Cross-verification: at the same challenges, each verifier accepts the other
+// implementation's proof.
 // ---------------------------------------------------------------------------
 #[cfg(test)]
 mod cross_tests {
     use super::{shared, zippel_side};
-    use crate::hyperplonk_upstream::{IOPTranscript, prove};
-    use ark_bls12_381::{Fr, G1Projective};
+    use crate::cross::{Challenges, Direction};
+    use crate::upstream::hyperplonk::pcs::{BatchProof, Commitment, MultilinearKzgProof};
+    use crate::upstream::hyperplonk::piop::ProductCheckProof;
+    use crate::upstream::hyperplonk::{HyperPlonkProof, IOPTranscript, prove, verify};
+    use crate::upstream::sumcheck::poly_iop::structs::{IOPProof, IOPProverMessage};
+    use ark_bls12_381::{Bls12_381, Fr, G1Affine};
+    use ark_ec::CurveGroup;
     use backend::{ArkBls12_381, Value};
-    use std::path::PathBuf;
 
-    /// The proto with `<name>_echo <- <name>;` after every challenge.
-    fn echo_proto() -> PathBuf {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
-        let src =
-            std::fs::read_to_string(root.join("examples/hyperplonk_snark/hyperplonk_snark.zippel"))
-                .unwrap();
-        let mut out = String::new();
-        for line in src.lines() {
-            out.push_str(line);
-            out.push('\n');
-            if let Some(name) = line.trim().strip_suffix(" <- challenge<F>;") {
-                out.push_str(&format!("    {name}_echo <- {name};\n"));
-            }
-        }
-        let path = std::env::temp_dir().join(format!(
-            "hyperplonk_snark_echo_{}.zippel",
-            std::process::id()
-        ));
-        std::fs::write(&path, out).unwrap();
-        path
-    }
+    type V = Value<ArkBls12_381>;
 
-    fn g1(v: &Value<ArkBls12_381>) -> G1Projective {
+    fn g1(v: &V) -> G1Affine {
         match v {
-            Value::G1(g) => **g,
-            Value::G1Affine(g) => (*(*g)).into(),
+            Value::G1(g) => g.into_affine(),
+            Value::G1Affine(g) => **g,
             _ => panic!("expected G1, got {v}"),
         }
     }
-    fn frs(v: &Value<ArkBls12_381>) -> Vec<Fr> {
+    fn frs(v: &V) -> Vec<Fr> {
         match v {
             Value::VecScalar(f) => f.to_vec(),
             _ => panic!("expected scalars, got {v}"),
         }
     }
 
+    fn rounds(p: &IOPProof<Fr>) -> impl Iterator<Item = V> + '_ {
+        p.proofs
+            .iter()
+            .map(|m| Value::vec_scalar(m.evaluations.clone()))
+    }
+
+    /// The native proof as Zippel's messages: witness commitments, gate sumcheck
+    /// rounds, frac and prod, permutation rounds, evaluations, batch rounds, and
+    /// the opening.
+    fn as_zippel(p: &HyperPlonkProof<Bls12_381>) -> Vec<V> {
+        let pc = &p.perm_check_proof;
+        let b = &p.batch_openings;
+        p.witness_commits
+            .iter()
+            .map(|c| Value::g1_affine(c.0))
+            .chain(rounds(&p.zero_check_proof))
+            .chain([pc.frac_comm, pc.prod_x_comm].map(|c| Value::g1_affine(c.0)))
+            .chain(rounds(&pc.zero_check_proof))
+            .chain([Value::vec_scalar(b.f_i_eval_at_point_i.clone())])
+            .chain(rounds(&b.sum_check_proof))
+            .chain(
+                b.g_prime_proof
+                    .proofs
+                    .iter()
+                    .map(|&pi| Value::g1_affine(pi)),
+            )
+            .collect()
+    }
+
+    /// Zippel's messages as the native proof. A sumcheck proof's `point` is its
+    /// challenges, which the native verifier reads only for the batch opening:
+    /// the last `nv` challenges of the transcript.
+    fn as_native(m: &[V], nv: usize, challenges: &[Fr]) -> HyperPlonkProof<Bls12_381> {
+        assert_eq!(m.len(), 4 * nv + 6, "Zippel's message count");
+        let sumcheck = |at: usize| IOPProof {
+            point: challenges[challenges.len() - nv..].to_vec(),
+            proofs: m[at..at + nv]
+                .iter()
+                .map(|r| IOPProverMessage {
+                    evaluations: frs(r),
+                })
+                .collect(),
+        };
+        let batch_at = 3 + nv + 2 + nv + 1;
+        HyperPlonkProof {
+            witness_commits: m[..3].iter().map(|c| Commitment(g1(c))).collect(),
+            zero_check_proof: sumcheck(3),
+            perm_check_proof: ProductCheckProof {
+                zero_check_proof: sumcheck(3 + nv + 2),
+                frac_comm: Commitment(g1(&m[3 + nv])),
+                prod_x_comm: Commitment(g1(&m[3 + nv + 1])),
+            },
+            batch_openings: BatchProof {
+                sum_check_proof: sumcheck(batch_at),
+                f_i_eval_at_point_i: frs(&m[batch_at - 1]),
+                g_prime_proof: MultilinearKzgProof {
+                    proofs: m[batch_at + nv..].iter().map(g1).collect(),
+                },
+            },
+        }
+    }
+
     #[test]
-    fn zippel_and_native_provers_send_identical_messages() {
-        let proto = echo_proto();
+    fn native_prove_then_zippel_verify() {
+        cross_verify(Direction::NativeToZippel);
+    }
+
+    #[test]
+    fn zippel_prove_then_native_verify() {
+        cross_verify(Direction::ZippelToNative);
+    }
+
+    fn cross_verify(direction: Direction) {
         for nv in [2usize, 3, 4, 5] {
             let sh = shared::build(nv);
-            let msgs = zippel_side::Setup::with_proto(&sh, proto.clone()).prove_once();
-            // Echoed challenges are the only scalar messages.
-            let (challenges, sent): (Vec<_>, Vec<_>) =
-                msgs.iter().partition(|m| matches!(m, Value::Scalar(_)));
-            let challenges: Vec<Fr> = challenges
-                .into_iter()
-                .map(|m| match m {
-                    Value::Scalar(f) => *f,
-                    _ => unreachable!(),
-                })
-                .collect();
-            assert_eq!(challenges.len(), 5 * nv + 10, "nv = {nv}: challenges");
-            assert_eq!(sent.len(), 4 * nv + 6, "nv = {nv}: messages");
+            let z = zippel_side::Setup::new(&sh);
 
-            let p = prove(
-                &sh.pk,
-                &sh.public_inputs,
-                &sh.witnesses,
-                &mut IOPTranscript::new(b"hyperplonk").replay(challenges),
-            )
-            .unwrap();
-
-            let mut it = sent.into_iter();
-            for (i, c) in p.witness_commits.iter().enumerate() {
-                assert_eq!(
-                    g1(it.next().unwrap()),
-                    G1Projective::from(c.0),
-                    "nv = {nv}: witness commit {i}"
-                );
+            match direction {
+                Direction::NativeToZippel => {
+                    let native = prove(
+                        &sh.pk,
+                        &sh.public_inputs,
+                        &sh.witnesses,
+                        &mut IOPTranscript::new(b"hyperplonk"),
+                    )
+                    .expect("native prove");
+                    let native = as_zippel(&native);
+                    assert!(
+                        z.verify_with(native.clone(), &mut Challenges::default()),
+                        "nv = {nv}: Zippel rejects the native proof"
+                    );
+                    assert!(
+                        !z.verify_with(native, &mut Challenges::seeded(1)),
+                        "nv = {nv}: Zippel accepts the native proof at other challenges"
+                    );
+                }
+                Direction::ZippelToNative => {
+                    let ours = z.prove_with(&mut Challenges::default());
+                    // The challenges Zippel drew: the same sequence, 5·nv + 10 long.
+                    let mut seq = Challenges::default();
+                    let challenges: Vec<Fr> = (0..5 * nv + 10).map(|_| seq.next_scalar()).collect();
+                    let proof = as_native(&ours, nv, &challenges);
+                    assert!(
+                        verify(
+                            &sh.vk,
+                            &sh.public_inputs,
+                            &proof,
+                            &mut IOPTranscript::new(b"hyperplonk")
+                        )
+                        .unwrap_or(false),
+                        "nv = {nv}: the native verifier rejects Zippel's proof"
+                    );
+                }
             }
-            for (r, m) in p.zero_check_proof.proofs.iter().enumerate() {
-                assert_eq!(
-                    frs(it.next().unwrap()),
-                    m.evaluations,
-                    "nv = {nv}: gate round {r}"
-                );
-            }
-            let pc = &p.perm_check_proof;
-            assert_eq!(
-                g1(it.next().unwrap()),
-                G1Projective::from(pc.frac_comm.0),
-                "nv = {nv}: frac"
-            );
-            assert_eq!(
-                g1(it.next().unwrap()),
-                G1Projective::from(pc.prod_x_comm.0),
-                "nv = {nv}: prod"
-            );
-            for (r, m) in pc.zero_check_proof.proofs.iter().enumerate() {
-                assert_eq!(
-                    frs(it.next().unwrap()),
-                    m.evaluations,
-                    "nv = {nv}: perm round {r}"
-                );
-            }
-            let b = &p.batch_openings;
-            assert_eq!(
-                frs(it.next().unwrap()),
-                b.f_i_eval_at_point_i,
-                "nv = {nv}: evals"
-            );
-            for (r, m) in b.sum_check_proof.proofs.iter().enumerate() {
-                assert_eq!(
-                    frs(it.next().unwrap()),
-                    m.evaluations,
-                    "nv = {nv}: batch round {r}"
-                );
-            }
-            for (i, pi) in b.g_prime_proof.proofs.iter().enumerate() {
-                assert_eq!(
-                    g1(it.next().unwrap()),
-                    G1Projective::from(*pi),
-                    "nv = {nv}: opening {i}"
-                );
-            }
-            assert!(it.next().is_none());
         }
-        let _ = std::fs::remove_file(proto);
     }
 }

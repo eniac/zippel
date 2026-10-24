@@ -13,7 +13,7 @@ Test code is reported on its own row instead of in its component:
   - files under a `tests/` directory, and `tests.rs` files.
 
 Code vendored from other projects as benchmark baselines
-(experiments/src/*_upstream/) is not Zippel's; it is reported separately
+(experiments/src/upstream/*/) is not Zippel's; it is reported separately
 and left out of the total.
 
 Needs no build: reads the source files directly. Run from anywhere:
@@ -37,7 +37,7 @@ COMPONENTS = [
     ("Benchmarks", ["benches", "experiments"]),
     ("Examples", ["examples"]),
 ]
-VENDORED = re.compile(r"^experiments/src/[^/]+_upstream/")
+VENDORED = re.compile(r"^experiments/src/upstream/[^/]+/")
 SKIP_DIRS = {"target", "output"}
 
 
@@ -164,7 +164,7 @@ def is_test_attr(body):
 ITEM_START = {
     "pub", "unsafe", "async", "const", "extern", "default", "fn", "mod",
     "use", "struct", "enum", "union", "trait", "type", "static", "impl",
-    "macro_rules", "let",
+    "macro_rules", "let", "return",
 }
 
 
@@ -219,6 +219,22 @@ def item_end(tokens, k):
     return j
 
 
+def field_end(tokens, k):
+    """Index past a cfg-gated field, including nested types or initializers."""
+    depth = 0
+    for j in range(k, len(tokens)):
+        t = tokens[j][0]
+        if t in "([{<":
+            depth += 1
+        elif t in ")]}>" and depth:
+            depth -= 1
+        elif t == "," and depth == 0:
+            return j + 1
+        elif t == "}" and depth == 0:
+            return j
+    return len(tokens)
+
+
 def split_tests(tokens):
     """(code_tokens, test_tokens, test_mod_names) for one file. A file
     whose inner attribute is `#![cfg(test)]` is all test code."""
@@ -237,11 +253,16 @@ def split_tests(tokens):
                     stop = attr_end(tokens, stop)
                 first = tokens[stop][0] if stop < len(tokens) else ""
                 macro = stop + 1 < len(tokens) and tokens[stop + 1][0] == "!"
-                if first not in ITEM_START and not macro:
+                field = (
+                    stop + 1 < len(tokens)
+                    and IDENT.fullmatch(first)
+                    and tokens[stop + 1][0] == ":"
+                )
+                if first not in ITEM_START and not macro and not field:
                     raise ValueError(
                         f"line {tokens[k][1]}: test attribute on something other "
                         f"than an item (`{first}`); not supported")
-                stop = item_end(tokens, stop)
+                stop = field_end(tokens, stop) if field else item_end(tokens, stop)
                 item = tokens[k:stop]
                 words = [t[0] for t in item[end - k:]]
                 if "mod" in words and words[-1] == ";":
@@ -293,7 +314,11 @@ def main():
     parsed = {}
     test_paths = set()
     for path in files:
-        code, test, mods = split_tests(lex(path.read_text(encoding="utf-8")))
+        tokens = lex(path.read_text(encoding="utf-8"))
+        if VENDORED.match(path.relative_to(REPO).as_posix()):
+            parsed[path] = (tokens, [])
+            continue
+        code, test, mods = split_tests(tokens)
         parsed[path] = (code, test)
         for name in mods:
             d = module_dir(path)
@@ -330,7 +355,7 @@ def main():
     print(f"| **Total** | | **{total:,}** |")
     print()
     print(f"Not counted: {vendored:,} lines vendored from other projects as "
-          "benchmark baselines (experiments/src/*_upstream/).")
+          "benchmark baselines (experiments/src/upstream/*/).")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 //! Reduce op encoders: `reduce_op`, `reduce_op_inner`.
 
-use backend::op::HasOpFactory;
-use backend::{ATyp, ArkConfig};
+use crate::AnalysisBackend;
+use backend::ATyp;
 use graph::{HOp, Op};
 use lang::ast::BinOp;
 use lang::typ::Nothing;
@@ -23,7 +23,7 @@ use super::{EncodeCtx, link_to_polys, link_to_witness};
 /// Extracts the element type and length from `v`, fast-paths the
 /// single-element case, then delegates to `reduce_op_inner` for the
 /// actual fold.
-pub fn reduce_op<C: ArkConfig + HasOpFactory>(
+pub fn reduce_op<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     rop: BinOp,
@@ -68,7 +68,7 @@ pub fn reduce_op<C: ArkConfig + HasOpFactory>(
 /// - **Concat**: passes through all physical slots.
 /// - **Pow**: opaque (see below).
 /// - **Dot/Equ**: rejected by the type checker.
-pub fn reduce_op_inner<C: ArkConfig + HasOpFactory>(
+pub fn reduce_op_inner<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     var: Var,
     rop: BinOp,
@@ -169,7 +169,7 @@ pub fn reduce_op_inner<C: ArkConfig + HasOpFactory>(
 /// avoiding sentinel vars entirely. This mirrors the fast path in
 /// `pow_const`.
 #[allow(clippy::too_many_arguments)]
-fn fold_with_handler<C: ArkConfig + HasOpFactory>(
+fn fold_with_handler<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     v_src: PolySource<C>,
@@ -224,7 +224,7 @@ mod tests {
     use backend::ArkBls12_381;
 
     use backend::ATyp;
-    use backend::op::mk;
+    use backend::ir::op::mk;
     use graph::{GOp, Op, Ref};
 
     #[test]

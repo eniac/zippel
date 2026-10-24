@@ -10,11 +10,11 @@
 //! sample that excludes zero is nonzero by its exclusion generator (see
 //! `sample_op`), from which the condition follows.
 
-use backend::op::HasOpFactory;
-use backend::{ABase, ATyp, ArkConfig, ArkScalarOps};
+use crate::AnalysisBackend;
+use backend::{ABase, ATyp};
 use graph::HOp;
 
-use ark_ff::Field;
+use ark_ff::{Field, One};
 
 use crate::Var;
 use crate::frontend::Polynomial;
@@ -24,7 +24,7 @@ use super::{EncodeCtx, link_to_polys, link_to_witness};
 
 /// Allocate quotient/remainder witness sentinels without registering
 /// opaque operations.
-fn alloc_div_witness_pair<C: ArkConfig + HasOpFactory>(
+fn alloc_div_witness_pair<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     quotient_typ: ATyp,
     remainder_typ: ATyp,
@@ -47,7 +47,7 @@ fn alloc_div_witness_pair<C: ArkConfig + HasOpFactory>(
 /// - Non-polynomial Div uses slot-wise field division
 /// - Remainder by scalar and unsupported polynomial division (Mle, VPoly
 ///   by non-scalar) remain `panic!`
-pub fn div_rem_op<C: ArkConfig + HasOpFactory>(
+pub fn div_rem_op<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     target: &Var,
     a: &HOp<C>,
@@ -59,7 +59,7 @@ pub fn div_rem_op<C: ArkConfig + HasOpFactory>(
     div_rem_op_inner(ctx, target, &a_src, &b_src, is_rem);
 }
 
-pub(crate) fn div_rem_op_inner<C: ArkConfig + HasOpFactory>(
+pub(crate) fn div_rem_op_inner<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     target: &Var,
     a: &PolySource<C>,
@@ -120,7 +120,7 @@ pub(crate) fn div_rem_op_inner<C: ArkConfig + HasOpFactory>(
 /// scalar division — multivariate polynomial division requires a term
 /// order and does not satisfy the simple degree-based uniqueness
 /// condition that the `Uni` encoding relies on.
-fn div_rem_leaf<C: ArkConfig + HasOpFactory>(
+fn div_rem_leaf<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     target: &Var,
     a: &PolySource<C>,
@@ -235,7 +235,7 @@ fn div_rem_leaf<C: ArkConfig + HasOpFactory>(
 /// **Optimization**: When the divisor's leading coefficient resolves to a
 /// nonzero constant, the divisor cannot be zero: the chain is skipped, the
 /// type bound `deg(r) < mb` already suffices, and there is no condition.
-fn div_rem_poly<C: ArkConfig + HasOpFactory>(
+fn div_rem_poly<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     target: &Var,
     a: &PolySource<C>,
@@ -303,7 +303,7 @@ fn div_rem_poly<C: ArkConfig + HasOpFactory>(
     // A zero divisor gives `q = 0` (the chain already gives `r = 0`), and
     // `s_0 − 1` is the condition that the divisor is nonzero.
     if let Some(s_zero) = s_zero {
-        let one = Polynomial::lit(&C::FOps::one());
+        let one = Polynomial::lit(&C::F::one());
         let one_minus_s = &one - &s_zero;
         for qf in q_wit.slots() {
             ctx.ideal
@@ -346,13 +346,13 @@ fn div_rem_poly<C: ArkConfig + HasOpFactory>(
 /// degree is below `d`, not when an intermediate coefficient happens to
 /// be zero. Returns `s_0`, which is 1 exactly when some divisor coefficient
 /// is nonzero.
-fn emit_degree_chain<C: ArkConfig + HasOpFactory>(
+fn emit_degree_chain<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     b: &PolySource<C>,
     r_wit: &Var,
     mb: usize,
 ) -> Var {
-    let one = Polynomial::lit(&C::FOps::one());
+    let one = Polynomial::lit(&C::F::one());
 
     // s_{d+1} for the top level is 0 (no coefficients above mb).
     // Built top-down: s_mb = c_mb, s_{mb-1} = s_mb OR c_{mb-1}, etc.
@@ -419,7 +419,7 @@ fn emit_degree_chain<C: ArkConfig + HasOpFactory>(
 /// Where `b·ι − 1` holds, the definition `a·ι − t` generates the same ideal as
 /// the constraint `a − b·t`: `a·ι − t = t·(b·ι − 1) − ι·(b·t − a)` and
 /// `a − b·t = b·(a·ι − t) − a·(b·ι − 1)`.
-fn slot_wise_div<C: ArkConfig + HasOpFactory>(
+fn slot_wise_div<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     target: &Var,
     a_polys: &[Polynomial<C::F>],
@@ -434,7 +434,7 @@ fn slot_wise_div<C: ArkConfig + HasOpFactory>(
 /// nonzero constant, and otherwise a fresh witness `ι` defined by
 /// `denominator·ι − 1` through [`divide_by`], so that `ι = 1/denominator` when
 /// `denominator ≠ 0` and `ι = 0` when it is zero.
-pub(super) fn inverse<C: ArkConfig + HasOpFactory>(
+pub(super) fn inverse<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     denominator: &Polynomial<C::F>,
 ) -> Polynomial<C::F> {
@@ -446,7 +446,7 @@ pub(super) fn inverse<C: ArkConfig + HasOpFactory>(
     }
     let name = ctx.builder.ns.next_name("div_inv");
     let inv = Polynomial::var(&ctx.sentinel_var(&name, ATyp::scalar()));
-    let one = Polynomial::lit(&C::FOps::one());
+    let one = Polynomial::lit(&C::F::one());
     divide_by(ctx, denominator, &inv, &(denominator * &inv) - &one);
     inv
 }
@@ -482,7 +482,7 @@ pub(super) fn inverse<C: ArkConfig + HasOpFactory>(
 /// [`div_rem_poly`] encodes a polynomial division the same way, with its
 /// identity rows times `s_0` for `b·D`, `(1 − s_0)·q` for `q·D`, and
 /// `s_0 − 1` for `D`.
-fn divide_by<C: ArkConfig + HasOpFactory>(
+fn divide_by<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     divisor: &Polynomial<C::F>,
     quotient: &Polynomial<C::F>,
@@ -495,7 +495,7 @@ fn divide_by<C: ArkConfig + HasOpFactory>(
 
 /// Whether `poly` resolves to a nonzero constant once definitions are
 /// inlined.
-fn is_nonzero_constant<C: ArkConfig + HasOpFactory>(
+fn is_nonzero_constant<C: AnalysisBackend>(
     ctx: &EncodeCtx<'_, C>,
     poly: &Polynomial<C::F>,
 ) -> bool {
@@ -504,7 +504,10 @@ fn is_nonzero_constant<C: ArkConfig + HasOpFactory>(
 }
 
 /// `poly` with every `pl` definition inlined.
-fn inlined<C: ArkConfig>(ctx: &EncodeCtx<'_, C>, poly: &Polynomial<C::F>) -> Polynomial<C::F> {
+fn inlined<C: AnalysisBackend>(
+    ctx: &EncodeCtx<'_, C>,
+    poly: &Polynomial<C::F>,
+) -> Polynomial<C::F> {
     let (mut current, mut changed) = (poly.clone(), true);
     while changed {
         (current, changed) = current.inline_vars(&ctx.ideal.pl);
@@ -521,7 +524,7 @@ mod tests {
     use backend::ArkBls12_381;
 
     use backend::ATyp;
-    use backend::op::mk;
+    use backend::ir::op::mk;
     use graph::{GOp, Op, Ref};
     use lang::ast::BinOp;
 

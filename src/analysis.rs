@@ -2,10 +2,10 @@
 
 use crate::{CompileError, CompiledProtocol};
 use analyses::{
-    AnalysisError, CompletenessAnalysis, GbBackendKind, KnowledgeAnalysis, QualifierPropagation,
-    SpecialSoundnessAnalysis,
+    AnalysisBackend, AnalysisError, CompletenessAnalysis, GbBackendKind, KnowledgeAnalysis,
+    QualifierPropagation, SpecialSoundnessAnalysis,
 };
-use backend::{ArkConfig, HasOpFactory};
+use backend::Backend;
 use graph::{Dag, Relations, UDags};
 use lang::typ::Qualifier;
 use std::sync::Arc;
@@ -37,12 +37,13 @@ impl Analysis<'_> {
 ///
 /// Constructed by [`CompiledProtocol::prepare_analysis`]. Reuse this object to measure
 /// multiple passes independently of graph preparation.
-pub struct PreparedAnalysis<C: ArkConfig> {
+pub struct PreparedAnalysis<C: Backend> {
     graph: Dag<C, Qualifier>,
 }
 
-impl<C: ArkConfig + HasOpFactory> CompiledProtocol<C> {
-    /// Lower the full protocol graph, including its relation, and propagate qualifiers.
+impl<C: Backend> CompiledProtocol<C> {
+    /// Lower the full protocol graph, including its relation, and propagate qualifiers,
+    /// for the backend's analysis twin ([`Backend::Analysis`]).
     ///
     /// Call once before timing passes. This does no polynomial encoding or Gröbner-basis work.
     ///
@@ -51,8 +52,8 @@ impl<C: ArkConfig + HasOpFactory> CompiledProtocol<C> {
     ///
     /// # Panics
     /// If an internal compiler invariant fails.
-    pub fn prepare_analysis(&self) -> Result<PreparedAnalysis<C>, CompileError> {
-        let graphs = UDags::<C>::lower(&self.typed, Relations::Lower).map_err(|e| {
+    pub fn prepare_analysis(&self) -> Result<PreparedAnalysis<C::Analysis>, CompileError> {
+        let graphs = UDags::<C::Analysis>::lower(&self.typed, Relations::Lower).map_err(|e| {
             CompileError::Diagnostics {
                 name: self.source_name.clone(),
                 source: Arc::clone(&self.source),
@@ -68,7 +69,7 @@ impl<C: ArkConfig + HasOpFactory> CompiledProtocol<C> {
     }
 }
 
-impl<C: ArkConfig + HasOpFactory> PreparedAnalysis<C> {
+impl<C: AnalysisBackend> PreparedAnalysis<C> {
     /// Prepared graph for lower-level `build_inputs` / `try_from_inputs` / `run` control.
     #[must_use]
     pub const fn graph(&self) -> &Dag<C, Qualifier> {

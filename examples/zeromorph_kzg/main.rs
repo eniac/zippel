@@ -1,6 +1,6 @@
 use ark_ff::fields::Field;
 use ark_std::UniformRand;
-use backend::{ATyp, ArkBls12_381, ArkConfig, Value};
+use backend::{ATyp, ArkBls12_381, Backend, Value};
 use lang::id::Vid;
 use share::Ctx;
 
@@ -12,14 +12,14 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381
 
     let mut rng = rand::rngs::OsRng;
 
-    let g_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
+    let g_input = <ArkBls12_381 as Backend>::G1::rand(&mut rng);
     let g = Value::g1(g_input);
 
-    let h_input = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
+    let h_input = <ArkBls12_381 as Backend>::G2::rand(&mut rng);
     let h = Value::g2(h_input);
 
-    let tau_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
-    let xi_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
+    let tau_input = <ArkBls12_381 as Backend>::F::rand(&mut rng);
+    let xi_input = <ArkBls12_381 as Backend>::F::rand(&mut rng);
 
     let mut srs_g1_vec = vec![];
     for i in 0..n_size {
@@ -34,7 +34,7 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381
 
     let p_poly_val = Value::<ArkBls12_381>::random(&mut rng, &ATyp::uni(n_size - 1));
 
-    let u_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
+    let u_input = <ArkBls12_381 as Backend>::F::rand(&mut rng);
     let u_val = Value::Scalar(u_input);
 
     let v_val = p_poly_val.clone().value_eval(u_val.clone());

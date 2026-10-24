@@ -1,9 +1,8 @@
 //! Interpolation op encoder: `interpolate_op`.
 
+use crate::AnalysisBackend;
 use ark_ff::{Field, One, Zero};
 
-use backend::ArkConfig;
-use backend::op::HasOpFactory;
 use graph::{HOp, Op};
 
 use crate::Var;
@@ -23,7 +22,7 @@ use super::link_to_polys;
 /// [`inverse`]: their nonzeroness is checked like any divisor's.
 ///
 /// Falls back to opaque if the point values aren't all constant.
-pub fn interpolate_op<C: ArkConfig + HasOpFactory>(
+pub fn interpolate_op<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     var: Var,
     points: &HOp<C>,
@@ -168,7 +167,7 @@ mod tests {
     use backend::ATyp;
     use backend::ArkBls12_381;
     use backend::Value;
-    use backend::op::mk;
+    use backend::ir::op::mk;
     use graph::{GOp, Op};
 
     #[test]
@@ -497,7 +496,7 @@ mod tests {
     )]
     fn test_add_op_interpolate_duplicate_points_panics_explicitly() {
         use crate::Var;
-        use backend::op::mk;
+        use backend::ir::op::mk;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 

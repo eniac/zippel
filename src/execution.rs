@@ -1,15 +1,15 @@
 //! Prover and verifier execution with input and transcript validation.
-use backend::{ATyp, ArkConfig, HasOpFactory, Value};
+use backend::{ATyp, Backend, Value};
 use graph::{ArgKind, Node, UDag, domain_separator::ZippelDomainSeparator};
 use lang::id::Vid;
-use runtime::{MutexGraph, ResultKind, RunResult, RuntimeError};
+use runtime::{Challenger, MutexGraph, ResultKind, RunResult, RuntimeError};
 use std::{collections::HashMap, sync::Arc};
 
 /// An owned prover graph and transcript identity, ready for repeated proof generation.
 ///
 /// Created by [`crate::CompiledProtocol::project_prover`]. It retains no joint protocol
 /// or verifier graph and remains usable after its source protocol is dropped.
-pub struct CompiledProver<C: ArkConfig> {
+pub struct CompiledProver<C: Backend> {
     pub(super) graph: UDag<C>,
     pub(super) domain_separator_session: String,
 }
@@ -18,12 +18,12 @@ pub struct CompiledProver<C: ArkConfig> {
 ///
 /// Created by [`crate::CompiledProtocol::project_verifier`]. It retains no joint protocol
 /// or prover graph and remains usable after its source protocol is dropped.
-pub struct CompiledVerifier<C: ArkConfig> {
+pub struct CompiledVerifier<C: Backend> {
     pub(super) graph: UDag<C>,
     pub(super) domain_separator_session: String,
 }
 
-impl<C: ArkConfig> CompiledProver<C> {
+impl<C: Backend> CompiledProver<C> {
     /// Projected graph, for inspection or PDF export with `graph::WritePdf`.
     #[must_use]
     pub const fn graph(&self) -> &UDag<C> {
@@ -31,7 +31,7 @@ impl<C: ArkConfig> CompiledProver<C> {
     }
 }
 
-impl<C: ArkConfig> CompiledVerifier<C> {
+impl<C: Backend> CompiledVerifier<C> {
     /// Projected graph, for inspection or PDF export with `graph::WritePdf`.
     #[must_use]
     pub const fn graph(&self) -> &UDag<C> {
@@ -39,7 +39,7 @@ impl<C: ArkConfig> CompiledVerifier<C> {
     }
 }
 
-impl<C: ArkConfig + HasOpFactory> CompiledProver<C> {
+impl<C: Backend> CompiledProver<C> {
     /// Run prover, takes inputs by name and returns proof.
     ///
     /// The run owns the values it is passed and frees each after its last
@@ -58,6 +58,24 @@ impl<C: ArkConfig + HasOpFactory> CompiledProver<C> {
     pub fn prove<K: Into<Vid>>(
         &self,
         inputs: impl IntoIterator<Item = (K, Value<C>)>,
+    ) -> Result<Vec<Value<C>>, RuntimeError> {
+        let separator = ZippelDomainSeparator::new_zippel_domain_separator(
+            &self.domain_separator_session,
+            &self.graph.clone(),
+        );
+        self.prove_with(inputs, &mut separator.prover_state())
+    }
+
+    /// [`Self::prove`], with the challenges from `challenger` in place of
+    /// Zippel's transcript: driving another implementation's transcript makes
+    /// the proof checkable by that implementation's verifier.
+    ///
+    /// # Errors
+    /// As [`Self::prove`].
+    pub fn prove_with<K: Into<Vid>>(
+        &self,
+        inputs: impl IntoIterator<Item = (K, Value<C>)>,
+        challenger: &mut (impl Challenger<C> + Send),
     ) -> Result<Vec<Value<C>>, RuntimeError> {
         let inputs: HashMap<Vid, Value<C>> =
             inputs.into_iter().map(|(k, v)| (k.into(), v)).collect();
@@ -96,17 +114,10 @@ impl<C: ArkConfig + HasOpFactory> CompiledProver<C> {
         }
         check_input_types(caller_args, &inputs)?;
 
-        let domain_separator_session = &self.domain_separator_session;
-        let prover_separator = ZippelDomainSeparator::new_zippel_domain_separator(
-            domain_separator_session,
-            &prover.clone(),
-        );
-
-        let mut prover_state = prover_separator.prover_state();
         let result = MutexGraph::run_graph(
             Arc::new(MutexGraph::new(prover.clone())),
             inputs,
-            &mut prover_state,
+            challenger,
             ResultKind::Prover,
         )?;
         match result {
@@ -118,7 +129,7 @@ impl<C: ArkConfig + HasOpFactory> CompiledProver<C> {
     }
 }
 
-impl<C: ArkConfig + HasOpFactory> CompiledVerifier<C> {
+impl<C: Backend> CompiledVerifier<C> {
     /// Run verifier, returning `true` if every verification check passes.
     /// Proof values and inputs are owned as in [`CompiledProver::prove`];
     /// inputs that are not instance arguments are dropped unread.
@@ -137,6 +148,27 @@ impl<C: ArkConfig + HasOpFactory> CompiledVerifier<C> {
         &self,
         proof: impl IntoIterator<Item = Value<C>>,
         inputs: impl IntoIterator<Item = (K, Value<C>)>,
+    ) -> Result<bool, RuntimeError> {
+        // For now, use prover state since we don't have narg_string yet
+        // TODO: Fix this to use proper verifier state when narg_string is available
+        let separator = ZippelDomainSeparator::new_zippel_domain_separator(
+            &self.domain_separator_session,
+            &self.graph.clone(),
+        );
+        self.verify_with(proof, inputs, &mut separator.prover_state())
+    }
+
+    /// [`Self::verify`], with the challenges from `challenger` in place of
+    /// Zippel's transcript: driving another implementation's transcript checks
+    /// that implementation's proofs.
+    ///
+    /// # Errors
+    /// As [`Self::verify`].
+    pub fn verify_with<K: Into<Vid>>(
+        &self,
+        proof: impl IntoIterator<Item = Value<C>>,
+        inputs: impl IntoIterator<Item = (K, Value<C>)>,
+        challenger: &mut (impl Challenger<C> + Send),
     ) -> Result<bool, RuntimeError> {
         let verifier = &self.graph;
 
@@ -194,18 +226,10 @@ impl<C: ArkConfig + HasOpFactory> CompiledVerifier<C> {
         let mut all_inputs = instance_inputs;
         all_inputs.extend(transcript_inputs);
 
-        let domain_separator_session = &self.domain_separator_session;
-        let verifier_separator = ZippelDomainSeparator::new_zippel_domain_separator(
-            domain_separator_session,
-            &verifier.clone(),
-        );
-        // For now, use prover state since we don't have narg_string yet
-        // TODO: Fix this to use proper verifier state when narg_string is available
-        let mut verifier_state = verifier_separator.prover_state();
         let result = MutexGraph::run_graph(
             Arc::new(MutexGraph::new(verifier.clone())),
             all_inputs,
-            &mut verifier_state,
+            challenger,
             ResultKind::Verifier,
         )?;
         match result {
@@ -223,7 +247,7 @@ impl<C: ArkConfig + HasOpFactory> CompiledVerifier<C> {
 /// # Errors
 /// [`RuntimeError::MalformedInput`] for the first input that is not a value
 /// of its argument's type.
-fn check_input_types<'a, C: ArkConfig>(
+fn check_input_types<'a, C: Backend>(
     args: impl IntoIterator<Item = (&'a Vid, &'a ATyp)>,
     inputs: &HashMap<Vid, Value<C>>,
 ) -> Result<(), RuntimeError> {

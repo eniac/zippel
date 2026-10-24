@@ -1,6 +1,6 @@
 use ark_ff::fields::Field;
 use ark_std::UniformRand;
-use backend::{ATyp, ArkBls12_381, ArkConfig, Value};
+use backend::{ATyp, ArkBls12_381, Backend, Value};
 use lang::id::Vid;
 use share::Ctx;
 
@@ -12,17 +12,17 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381
 
     let n_size = size(sizes, "N");
 
-    let g_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
+    let g_input = <ArkBls12_381 as Backend>::G1::rand(&mut rng);
     let g: Value<ArkBls12_381> = Value::g1(g_input);
 
-    let h_input = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
+    let h_input = <ArkBls12_381 as Backend>::G2::rand(&mut rng);
     let h: Value<ArkBls12_381> = Value::g2(h_input);
 
     let p_val: Value<ArkBls12_381> =
         Value::<ArkBls12_381>::random(&mut rng, &ATyp::uni(n_size - 1));
     let z: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-    let tau_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
-    let gamma_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
+    let tau_input = <ArkBls12_381 as Backend>::F::rand(&mut rng);
+    let gamma_input = <ArkBls12_381 as Backend>::F::rand(&mut rng);
     let gamma_g_input = g_input * gamma_input;
 
     // Powers of tau: tau^i * g and tau^i * gamma * g.

@@ -1,5 +1,7 @@
-//! Spartan comparison: zippel-compiled Spartan NIZK vs. the vendored
-//! `ark-spartan` implementation — both on Curve25519.
+//! Spartan comparison: zippel-compiled Spartan NIZK, on any backend
+//! (`ArkCurve25519`, or `DalekRistretto`, the curve25519-dalek group
+//! libspartan uses), vs. the vendored `ark-spartan` implementation and
+//! libspartan.
 //!
 //! Statement on both sides: a synthetic satisfiable R1CS instance with
 //! `2^M` constraints, proved with a sumcheck-based polynomial IOP whose
@@ -8,12 +10,8 @@
 //! generation and `.zippel` compilation are excluded.
 
 use crate::Timing;
-use ark_curve25519::{EdwardsProjective as G1Projective, Fr};
-use ark_ec::CurveGroup;
-use ark_ff::{Field, Zero};
-use ark_std::UniformRand;
 use ark_std::rand::SeedableRng;
-use backend::{ArkCurve25519, PolyVariant, Value, VirtualPolynomial};
+use backend::{Backend, Field, Group, PolyVariant, Value, VirtualPolynomial};
 use lang::id::{Tid, Vid};
 use rand::Rng;
 use share::Ctx;
@@ -56,29 +54,29 @@ pub struct ZippelTiming {
 
 /// Compiled Spartan protocol plus its pre-generated prover inputs, reused
 /// across every timing sample at one size.
-pub struct Setup {
+pub struct Setup<C: Backend> {
     m: usize,
-    prover: CompiledProver<ArkCurve25519>,
-    verifier: CompiledVerifier<ArkCurve25519>,
-    inputs: HashMap<Vid, Value<ArkCurve25519>>,
+    prover: CompiledProver<C>,
+    verifier: CompiledVerifier<C>,
+    inputs: HashMap<Vid, Value<C>>,
     /// What the prover's `az`, `bz`, `cz` inputs are computed from, inside
     /// each timed run, as libspartan computes them inside `prove`.
-    products: MatVec,
+    products: MatVec<C::F>,
     compile_time: Vec<std::time::Duration>,
 }
 
 /// The R1CS matrices (as `(row, col, value)` triples) and the assignment
-/// `z = (w, io, 1)` they multiply.
-struct MatVec {
-    mats: [Vec<(usize, usize, Fr)>; 3],
-    z: Vec<Fr>,
+/// `z = (w, 1, io)` they multiply.
+struct MatVec<F> {
+    mats: [Vec<(usize, usize, F)>; 3],
+    z: Vec<F>,
 }
 
-impl MatVec {
+impl<F: Field> MatVec<F> {
     /// `[Az, Bz, Cz]`.
-    fn products(&self) -> [Vec<Fr>; 3] {
+    fn products(&self) -> [Vec<F>; 3] {
         self.mats.each_ref().map(|mat| {
-            let mut out = vec![Fr::from(0u64); self.z.len()];
+            let mut out = vec![F::zero(); self.z.len()];
             for &(i, c, v) in mat {
                 out[i] += v * self.z[c];
             }
@@ -87,7 +85,7 @@ impl MatVec {
     }
 }
 
-impl Setup {
+impl<C: Backend> Setup<C> {
     /// Compiles `examples/spartan/spartan.zippel` with size variable `M` bound
     /// to `m` and generates a satisfying synthetic R1CS instance for it.
     ///
@@ -107,13 +105,13 @@ impl Setup {
             PathBuf::from("examples/spartan/spartan.zippel")
         };
 
-        let (inputs, products) = make_inputs(m);
+        let (inputs, products) = make_inputs::<C>(m);
 
         let ((prover, verifier), compile_time) = crate::sample_compile(|| {
             let module = ParsedModule::load(zippel_path.clone()).expect("parse protocol");
             let mut sizes = Ctx::new();
             sizes.insert(&Tid::new("M"), &m);
-            let protocol: CompiledProtocol<ArkCurve25519> = module
+            let protocol: CompiledProtocol<C> = module
                 .compile(&sizes, CompileOptions::default())
                 .expect("compile protocol");
             (
@@ -163,7 +161,7 @@ impl Setup {
                 .prove(crate::lend(&self.inputs).chain(computed))
                 .expect("run_prover failed")
         });
-        let proof_bytes = proof_size_bytes::<ArkCurve25519>(&proof);
+        let proof_bytes = proof_size_bytes::<C>(&proof);
         let (verify, verify_peak, passed) =
             crate::sample_zippel_verifier(&self.verifier, &proof, &self.inputs);
 
@@ -216,10 +214,10 @@ where
 
     let mut z = Vec::with_capacity(m);
     z.extend_from_slice(w);
-    z.extend_from_slice(io);
     z.push(F::from(1u64));
+    z.extend_from_slice(io);
 
-    let const_col = m - 1;
+    let const_col = w.len();
     const K_NNZ_PER_ROW: usize = 1;
     let pick_k_cols = |rng: &mut R, force_include: Option<usize>| -> Vec<usize> {
         let mut cols: Vec<usize> = Vec::with_capacity(K_NNZ_PER_ROW);
@@ -292,7 +290,7 @@ where
     }
 }
 
-fn make_inputs(m: usize) -> (HashMap<Vid, Value<ArkCurve25519>>, MatVec) {
+fn make_inputs<C: Backend>(m: usize) -> (HashMap<Vid, Value<C>>, MatVec<C::F>) {
     let num_cons = 1usize << m;
     let witness_len = 1usize << (m - 1);
     let io_len = witness_len - 1;
@@ -302,17 +300,17 @@ fn make_inputs(m: usize) -> (HashMap<Vid, Value<ArkCurve25519>>, MatVec) {
     let mut seed_bytes = [0u8; 32];
     seed_bytes[..8].copy_from_slice(&(0xFEEDFACE_u64 ^ m as u64).to_le_bytes());
     let mut rng = ark_std::rand::rngs::StdRng::from_seed(seed_bytes);
-    let one = Fr::from(1u64);
+    let one = C::F::one();
 
-    let witness: Vec<Fr> = (0..witness_len).map(|_| Fr::rand(&mut rng)).collect();
-    let instance: Vec<Fr> = (0..io_len).map(|_| Fr::rand(&mut rng)).collect();
+    let witness: Vec<C::F> = (0..witness_len).map(|_| C::F::rand(&mut rng)).collect();
+    let instance: Vec<C::F> = (0..io_len).map(|_| C::F::rand(&mut rng)).collect();
 
-    let r1cs = random_r1cs::<Fr, _>(&mut rng, num_cons, &witness, &instance);
+    let r1cs = random_r1cs::<C::F, _>(&mut rng, num_cons, &witness, &instance);
 
-    let mut z: Vec<Fr> = Vec::with_capacity(num_cons);
+    let mut z: Vec<C::F> = Vec::with_capacity(num_cons);
     z.extend_from_slice(&witness);
-    z.extend_from_slice(&instance);
     z.push(one);
+    z.extend_from_slice(&instance);
 
     let products = MatVec {
         mats: [r1cs.mat_a.clone(), r1cs.mat_b.clone(), r1cs.mat_c.clone()],
@@ -327,7 +325,7 @@ fn make_inputs(m: usize) -> (HashMap<Vid, Value<ArkCurve25519>>, MatVec) {
         );
     }
 
-    let triples_to_mle_evals = |triples: &[(usize, usize, Fr)]| -> Vec<(usize, Fr)> {
+    let triples_to_mle_evals = |triples: &[(usize, usize, C::F)]| -> Vec<(usize, C::F)> {
         triples
             .iter()
             .filter(|(_, _, v)| !v.is_zero())
@@ -335,7 +333,7 @@ fn make_inputs(m: usize) -> (HashMap<Vid, Value<ArkCurve25519>>, MatVec) {
             .collect()
     };
     let two_m_vars = 2 * m;
-    let mk_sparse_mle = |evals: Vec<(usize, Fr)>| {
+    let mk_sparse_mle = |evals: Vec<(usize, C::F)>| {
         Value::poly(VirtualPolynomial::from_poly(PolyVariant::SparseMle {
             num_vars: two_m_vars,
             evals,
@@ -345,18 +343,21 @@ fn make_inputs(m: usize) -> (HashMap<Vid, Value<ArkCurve25519>>, MatVec) {
     let mat_b_t = mk_sparse_mle(triples_to_mle_evals(&r1cs.mat_b));
     let mat_c_t = mk_sparse_mle(triples_to_mle_evals(&r1cs.mat_c));
 
-    let g_vec_proj: Vec<G1Projective> = (0..ncols).map(|_| G1Projective::rand(&mut rng)).collect();
-    let g_vec_aff = G1Projective::normalize_batch(&g_vec_proj);
-    let g_base_w = G1Projective::rand(&mut rng);
-    let h_base_w = G1Projective::rand(&mut rng);
+    let g_vec_proj: Vec<C::G1> = (0..ncols).map(|_| C::G1::rand(&mut rng)).collect();
+    let g_vec_aff = C::G1::normalize_batch(&g_vec_proj);
+    // libspartan's generators: `gens_1` (g_1, h_1, shared by the PCS and the
+    // sumchecks), and `gens_4`, `gens_3` for the round polynomials, each with its
+    // own blinding base.
+    let g_1 = C::G1::rand(&mut rng);
+    let h_1 = C::G1::rand(&mut rng);
+    let g_4_proj: Vec<C::G1> = (0..4).map(|_| C::G1::rand(&mut rng)).collect();
+    let g_4 = C::G1::normalize_batch(&g_4_proj);
+    let h_4 = C::G1::rand(&mut rng);
+    let g_3_proj: Vec<C::G1> = (0..3).map(|_| C::G1::rand(&mut rng)).collect();
+    let g_3 = C::G1::normalize_batch(&g_3_proj);
+    let h_3 = C::G1::rand(&mut rng);
 
-    let g_evs_d3_proj: Vec<G1Projective> = (0..4).map(|_| G1Projective::rand(&mut rng)).collect();
-    let g_evs_d3_aff = G1Projective::normalize_batch(&g_evs_d3_proj);
-    let g_evs_d2_proj: Vec<G1Projective> = (0..3).map(|_| G1Projective::rand(&mut rng)).collect();
-    let g_evs_d2_aff = G1Projective::normalize_batch(&g_evs_d2_proj);
-    let h_evs = G1Projective::rand(&mut rng);
-
-    let placeholder_tau: Vec<Fr> = vec![Fr::from(0u64); m];
+    let placeholder_tau: Vec<C::F> = vec![C::F::zero(); m];
 
     let inputs = crate::harness_inputs([
         (Vid("mat_a_t".to_string()), mat_a_t),
@@ -364,22 +365,904 @@ fn make_inputs(m: usize) -> (HashMap<Vid, Value<ArkCurve25519>>, MatVec) {
         (Vid("mat_c_t".to_string()), mat_c_t),
         (Vid("io".to_string()), Value::vec_scalar(r1cs.io)),
         (Vid("w".to_string()), Value::vec_scalar(r1cs.w)),
-        (Vid("g_vec_w".to_string()), Value::vec_g1_affine(g_vec_aff)),
-        (Vid("g_base_w".to_string()), Value::g1(g_base_w)),
-        (Vid("h_base_w".to_string()), Value::g1(h_base_w)),
-        (
-            Vid("g_evs_d3".to_string()),
-            Value::vec_g1_affine(g_evs_d3_aff),
-        ),
-        (
-            Vid("g_evs_d2".to_string()),
-            Value::vec_g1_affine(g_evs_d2_aff),
-        ),
-        (Vid("h_evs".to_string()), Value::g1(h_evs)),
+        // The witness commitment multiplies these generators by every row: a
+        // commitment key, for which the backend may keep precomputations.
+        (Vid("g_vec_w".to_string()), Value::vec_g1_key(g_vec_aff)),
+        (Vid("g_1".to_string()), Value::g1(g_1)),
+        (Vid("h_1".to_string()), Value::g1(h_1)),
+        (Vid("g_4".to_string()), Value::vec_g1_affine(g_4)),
+        (Vid("h_4".to_string()), Value::g1(h_4)),
+        (Vid("g_3".to_string()), Value::vec_g1_affine(g_3)),
+        (Vid("h_3".to_string()), Value::g1(h_3)),
         (
             Vid("placeholder_tau".to_string()),
             Value::vec_scalar(placeholder_tau),
         ),
     ]);
     (inputs, products)
+}
+
+#[cfg(test)]
+mod cross_tests {
+    use backend::{Backend, Field, Value};
+
+    fn corrupt_response<C: Backend>(proof: &mut [Value<C>]) {
+        let Some(Value::Scalar(response)) = proof.last_mut() else {
+            panic!("expected a final scalar response");
+        };
+        *response += C::F::one();
+    }
+
+    mod ark {
+        const HAS_PCS_BATCHING: bool = false;
+        use crate::upstream::ark_spartan as native;
+        use backend::{ArkCurve25519 as C, Backend, Value};
+        type G = <C as Backend>::G1;
+        type F = <C as Backend>::F;
+        type V = Value<C>;
+        type NativeNizk = native::NIZK<G>;
+        type NativeInstance = native::Instance<F>;
+        type NativeGens = native::NIZKGens<G>;
+        type NativeVars = native::VarsAssignment<F>;
+        type NativeInputs = native::InputsAssignment<F>;
+        type NativeGroup = G;
+        type NativeScalar = F;
+        type R1csProof = native::r1csproof::R1CSProof<G>;
+        type SumcheckProof = native::sumcheck::ZKSumcheckInstanceProof<G>;
+        type PolyCommitment = native::dense_mlpoly::PolyCommitment<G>;
+        type PolyEvalProof = native::dense_mlpoly::PolyEvalProof<G>;
+        type KnowledgeProof = native::nizk::KnowledgeProof<G>;
+        type ProductProof = native::nizk::ProductProof<G>;
+        type EqualityProof = native::nizk::EqualityProof<G>;
+        type DotProductProof = native::nizk::DotProductProof<G>;
+        type DotProductProofLog = native::nizk::DotProductProofLog<G>;
+        type BulletReductionProof = native::nizk::bullet::BulletReductionProof<G>;
+
+        fn group(g: &G) -> V {
+            Value::g1(*g)
+        }
+        fn native_group(v: &V) -> G {
+            match v {
+                Value::G1(g) => **g,
+                Value::G1Affine(g) => (**g).into(),
+                _ => panic!("expected group element, got {v}"),
+            }
+        }
+        fn scalar(f: &F) -> V {
+            Value::Scalar(*f)
+        }
+        fn native_scalar(v: &V) -> F {
+            match v {
+                Value::Scalar(f) => *f,
+                _ => panic!("expected scalar, got {v}"),
+            }
+        }
+
+        fn setup(
+            m: usize,
+            inputs: &mut std::collections::HashMap<lang::id::Vid, V>,
+            products: &super::super::MatVec<F>,
+        ) -> (NativeInstance, NativeGens, NativeVars, NativeInputs) {
+            let n = 1 << m;
+            let nw = n / 2;
+            let inst = NativeInstance::new(
+                n,
+                nw,
+                nw - 1,
+                &products.mats[0],
+                &products.mats[1],
+                &products.mats[2],
+            )
+            .unwrap();
+            let vars = NativeVars::new(&products.z[..nw]).unwrap();
+            let io = NativeInputs::new(&products.z[nw + 1..]).unwrap();
+            assert!(inst.is_sat(&vars, &io).unwrap());
+            let gens = NativeGens::new(n, nw, nw - 1);
+            let pc = &gens.gens_r1cs_sat.gens_pc.gens;
+            let sc = &gens.gens_r1cs_sat.gens_sc;
+            inputs.extend(
+                [
+                    (
+                        "g_vec_w",
+                        group_values(pc.gens_n.G.iter().map(group).collect()),
+                    ),
+                    ("g_1", group(&pc.gens_1.G[0])),
+                    ("h_1", group(&pc.gens_1.h)),
+                    ("g_3", group_values(sc.gens_3.G.iter().map(group).collect())),
+                    ("h_3", group(&sc.gens_3.h)),
+                    ("g_4", group_values(sc.gens_4.G.iter().map(group).collect())),
+                    ("h_4", group(&sc.gens_4.h)),
+                ]
+                .map(|(name, value)| (Vid::from(name), value)),
+            );
+            (inst, gens, vars, io)
+        }
+
+        use crate::cross::{Challenges, Direction};
+        use lang::id::Vid;
+        use zippel::runtime::Challenger;
+
+        // ark-spartan's older PCS omits libspartan's random-base challenge. Its
+        // proof is the rho=1 specialization; do not consume a native draw for it.
+        struct SpartanChallenges {
+            sequence: Challenges,
+            draws: usize,
+            pcs_batching_index: usize,
+        }
+        impl SpartanChallenges {
+            fn new(m: usize) -> Self {
+                Self {
+                    sequence: Challenges::default(),
+                    draws: 0,
+                    pcs_batching_index: 9 * m + 6,
+                }
+            }
+        }
+        impl Challenger<C> for SpartanChallenges {
+            fn instance(&mut self, _: &V) {}
+            fn message(&mut self, _: &V) {}
+            fn challenge(&mut self) -> V {
+                let index = self.draws;
+                self.draws += 1;
+                if !HAS_PCS_BATCHING && index == self.pcs_batching_index {
+                    Value::Scalar(<F as backend::Field>::one())
+                } else {
+                    <Challenges as Challenger<C>>::challenge(&mut self.sequence)
+                }
+            }
+        }
+
+        fn group_values(values: Vec<V>) -> V {
+            Value::vec_g1(
+                values
+                    .into_iter()
+                    .map(|v| match v {
+                        Value::G1(g) => *g,
+                        _ => unreachable!("group conversion produces G1 values"),
+                    })
+                    .collect(),
+            )
+        }
+
+        fn scalar_vec(fs: &[NativeScalar]) -> V {
+            Value::vec_scalar(
+                fs.iter()
+                    .map(|f| match scalar(f) {
+                        Value::Scalar(f) => f,
+                        _ => unreachable!(),
+                    })
+                    .collect(),
+            )
+        }
+        fn group_vec(gs: &[NativeGroup]) -> V {
+            group_values(gs.iter().map(group).collect())
+        }
+
+        fn append_sumcheck(out: &mut Vec<V>, sc: &SumcheckProof) {
+            for i in 0..sc.proofs.len() {
+                let p = &sc.proofs[i];
+                out.extend([
+                    group(&sc.comm_polys[i]),
+                    group(&sc.comm_evals[i]),
+                    group(&p.delta),
+                    group(&p.beta),
+                    scalar_vec(&p.z),
+                    scalar(&p.z_delta),
+                    scalar(&p.z_beta),
+                ]);
+            }
+        }
+
+        fn as_zippel(p: &NativeNizk) -> Vec<V> {
+            let p = &p.r1cs_sat_proof;
+            let mut out = vec![group_vec(&p.comm_vars.C)];
+            append_sumcheck(&mut out, &p.sc_proof_phase1);
+            let (a, b, c, prod) = &p.claims_phase2;
+            let (know, product) = &p.pok_claims_phase2;
+            out.extend([
+                group(c),
+                group(&know.alpha),
+                scalar(&know.z1),
+                scalar(&know.z2),
+                group(a),
+                group(b),
+                group(prod),
+                group(&product.alpha),
+                group(&product.beta),
+                group(&product.delta),
+            ]);
+            out.extend(product.z.iter().map(scalar));
+            out.extend([
+                group(&p.proof_eq_sc_phase1.alpha),
+                scalar(&p.proof_eq_sc_phase1.z),
+            ]);
+            append_sumcheck(&mut out, &p.sc_proof_phase2);
+            out.push(group(&p.comm_vars_at_ry));
+            let eval = &p.proof_eval_vars_at_ry.proof;
+            let bullet = &eval.bullet_reduction_proof;
+            for (l, r) in bullet.L_vec.iter().zip(&bullet.R_vec) {
+                out.extend([group(l), group(r)]);
+            }
+            out.extend([
+                group(&eval.delta),
+                group(&eval.beta),
+                scalar(&eval.z1),
+                scalar(&eval.z2),
+                group(&p.proof_eq_sc_phase2.alpha),
+                scalar(&p.proof_eq_sc_phase2.z),
+            ]);
+            out
+        }
+
+        struct Messages<'a>(std::slice::Iter<'a, V>);
+        impl Messages<'_> {
+            fn group(&mut self) -> NativeGroup {
+                native_group(self.0.next().expect("group message"))
+            }
+            fn scalar(&mut self) -> NativeScalar {
+                native_scalar(self.0.next().expect("scalar message"))
+            }
+            fn scalars(&mut self) -> Vec<NativeScalar> {
+                match self.0.next().expect("scalar vector") {
+                    Value::VecScalar(fs) => fs
+                        .iter()
+                        .map(|f| native_scalar(&Value::Scalar(*f)))
+                        .collect(),
+                    v => panic!("expected scalar vector, got {v}"),
+                }
+            }
+            fn groups(&mut self) -> Vec<NativeGroup> {
+                match self.0.next().expect("group vector") {
+                    Value::Vec(vs) => vs.iter().map(native_group).collect(),
+                    Value::VecG1(gs) => gs.iter().map(|g| native_group(&Value::g1(*g))).collect(),
+                    Value::VecG1Affine(gs) => gs
+                        .iter()
+                        .map(|g| native_group(&Value::g1_affine(*g)))
+                        .collect(),
+                    v => panic!("expected group vector, got {v}"),
+                }
+            }
+            fn sumcheck(&mut self, m: usize) -> SumcheckProof {
+                let (mut comm_polys, mut comm_evals, mut proofs) =
+                    (Vec::new(), Vec::new(), Vec::new());
+                for _ in 0..m {
+                    comm_polys.push(self.group());
+                    comm_evals.push(self.group());
+                    proofs.push(DotProductProof {
+                        delta: self.group(),
+                        beta: self.group(),
+                        z: self.scalars(),
+                        z_delta: self.scalar(),
+                        z_beta: self.scalar(),
+                    });
+                }
+                SumcheckProof {
+                    comm_polys,
+                    comm_evals,
+                    proofs,
+                }
+            }
+        }
+
+        fn points(m: usize) -> (Vec<NativeScalar>, Vec<NativeScalar>) {
+            let mut seq = Challenges::default();
+            let mut next = || native_scalar(&<Challenges as Challenger<C>>::challenge(&mut seq));
+            for _ in 0..m {
+                next();
+            }
+            let rx = (0..m)
+                .map(|_| {
+                    let r = next();
+                    for _ in 0..3 {
+                        next();
+                    }
+                    r
+                })
+                .collect();
+            // Knowledge, product and equality proofs, then the A/B/C coefficients.
+            for _ in 0..6 {
+                next();
+            }
+            let ry = (0..m)
+                .map(|_| {
+                    let r = next();
+                    for _ in 0..3 {
+                        next();
+                    }
+                    r
+                })
+                .collect();
+            (rx, ry)
+        }
+
+        fn as_native(messages: &[V], m: usize) -> NativeNizk {
+            let mut r = Messages(messages.iter());
+            let comm_vars = PolyCommitment { C: r.groups() };
+            let sc_proof_phase1 = r.sumcheck(m);
+            let c = r.group();
+            let know = KnowledgeProof {
+                alpha: r.group(),
+                z1: r.scalar(),
+                z2: r.scalar(),
+            };
+            let (a, b, prod) = (r.group(), r.group(), r.group());
+            let product = ProductProof {
+                alpha: r.group(),
+                beta: r.group(),
+                delta: r.group(),
+                z: std::array::from_fn(|_| r.scalar()),
+            };
+            let proof_eq_sc_phase1 = EqualityProof {
+                alpha: r.group(),
+                z: r.scalar(),
+            };
+            let sc_proof_phase2 = r.sumcheck(m);
+            let comm_vars_at_ry = r.group();
+            let (mut ls, mut rs) = (Vec::new(), Vec::new());
+            for _ in 0..m - 1 - (m - 1) / 2 {
+                ls.push(r.group());
+                rs.push(r.group());
+            }
+            let proof_eval_vars_at_ry = PolyEvalProof {
+                proof: DotProductProofLog {
+                    bullet_reduction_proof: BulletReductionProof {
+                        L_vec: ls,
+                        R_vec: rs,
+                    },
+                    delta: r.group(),
+                    beta: r.group(),
+                    z1: r.scalar(),
+                    z2: r.scalar(),
+                },
+            };
+            let proof_eq_sc_phase2 = EqualityProof {
+                alpha: r.group(),
+                z: r.scalar(),
+            };
+            assert!(r.0.next().is_none(), "unconsumed Zippel proof messages");
+            NativeNizk {
+                r1cs_sat_proof: R1csProof {
+                    comm_vars,
+                    sc_proof_phase1,
+                    claims_phase2: (a, b, c, prod),
+                    pok_claims_phase2: (know, product),
+                    proof_eq_sc_phase1,
+                    sc_proof_phase2,
+                    comm_vars_at_ry,
+                    proof_eval_vars_at_ry,
+                    proof_eq_sc_phase2,
+                },
+                r: points(m),
+            }
+        }
+
+        #[test]
+        fn native_prove_then_zippel_verify() {
+            cross_verify(Direction::NativeToZippel);
+        }
+        #[test]
+        fn zippel_prove_then_native_verify() {
+            cross_verify(Direction::ZippelToNative);
+        }
+
+        fn cross_verify(direction: Direction) {
+            for m in [3usize, 4, 5] {
+                let (mut inputs, products) = super::super::make_inputs::<C>(m);
+                let (inst, gens, vars, io) = setup(m, &mut inputs, &products);
+                let (prover, verifier) = crate::cross::compile::<C>("spartan", &[("M", m)]);
+                let [az, bz, cz] = products.products();
+                for (name, v) in [("az", az), ("bz", bz), ("cz", cz)] {
+                    inputs.insert(Vid::from(name), Value::vec_scalar(v));
+                }
+                match direction {
+                    Direction::NativeToZippel => {
+                        let native =
+                            NativeNizk::prove(&inst, vars, &io, &gens, &mut Challenges::default());
+                        assert!(
+                            native
+                                .verify(&inst, &io, &mut Challenges::default(), &gens)
+                                .is_ok()
+                        );
+                        let proof = as_zippel(&native);
+                        assert!(
+                            verifier
+                                .verify_with(
+                                    proof.clone(),
+                                    crate::lend(&inputs),
+                                    &mut SpartanChallenges::new(m)
+                                )
+                                .unwrap(),
+                            "M={m}: Zippel rejects native proof"
+                        );
+                        let mut wrong = proof;
+                        super::corrupt_response(&mut wrong);
+                        assert!(
+                            !verifier
+                                .verify_with(
+                                    wrong,
+                                    crate::lend(&inputs),
+                                    &mut SpartanChallenges::new(m)
+                                )
+                                .unwrap(),
+                            "M={m}: Zippel accepts corrupted native proof"
+                        );
+                    }
+                    Direction::ZippelToNative => {
+                        let proof = prover
+                            .prove_with(crate::lend(&inputs), &mut SpartanChallenges::new(m))
+                            .unwrap();
+                        let native = as_native(&proof, m);
+                        assert!(
+                            native
+                                .verify(&inst, &io, &mut Challenges::default(), &gens)
+                                .is_ok(),
+                            "M={m}: native rejects Zippel proof"
+                        );
+                        let mut wrong = proof;
+                        super::corrupt_response(&mut wrong);
+                        assert!(
+                            as_native(&wrong, m)
+                                .verify(&inst, &io, &mut Challenges::default(), &gens)
+                                .is_err(),
+                            "M={m}: native accepts corrupted Zippel proof"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    mod libspartan {
+        const HAS_PCS_BATCHING: bool = true;
+        use crate::upstream::libspartan as native;
+        use backend::{ArkFrRistretto, Backend, DalekRistretto, Field, Group, Value};
+        use curve25519_dalek::ristretto::CompressedRistretto;
+        type V<C> = Value<C>;
+
+        /// A backend on curve25519-dalek 5's Ristretto group; libspartan's dalek 4 points
+        /// enter it by their compressed bytes.
+        trait Ristretto: Backend {
+            fn point(p: curve25519_dalek_5::RistrettoPoint) -> Self::G1;
+        }
+        impl Ristretto for DalekRistretto {
+            fn point(p: curve25519_dalek_5::RistrettoPoint) -> Self::G1 {
+                backend::backends::ff_group::FfPoint::new(p)
+            }
+        }
+        impl Ristretto for ArkFrRistretto {
+            fn point(p: curve25519_dalek_5::RistrettoPoint) -> Self::G1 {
+                backend::backends::hybrid::ArkFrRistrettoPoint::new(p)
+            }
+        }
+        type NativeNizk = native::NIZK;
+        type NativeInstance = native::Instance;
+        type NativeGens = native::NIZKGens;
+        type NativeVars = native::VarsAssignment;
+        type NativeInputs = native::InputsAssignment;
+        type NativeGroup = CompressedRistretto;
+        type NativeScalar = native::scalar::Scalar;
+        use native::dense_mlpoly::{PolyCommitment, PolyEvalProof};
+        use native::nizk::bullet::BulletReductionProof;
+        use native::nizk::{
+            DotProductProof, DotProductProofLog, EqualityProof, KnowledgeProof, ProductProof,
+        };
+        use native::r1csproof::R1CSProof as R1csProof;
+        use native::sumcheck::ZKSumcheckInstanceProof as SumcheckProof;
+
+        fn group<C: Ristretto>(g: &NativeGroup) -> V<C> {
+            let p = curve25519_dalek_5::ristretto::CompressedRistretto(g.to_bytes())
+                .decompress()
+                .unwrap();
+            Value::g1(C::point(p))
+        }
+        fn native_group<C: Ristretto>(v: &V<C>) -> NativeGroup {
+            let mut bytes = Vec::new();
+            match v {
+                Value::G1(g) => g.write_bytes(&mut bytes),
+                Value::G1Affine(g) => C::G1::write_affine_bytes(g, &mut bytes),
+                _ => panic!("expected group element, got {v}"),
+            }
+            CompressedRistretto(bytes.try_into().unwrap())
+        }
+        fn scalar<C: Ristretto>(f: &NativeScalar) -> V<C> {
+            Value::Scalar(C::F::from_le_bytes_mod_order(&f.to_bytes()))
+        }
+        fn native_scalar<C: Ristretto>(v: &V<C>) -> NativeScalar {
+            let mut bytes = Vec::new();
+            match v {
+                Value::Scalar(f) => f.write_bytes(&mut bytes),
+                _ => panic!("expected scalar, got {v}"),
+            }
+            NativeScalar::from_bytes(&bytes.try_into().unwrap()).unwrap()
+        }
+        fn bytes<F: Field>(f: &F) -> [u8; 32] {
+            let mut bytes = Vec::new();
+            f.write_bytes(&mut bytes);
+            bytes.try_into().unwrap()
+        }
+
+        fn setup<C: Ristretto>(
+            m: usize,
+            inputs: &mut std::collections::HashMap<lang::id::Vid, V<C>>,
+            products: &super::super::MatVec<C::F>,
+        ) -> (NativeInstance, NativeGens, NativeVars, NativeInputs) {
+            let n = 1 << m;
+            let nw = n / 2;
+            let mats = products.mats.each_ref().map(|mat| {
+                mat.iter()
+                    .map(|&(r, c, f)| (r, c, bytes(&f)))
+                    .collect::<Vec<_>>()
+            });
+            let inst = NativeInstance::new(n, nw, nw - 1, &mats[0], &mats[1], &mats[2]).unwrap();
+            let vars =
+                NativeVars::new(&products.z[..nw].iter().map(bytes).collect::<Vec<_>>()).unwrap();
+            let io = NativeInputs::new(&products.z[nw + 1..].iter().map(bytes).collect::<Vec<_>>())
+                .unwrap();
+            assert!(inst.is_sat(&vars, &io).unwrap());
+            let gens = NativeGens::new(n, nw, nw - 1);
+            let pc = &gens.gens_r1cs_sat.gens_pc.gens;
+            let sc = &gens.gens_r1cs_sat.gens_sc;
+            inputs.extend(
+                [
+                    (
+                        "g_vec_w",
+                        group_values(pc.gens_n.G.iter().map(|g| group(&g.compress())).collect()),
+                    ),
+                    ("g_1", group(&pc.gens_1.G[0].compress())),
+                    ("h_1", group(&pc.gens_1.h.compress())),
+                    (
+                        "g_3",
+                        group_values(sc.gens_3.G.iter().map(|g| group(&g.compress())).collect()),
+                    ),
+                    ("h_3", group(&sc.gens_3.h.compress())),
+                    (
+                        "g_4",
+                        group_values(sc.gens_4.G.iter().map(|g| group(&g.compress())).collect()),
+                    ),
+                    ("h_4", group(&sc.gens_4.h.compress())),
+                ]
+                .map(|(name, value)| (Vid::from(name), value)),
+            );
+            (inst, gens, vars, io)
+        }
+
+        use crate::cross::{Challenges, Direction};
+        use lang::id::Vid;
+        use zippel::runtime::Challenger;
+
+        // ark-spartan's older PCS omits libspartan's random-base challenge. Its
+        // proof is the rho=1 specialization; do not consume a native draw for it.
+        struct SpartanChallenges {
+            sequence: Challenges,
+            draws: usize,
+            pcs_batching_index: usize,
+        }
+        impl SpartanChallenges {
+            fn new(m: usize) -> Self {
+                Self {
+                    sequence: Challenges::default(),
+                    draws: 0,
+                    pcs_batching_index: 9 * m + 6,
+                }
+            }
+        }
+        impl<C: Ristretto> Challenger<C> for SpartanChallenges {
+            fn instance(&mut self, _: &V<C>) {}
+            fn message(&mut self, _: &V<C>) {}
+            fn challenge(&mut self) -> V<C> {
+                let index = self.draws;
+                self.draws += 1;
+                if !HAS_PCS_BATCHING && index == self.pcs_batching_index {
+                    Value::Scalar(<C::F as backend::Field>::one())
+                } else {
+                    <Challenges as Challenger<C>>::challenge(&mut self.sequence)
+                }
+            }
+        }
+
+        fn group_values<C: Ristretto>(values: Vec<V<C>>) -> V<C> {
+            Value::vec_g1(
+                values
+                    .into_iter()
+                    .map(|v| match v {
+                        Value::G1(g) => *g,
+                        _ => unreachable!("group conversion produces G1 values"),
+                    })
+                    .collect(),
+            )
+        }
+
+        fn scalar_vec<C: Ristretto>(fs: &[NativeScalar]) -> V<C> {
+            Value::vec_scalar(
+                fs.iter()
+                    .map(|f| match scalar::<C>(f) {
+                        Value::Scalar(f) => f,
+                        _ => unreachable!(),
+                    })
+                    .collect(),
+            )
+        }
+        fn group_vec<C: Ristretto>(gs: &[NativeGroup]) -> V<C> {
+            group_values(gs.iter().map(group).collect())
+        }
+
+        fn append_sumcheck<C: Ristretto>(out: &mut Vec<V<C>>, sc: &SumcheckProof) {
+            for i in 0..sc.proofs.len() {
+                let p = &sc.proofs[i];
+                out.extend([
+                    group(&sc.comm_polys[i]),
+                    group(&sc.comm_evals[i]),
+                    group(&p.delta),
+                    group(&p.beta),
+                    scalar_vec(&p.z),
+                    scalar(&p.z_delta),
+                    scalar(&p.z_beta),
+                ]);
+            }
+        }
+
+        fn as_zippel<C: Ristretto>(p: &NativeNizk) -> Vec<V<C>> {
+            let p = &p.r1cs_sat_proof;
+            let mut out = vec![group_vec(&p.comm_vars.C)];
+            append_sumcheck(&mut out, &p.sc_proof_phase1);
+            let (a, b, c, prod) = &p.claims_phase2;
+            let (know, product) = &p.pok_claims_phase2;
+            out.extend([
+                group(c),
+                group(&know.alpha),
+                scalar(&know.z1),
+                scalar(&know.z2),
+                group(a),
+                group(b),
+                group(prod),
+                group(&product.alpha),
+                group(&product.beta),
+                group(&product.delta),
+            ]);
+            out.extend(product.z.iter().map(scalar));
+            out.extend([
+                group(&p.proof_eq_sc_phase1.alpha),
+                scalar(&p.proof_eq_sc_phase1.z),
+            ]);
+            append_sumcheck(&mut out, &p.sc_proof_phase2);
+            out.push(group(&p.comm_vars_at_ry));
+            let eval = &p.proof_eval_vars_at_ry.proof;
+            let bullet = &eval.bullet_reduction_proof;
+            for (l, r) in bullet.L_vec.iter().zip(&bullet.R_vec) {
+                out.extend([group(l), group(r)]);
+            }
+            out.extend([
+                group(&eval.delta),
+                group(&eval.beta),
+                scalar(&eval.z1),
+                scalar(&eval.z2),
+                group(&p.proof_eq_sc_phase2.alpha),
+                scalar(&p.proof_eq_sc_phase2.z),
+            ]);
+            out
+        }
+
+        struct Messages<'a, C: Backend>(std::slice::Iter<'a, V<C>>);
+        impl<C: Ristretto> Messages<'_, C> {
+            fn group(&mut self) -> NativeGroup {
+                native_group(self.0.next().expect("group message"))
+            }
+            fn scalar(&mut self) -> NativeScalar {
+                native_scalar(self.0.next().expect("scalar message"))
+            }
+            fn scalars(&mut self) -> Vec<NativeScalar> {
+                match self.0.next().expect("scalar vector") {
+                    Value::VecScalar(fs) => fs
+                        .iter()
+                        .map(|f| native_scalar::<C>(&Value::Scalar(*f)))
+                        .collect(),
+                    v => panic!("expected scalar vector, got {v}"),
+                }
+            }
+            fn groups(&mut self) -> Vec<NativeGroup> {
+                match self.0.next().expect("group vector") {
+                    Value::Vec(vs) => vs.iter().map(native_group).collect(),
+                    Value::VecG1(gs) => gs
+                        .iter()
+                        .map(|g| native_group::<C>(&Value::g1(*g)))
+                        .collect(),
+                    Value::VecG1Affine(gs) => gs
+                        .iter()
+                        .map(|g| native_group::<C>(&Value::g1_affine(*g)))
+                        .collect(),
+                    v => panic!("expected group vector, got {v}"),
+                }
+            }
+            fn sumcheck(&mut self, m: usize) -> SumcheckProof {
+                let (mut comm_polys, mut comm_evals, mut proofs) =
+                    (Vec::new(), Vec::new(), Vec::new());
+                for _ in 0..m {
+                    comm_polys.push(self.group());
+                    comm_evals.push(self.group());
+                    proofs.push(DotProductProof {
+                        delta: self.group(),
+                        beta: self.group(),
+                        z: self.scalars(),
+                        z_delta: self.scalar(),
+                        z_beta: self.scalar(),
+                    });
+                }
+                SumcheckProof {
+                    comm_polys,
+                    comm_evals,
+                    proofs,
+                }
+            }
+        }
+
+        fn points<C: Ristretto>(m: usize) -> (Vec<NativeScalar>, Vec<NativeScalar>) {
+            let mut seq = Challenges::default();
+            let mut next =
+                || native_scalar::<C>(&<Challenges as Challenger<C>>::challenge(&mut seq));
+            for _ in 0..m {
+                next();
+            }
+            let rx = (0..m)
+                .map(|_| {
+                    let r = next();
+                    for _ in 0..3 {
+                        next();
+                    }
+                    r
+                })
+                .collect();
+            // Knowledge, product and equality proofs, then the A/B/C coefficients.
+            for _ in 0..6 {
+                next();
+            }
+            let ry = (0..m)
+                .map(|_| {
+                    let r = next();
+                    for _ in 0..3 {
+                        next();
+                    }
+                    r
+                })
+                .collect();
+            (rx, ry)
+        }
+
+        fn as_native<C: Ristretto>(messages: &[V<C>], m: usize) -> NativeNizk {
+            let mut r = Messages(messages.iter());
+            let comm_vars = PolyCommitment { C: r.groups() };
+            let sc_proof_phase1 = r.sumcheck(m);
+            let c = r.group();
+            let know = KnowledgeProof {
+                alpha: r.group(),
+                z1: r.scalar(),
+                z2: r.scalar(),
+            };
+            let (a, b, prod) = (r.group(), r.group(), r.group());
+            let product = ProductProof {
+                alpha: r.group(),
+                beta: r.group(),
+                delta: r.group(),
+                z: std::array::from_fn(|_| r.scalar()),
+            };
+            let proof_eq_sc_phase1 = EqualityProof {
+                alpha: r.group(),
+                z: r.scalar(),
+            };
+            let sc_proof_phase2 = r.sumcheck(m);
+            let comm_vars_at_ry = r.group();
+            let (mut ls, mut rs) = (Vec::new(), Vec::new());
+            for _ in 0..m - 1 - (m - 1) / 2 {
+                ls.push(r.group());
+                rs.push(r.group());
+            }
+            let proof_eval_vars_at_ry = PolyEvalProof {
+                proof: DotProductProofLog {
+                    bullet_reduction_proof: BulletReductionProof {
+                        L_vec: ls,
+                        R_vec: rs,
+                    },
+                    delta: r.group(),
+                    beta: r.group(),
+                    z1: r.scalar(),
+                    z2: r.scalar(),
+                },
+            };
+            let proof_eq_sc_phase2 = EqualityProof {
+                alpha: r.group(),
+                z: r.scalar(),
+            };
+            assert!(r.0.next().is_none(), "unconsumed Zippel proof messages");
+            NativeNizk {
+                r1cs_sat_proof: R1csProof {
+                    comm_vars,
+                    sc_proof_phase1,
+                    claims_phase2: (a, b, c, prod),
+                    pok_claims_phase2: (know, product),
+                    proof_eq_sc_phase1,
+                    sc_proof_phase2,
+                    comm_vars_at_ry,
+                    proof_eval_vars_at_ry,
+                    proof_eq_sc_phase2,
+                },
+                r: points::<C>(m),
+            }
+        }
+
+        #[test]
+        fn native_prove_then_zippel_verify() {
+            cross_verify::<DalekRistretto>(Direction::NativeToZippel);
+            cross_verify::<ArkFrRistretto>(Direction::NativeToZippel);
+        }
+        #[test]
+        fn zippel_prove_then_native_verify() {
+            cross_verify::<DalekRistretto>(Direction::ZippelToNative);
+            cross_verify::<ArkFrRistretto>(Direction::ZippelToNative);
+        }
+
+        fn cross_verify<C: Ristretto>(direction: Direction) {
+            for m in [3usize, 4, 5] {
+                let (mut inputs, products) = super::super::make_inputs::<C>(m);
+                let (inst, gens, vars, io) = setup(m, &mut inputs, &products);
+                let (prover, verifier) = crate::cross::compile::<C>("spartan", &[("M", m)]);
+                let [az, bz, cz] = products.products();
+                for (name, v) in [("az", az), ("bz", bz), ("cz", cz)] {
+                    inputs.insert(Vid::from(name), Value::vec_scalar(v));
+                }
+                match direction {
+                    Direction::NativeToZippel => {
+                        let native =
+                            NativeNizk::prove(&inst, vars, &io, &gens, &mut Challenges::default());
+                        assert!(
+                            native
+                                .verify(&inst, &io, &mut Challenges::default(), &gens)
+                                .is_ok()
+                        );
+                        let proof = as_zippel::<C>(&native);
+                        assert!(
+                            verifier
+                                .verify_with(
+                                    proof.clone(),
+                                    crate::lend(&inputs),
+                                    &mut SpartanChallenges::new(m)
+                                )
+                                .unwrap(),
+                            "M={m}: Zippel rejects native proof"
+                        );
+                        let mut wrong = proof;
+                        super::corrupt_response::<C>(&mut wrong);
+                        assert!(
+                            !verifier
+                                .verify_with(
+                                    wrong,
+                                    crate::lend(&inputs),
+                                    &mut SpartanChallenges::new(m)
+                                )
+                                .unwrap(),
+                            "M={m}: Zippel accepts corrupted native proof"
+                        );
+                    }
+                    Direction::ZippelToNative => {
+                        let proof = prover
+                            .prove_with(crate::lend(&inputs), &mut SpartanChallenges::new(m))
+                            .unwrap();
+                        let native = as_native(&proof, m);
+                        assert!(
+                            native
+                                .verify(&inst, &io, &mut Challenges::default(), &gens)
+                                .is_ok(),
+                            "M={m}: native rejects Zippel proof"
+                        );
+                        let mut wrong = proof;
+                        super::corrupt_response(&mut wrong);
+                        assert!(
+                            as_native(&wrong, m)
+                                .verify(&inst, &io, &mut Challenges::default(), &gens)
+                                .is_err(),
+                            "M={m}: native accepts corrupted Zippel proof"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }

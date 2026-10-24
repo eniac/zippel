@@ -102,8 +102,9 @@ pub enum TypeError {
     #[error("`interpolate` needs a vector whose length is a power of two, but this has length {0}")]
     InterpolateUnaryNotPow2(usize),
 
-    /// `poly` was applied to something other than a vector of field elements.
-    #[error("`poly` expects a vector of field elements")]
+    /// `poly` was applied to something other than a vector of field elements or a
+    /// univariate polynomial.
+    #[error("`poly` expects a vector of field elements or a univariate polynomial")]
     Poly,
 
     /// Polynomial evaluation received operands that are not a polynomial applied to a scalar
@@ -140,8 +141,8 @@ pub enum TypeError {
     Coef,
 
     /// `mle` requires a vector whose length is a power of two, since the multilinear encoding
-    /// stores `2^n` evaluation slots.
-    #[error("`mle` expects a vector whose length is a power of two")]
+    /// stores `2^n` evaluation slots, or a multilinear polynomial.
+    #[error("`mle` expects a vector whose length is a power of two, or a multilinear polynomial")]
     Mle,
 
     /// The source of a `for` comprehension did not infer to a non-empty vector type; carries

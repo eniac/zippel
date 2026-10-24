@@ -80,6 +80,8 @@ impl CRef<'_> {
                 let deg = k.node - 1;
                 Ok(CTyp::uni(&i, deg))
             }
+            // A univariate polynomial, materialized as one coefficient vector.
+            CTyp::Poly(t, m, d) if m.node == 1 => Ok(CTyp::Poly(t, m, d)),
             _ => Err(TypeError::Poly),
         }
     }
@@ -203,6 +205,8 @@ impl CRef<'_> {
                 let i = b.to_scalar(kctx).ok_or(TypeError::Mle)?;
                 Ok(CTyp::mle(&i, n_pow))
             }
+            // A multilinear polynomial, materialized as one evaluation table.
+            CTyp::Poly(t, m, d) if d.node == 1 => Ok(CTyp::Poly(t, m, d)),
             _ => Err(TypeError::Mle),
         }
     }

@@ -192,7 +192,7 @@ pub mod zippel_side {
 }
 
 /// Native Hyrax baseline. Vendored from `ark-poly-commit-0.6.0::hyrax`
-/// (see `crate::hyrax_upstream`) with the matrix-vector multiplication
+/// (see `crate::upstream::hyrax`) with the matrix-vector multiplication
 /// in `open` rewritten to use flat row-major storage and a SAXPY
 /// accumulation — upstream's `Matrix<F>` stores rows as separately
 /// allocated `Vec<F>`s and `Matrix::row_mul` allocates a fresh 16KB
@@ -211,7 +211,7 @@ pub mod native_side {
     use ark_ff::{PrimeField, UniformRand};
     use ark_poly::{DenseMultilinearExtension, MultilinearExtension, Polynomial};
 
-    use crate::hyrax_upstream::{self, CommitterKey, VerifierKey};
+    use crate::upstream::hyrax::{self, CommitterKey, VerifierKey};
 
     /// Vendored-Hyrax keys plus the fixed polynomial, evaluation point, and
     /// claimed value that `time_protocol` is measured on.
@@ -242,9 +242,9 @@ pub mod native_side {
                 ark_poly_commit::hyrax::HyraxUniversalParams<G1Affine>,
             >("hyrax_universal_params", n, || {
                 let mut rng = ark_std::test_rng();
-                hyrax_upstream::setup(n, &mut rng)
+                hyrax::setup(n, &mut rng)
             });
-            let (ck, vk) = hyrax_upstream::trim(&pp);
+            let (ck, vk) = hyrax::trim(&pp);
 
             // Poly/point/value generation runs in `setup_pool` (called
             // here, not in time_protocol). At log_size=20 the rand poly
@@ -278,14 +278,14 @@ pub mod native_side {
             let _ = self.value;
 
             let (prove, prove_peak, (com, proof)) = crate::sample(|| {
-                let (com, state) = hyrax_upstream::commit(&self.ck, &self.poly);
+                let (com, state) = hyrax::commit(&self.ck, &self.poly);
                 let mut sponge = test_sponge::<Fr>();
-                let proof = hyrax_upstream::open(&self.ck, &com, point, &mut sponge, &state);
+                let proof = hyrax::open(&self.ck, &com, point, &mut sponge, &state);
                 (com, proof)
             });
             let (verify, verify_peak, passed) = crate::sample(|| {
                 let mut sponge_v = test_sponge::<Fr>();
-                hyrax_upstream::check(&self.vk, &com, point, &proof, &mut sponge_v)
+                hyrax::check(&self.vk, &com, point, &proof, &mut sponge_v)
             });
             assert!(passed, "vendored Hyrax verification FAILED");
 
@@ -319,5 +319,156 @@ pub mod native_side {
         }
         let config = PoseidonConfig::new(full_rounds, partial_rounds, alpha, mds, v, 2, 1);
         PoseidonSponge::new(&config)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Cross-verification: at the same challenges, each verifier accepts the other's
+// proof. The native takes its sponge, so it is given the challenge sequence.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod cross_tests {
+    use crate::cross::{Challenges, Direction};
+    use crate::upstream::hyrax::{self as hyrax, Proof};
+    use ark_bls12_381::{Fr, G1Affine};
+    use ark_ec::CurveGroup;
+    use ark_ff::{One, UniformRand};
+    use ark_poly::{DenseMultilinearExtension, MultilinearExtension, Polynomial};
+    use ark_poly_commit::hyrax::HyraxCommitment;
+    use backend::{ArkBls12_381, Value};
+
+    type V = Value<ArkBls12_381>;
+
+    fn g1(v: &V) -> G1Affine {
+        match v {
+            Value::G1(g) => g.into_affine(),
+            Value::G1Affine(g) => **g,
+            _ => panic!("expected G1, got {v}"),
+        }
+    }
+    fn g1s(v: &V) -> Vec<G1Affine> {
+        match v {
+            Value::Vec(vs) => vs.iter().map(g1).collect(),
+            Value::VecG1(gs) => gs.iter().map(|g| g.into_affine()).collect(),
+            Value::VecG1Affine(gs) => gs.to_vec(),
+            _ => panic!("expected G1s, got {v}"),
+        }
+    }
+    fn scalar(v: &V) -> Fr {
+        match v {
+            Value::Scalar(f) => *f,
+            _ => panic!("expected a scalar, got {v}"),
+        }
+    }
+    fn frs(v: &V) -> Vec<Fr> {
+        match v {
+            Value::VecScalar(f) => f.to_vec(),
+            _ => panic!("expected scalars, got {v}"),
+        }
+    }
+
+    /// The native commitment and proof as Zippel's messages: the row commitments,
+    /// tau, delta and beta, then z, z_delta and z_beta.
+    fn as_zippel(com: &hyrax::Commitment, p: &Proof) -> Vec<V> {
+        vec![
+            Value::vec_g1_affine(com.row_coms.clone()),
+            Value::g1_affine(p.com_eval),
+            Value::g1_affine(p.com_d),
+            Value::g1_affine(p.com_b),
+            Value::vec_scalar(p.z.clone()),
+            Value::Scalar(p.z_d),
+            Value::Scalar(p.z_b),
+        ]
+    }
+
+    fn as_native(m: &[V]) -> (hyrax::Commitment, Proof) {
+        assert_eq!(m.len(), 7, "Zippel's message count");
+        let com = HyraxCommitment {
+            row_coms: g1s(&m[0]),
+        };
+        let proof = Proof {
+            com_eval: g1(&m[1]),
+            com_d: g1(&m[2]),
+            com_b: g1(&m[3]),
+            z: frs(&m[4]),
+            z_d: scalar(&m[5]),
+            z_b: scalar(&m[6]),
+        };
+        (com, proof)
+    }
+
+    #[test]
+    fn native_prove_then_zippel_verify() {
+        cross_verify(Direction::NativeToZippel);
+    }
+
+    #[test]
+    fn zippel_prove_then_native_verify() {
+        cross_verify(Direction::ZippelToNative);
+    }
+
+    fn cross_verify(direction: Direction) {
+        let mut rng = ark_std::test_rng();
+        for n in [2usize, 4, 6] {
+            let half = n / 2;
+            let dim = 1 << half;
+            let pp = hyrax::setup(n, &mut rng);
+            let poly = DenseMultilinearExtension::<Fr>::rand(n, &mut rng);
+            let point: Vec<Fr> = (0..n).map(|_| Fr::rand(&mut rng)).collect();
+            // Native row `r`, column `c` holds evaluation `c·dim + r`: rows are the
+            // low variables, columns the high ones.
+            let evals = poly.to_evaluations();
+            let p: Vec<Fr> = (0..dim * dim)
+                .map(|i| evals[(i % dim) * dim + i / dim])
+                .collect();
+
+            let (prover, verifier) =
+                crate::cross::compile::<ArkBls12_381>("hyrax_pcs", &[("L", half), ("M", half)]);
+            let inputs = crate::harness_inputs([
+                ("p", Value::vec_scalar(p)),
+                ("z_row", Value::vec_scalar(point[..half].to_vec())),
+                ("z_col", Value::vec_scalar(point[half..].to_vec())),
+                ("y", Value::Scalar(poly.evaluate(&point))),
+                ("g_vec", Value::vec_g1_affine(pp.com_key[..dim].to_vec())),
+                ("g_base", Value::g1_affine(pp.com_key[0])),
+                ("h_base", Value::g1_affine(pp.h)),
+            ]);
+
+            match direction {
+                Direction::NativeToZippel => {
+                    let (com, state) = hyrax::commit(&pp, &poly);
+                    let native = hyrax::open(&pp, &com, &point, &mut Challenges::default(), &state);
+                    let native = as_zippel(&com, &native);
+                    assert!(
+                        verifier
+                            .verify_with(
+                                native.clone(),
+                                crate::lend(&inputs),
+                                &mut Challenges::default()
+                            )
+                            .unwrap(),
+                        "n = {n}: Zippel rejects the native proof"
+                    );
+                    let mut wrong = native;
+                    wrong[6] = Value::Scalar(scalar(&wrong[6]) + Fr::one());
+                    assert!(
+                        !verifier
+                            .verify_with(wrong, crate::lend(&inputs), &mut Challenges::default())
+                            .unwrap(),
+                        "n = {n}: Zippel accepts a wrong z_beta"
+                    );
+                }
+                Direction::ZippelToNative => {
+                    let ours = prover
+                        .prove_with(crate::lend(&inputs), &mut Challenges::default())
+                        .unwrap();
+                    let (com, proof) = as_native(&ours);
+                    assert!(
+                        hyrax::check(&pp, &com, &point, &proof, &mut Challenges::default()),
+                        "n = {n}: the native verifier rejects Zippel's proof"
+                    );
+                }
+            }
+        }
     }
 }

@@ -24,9 +24,9 @@
 //! the user flagged (`value_ifft` returning `VecScalar` when the spec says
 //! `Poly(F, 1, n)`) is exactly this kind of variant mismatch.
 
-use crate::config::ArkBls12_381;
-use crate::op::{GOp, mk};
-use crate::{ABase, ATyp, ArkConfig, Op, Value};
+use crate::backends::ArkBls12_381;
+use crate::ir::op::{GOp, mk};
+use crate::{ABase, ATyp, Backend, Op, Value};
 use arbitrary::{Arbitrary, Unstructured};
 use ark_std::test_rng;
 use lang::ast::BinOp;
@@ -43,7 +43,7 @@ type V = Value<TestConfig>;
 ///
 /// Strict on variant families (a `VecScalar` is not a polynomial), lenient on
 /// degree/var bounds (a degree-3 univariate inhabits `VPoly(1, 5)`).
-pub fn has_atyp<C: ArkConfig>(v: &Value<C>, t: &ATyp) -> bool {
+pub fn has_atyp<C: Backend>(v: &Value<C>, t: &ATyp) -> bool {
     match (v, t) {
         // --- bases ---
         (Value::Scalar(_), ATyp::Base(ABase::Scalar)) => true,
@@ -105,7 +105,7 @@ pub fn has_atyp<C: ArkConfig>(v: &Value<C>, t: &ATyp) -> bool {
 }
 
 /// Helper: format a value's discovered ATyp via `Value::typ()` for messages.
-fn vty<C: ArkConfig>(v: &Value<C>) -> ATyp {
+fn vty<C: Backend>(v: &Value<C>) -> ATyp {
     v.typ()
 }
 
@@ -595,7 +595,7 @@ mod cross_layer {
             let v: V = Value::random(&mut rng, &ATyp::uni(m));
             let op = fft_op(&v);
             let expected = op.typ();
-            let actual = v.value_fft();
+            let actual = v.value_fft(&ATyp::uni(m));
             assert!(
                 has_atyp(&actual, &expected),
                 "value_fft(Uni({m})) -> {} fails has_atyp(_, {expected})",
@@ -617,7 +617,7 @@ mod cross_layer {
             let v: V = Value::random(&mut rng, &ATyp::uni(m));
             let op = fft_op(&v);
             let expected = op.typ();
-            let actual = v.value_fft();
+            let actual = v.value_fft(&ATyp::uni(m));
             assert!(
                 has_atyp(&actual, &expected),
                 "value_fft(Uni({m})) -> {} fails has_atyp(_, {expected})",
