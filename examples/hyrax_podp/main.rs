@@ -50,9 +50,10 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381
 pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
     common::ExampleSpec {
         source: "examples/hyrax_podp/hyrax_podp.zippel",
-        defaults: &[("S", 4)],
+        run_defaults: &[("S", 2048)],
+        analysis_defaults: &[("S", 1)],
         validate: None,
         make_inputs,
-        analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
+        analyses: &[common::Analysis::Completeness],
     }
 }

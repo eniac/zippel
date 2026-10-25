@@ -45,13 +45,20 @@ struct Args {
     sizes: Vec<(String, usize)>,
     #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..=3))]
     samples: u8,
-    #[arg(long, value_parser = ["completeness", "zk", "soundness"])]
-    analysis: Option<String>,
 }
 
 fn parse_size(value: &str) -> Result<(String, usize), String> {
     let (name, value) = value.split_once('=').ok_or("expected NAME=VALUE")?;
     Ok((name.to_owned(), value.parse().map_err(|_| "invalid size")?))
+}
+
+/// The report's phase name for an analysis.
+const fn phase(pass: Analysis) -> &'static str {
+    match pass {
+        Analysis::Completeness => "completeness",
+        Analysis::Zk => "zk",
+        Analysis::Soundness(_) => "soundness",
+    }
 }
 
 fn measure<T>(
@@ -75,7 +82,7 @@ fn benchmark<C: ArkConfig + HasOpFactory>(
     let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(spec.source);
     let module = ParsedModule::load(source).map_err(|e| e.to_string())?;
     let given = if args.sizes.is_empty() {
-        spec.defaults
+        spec.defaults(matches!(args.mode, Mode::Analyze))
             .iter()
             .map(|&(name, value)| (name.to_owned(), value))
             .collect()
@@ -132,25 +139,19 @@ fn benchmark<C: ArkConfig + HasOpFactory>(
             }
         }
         Mode::Analyze => {
-            let pass = args
-                .analysis
-                .as_deref()
-                .map_or_else(
-                    || {
-                        spec.analyses
-                            .iter()
-                            .find(|pass| matches!(pass, Analysis::Completeness))
-                            .or_else(|| spec.analyses.first())
-                    },
-                    |selected| {
-                        spec.analyses
-                            .iter()
-                            .find(|pass| pass.label().eq_ignore_ascii_case(selected))
-                    },
-                )
-                .ok_or("requested analysis is not registered")?;
-            config["analysis"] = serde_json::json!(pass.label().to_lowercase());
-            if let Analysis::Soundness(rounds) = pass {
+            if spec.analyses.is_empty() {
+                return Err("no analyses registered".into());
+            }
+            config["analysis"] = serde_json::json!(
+                spec.analyses
+                    .iter()
+                    .map(|&pass| phase(pass))
+                    .collect::<Vec<_>>()
+            );
+            if let Some(rounds) = spec.analyses.iter().find_map(|pass| match pass {
+                Analysis::Soundness(rounds) => Some(rounds),
+                _ => None,
+            }) {
                 config["rounds"] = serde_json::json!(rounds);
             }
             protocol.prepare_analysis().map_err(|e| e.to_string())?;
@@ -161,12 +162,14 @@ fn benchmark<C: ArkConfig + HasOpFactory>(
                 })?);
             }
             let prepared = prepared.expect("positive sample count");
-            for _ in 0..args.samples {
-                measure(&mut times, "analysis", || {
-                    prepared
-                        .run(*pass, GbBackendKind::Singular)
-                        .map_err(|e| e.to_string())
-                })?;
+            for &pass in spec.analyses {
+                for _ in 0..args.samples {
+                    measure(&mut times, phase(pass), || {
+                        prepared
+                            .run(pass, GbBackendKind::Singular)
+                            .map_err(|e| e.to_string())
+                    })?;
+                }
             }
         }
     }

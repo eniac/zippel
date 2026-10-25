@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 import statistics
 
-from common import CATALOG, GitHub, read_json, validate_config
+from common import GitHub, read_json, validate_config
 from run import SAMPLES, phases
 
 
@@ -31,7 +31,6 @@ def validate_results(data, request):
     rows = result.get("rows")
     if not isinstance(rows, list) or [r.get("example") for r in rows if type(r) is dict] != request["examples"]:
         raise ValueError("result does not contain the exact requested example list")
-    expected = set(phases(request["mode"]))
     for row in rows:
         if set(row) != {"example", "base", "head"}:
             raise ValueError("unexpected result row fields")
@@ -44,7 +43,10 @@ def validate_results(data, request):
             if "workload" in measured and not re.fullmatch(r"[a-f0-9]{64}", str(measured["workload"])):
                 raise ValueError("invalid workload identity")
             times = measured.get("ms")
+            expected = None
             if measured["status"] == "ok":
+                config = validate_config(measured.get("config"), request["mode"])
+                expected = set(phases(request["mode"], config))
                 if type(times) is not dict or set(times) != expected:
                     raise ValueError("incomplete native timing phases")
                 for samples in times.values():
@@ -52,10 +54,7 @@ def validate_results(data, request):
                         raise ValueError("invalid native timing samples")
                 if "workload" not in measured:
                     raise ValueError("missing workload identity")
-                config = validate_config(measured.get("config"), request["mode"])
                 sizes = request.get("sizes")
-                if sizes is None:
-                    sizes = CATALOG["examples"][row["example"]][request["mode"]]["sizes"] or None
                 if sizes is not None and config["sizes"] != sizes:
                     raise ValueError("resolved sizes differ from the requested sizes")
             elif times != {}:
@@ -98,7 +97,7 @@ def ms_cell(samples):
 def describe_config(config):
     parts = [config["curve"], *(f"{name}={value}" for name, value in config["sizes"].items())]
     if config["analysis"]:
-        parts.append(config["analysis"])
+        parts += config["analysis"]
     if config["rounds"]:
         parts.append("rounds " + ",".join(map(str, config["rounds"])))
     return ", ".join(parts)
@@ -109,11 +108,7 @@ def describe_example(request, name, row):
         base, head = describe_config(row["base"]["config"]), describe_config(row["head"]["config"])
         label = base if base == head else f"base {base}; head {head}"
     else:
-        spec = CATALOG["examples"][name][request["mode"]]
-        sizes = request.get("sizes") if request.get("sizes") is not None else spec["sizes"]
-        label = ", ".join(f"{k}={v}" for k, v in sizes.items())
-        if request["mode"] == "analyze" and spec["pass"]:
-            label = ", ".join(filter(None, (label, spec["pass"])))
+        label = ", ".join(f"{k}={v}" for k, v in (request.get("sizes") or {}).items())
     return f"`{name}` ({label})" if label else f"`{name}`"
 
 
@@ -134,19 +129,24 @@ def render(request, run_url, result=None, failure=None):
                 lines.append(f"| {name} | {base['status']} | {head['status']} | — | — | — | — |")
                 continue
             changed = base["workload"] != head["workload"] or base["config"] != head["config"]
-            for phase in phases(request["mode"]):
-                counts = []
+            # A revision can register different analyses; show the union.
+            names = dict.fromkeys(phases(request["mode"], head["config"]) + phases(request["mode"], base["config"]))
+            for phase in names:
+                counts, times = [], []
                 for side in (base, head):
                     value = side["instructions"]
+                    present = phase in side["ms"]
                     counts.append([p + c for p, c in zip(value[phase]["parent"], value[phase]["children"])]
-                                  if value is not None else None)
-                count_cells = [f"{round(statistics.median(count)):,}" if count is not None else side["instruction_status"]
+                                  if value is not None and present else None)
+                    times.append(side["ms"].get(phase))
+                count_cells = [f"{round(statistics.median(count)):,}" if count is not None
+                               else side["instruction_status"] if phase in side["ms"] else "—"
                                for count, side in zip(counts, (base, head))]
                 di = change(*counts) if all(v is not None for v in counts) else "—"
-                bt, ht = base["ms"][phase], head["ms"][phase]
-                dt = change(bt, ht)
+                time_cells = [ms_cell(t) if t is not None else "—" for t in times]
+                dt = change(*times) if all(t is not None for t in times) else "—"
                 label = f"{name} / {phase}" + (" (workload changed)" if changed else "")
-                lines.append(f"| {label} | {count_cells[0]} | {count_cells[1]} | {di} | {ms_cell(bt)} | {ms_cell(ht)} | {dt} |")
+                lines.append(f"| {label} | {count_cells[0]} | {count_cells[1]} | {di} | {time_cells[0]} | {time_cells[1]} | {dt} |")
     examples = ", ".join(describe_example(request, name, rows.get(name)) for name in request["examples"])
     samples = f"median of {SAMPLES} per side on one runner with one Rayon worker"
     if request["mode"] == "run":

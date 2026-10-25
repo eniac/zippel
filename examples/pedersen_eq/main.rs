@@ -29,9 +29,13 @@ fn make_inputs(_sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_38
 pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
     common::ExampleSpec {
         source: "examples/pedersen_eq/pedersen_eq.zippel",
-        defaults: &[],
+        run_defaults: &[],
+        analysis_defaults: &[],
         validate: None,
         make_inputs,
-        analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
+        analyses: &[
+            common::Analysis::Completeness,
+            common::Analysis::Soundness(&[2]),
+        ],
     }
 }

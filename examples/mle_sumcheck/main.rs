@@ -34,12 +34,13 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381
 pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
     common::ExampleSpec {
         source: "examples/mle_sumcheck/mle_sumcheck.zippel",
-        defaults: &[("NUM_VARS", 3)],
+        run_defaults: &[("NUM_VARS", 19)],
+        analysis_defaults: &[("NUM_VARS", 3)],
         validate: Some(|sizes, _analysis| {
             common::check_power_of_two(sizes, "NUM_VARS")?;
             Ok(())
         }),
         make_inputs,
-        analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
+        analyses: &[common::Analysis::Completeness],
     }
 }

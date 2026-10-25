@@ -10,18 +10,26 @@ import sys
 
 HERE = Path(__file__).resolve().parent
 CATALOG = json.loads((HERE / "suite.json").read_bytes())
-registry_match = re.search(r"\$callback!\s*\{([^}]+)\}", (HERE.parents[2] / "examples/registry.rs").read_text())
+EXAMPLES_DIR = HERE.parents[2] / "examples"
+registry_text = (EXAMPLES_DIR / "registry.rs").read_text()
+registry_match = re.search(r"\$callback!\s*\{([^}]+)\}", registry_text)
 if registry_match is None:
     raise ValueError("missing shared example registry")
 REGISTERED = [name.strip() for name in registry_match[1].split(",") if name.strip()]
 if any(not re.fullmatch(r"[a-z][a-z0-9_]*", name) for name in REGISTERED):
     raise ValueError("invalid shared example registry")
-presets = CATALOG["examples"]
-CATALOG["examples"] = {
-    name: {"run": {"sizes": {}},
-           "analyze": {"sizes": {}, "pass": None}, **presets.get(name, {})}
-    for name in REGISTERED
-}
+MODULES = dict((name, path) for path, name in re.findall(r'#\[path = "([^"]+)"\]\s*pub mod ([a-z0-9_]+);', registry_text))
+ANALYSES = ("completeness", "zk", "soundness")
+
+
+def analyzable(name):
+    """Whether the example's `spec()` registers any analysis."""
+    source = (EXAMPLES_DIR / MODULES[name]).read_text()
+    registered = re.search(r"analyses:\s*&\[(.*?)\]\s*,", source, re.S)
+    return bool(registered and "Analysis::" in registered[1])
+
+
+EXAMPLES = {name: ("run", "analyze") if analyzable(name) else ("run",) for name in REGISTERED}
 MAX_JSON = 1024 * 1024
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 USAGE = "usage: /bench run|analyze [example ...] [--base COMMIT] [--head COMMIT] [--size NAME=VALUE ...]"
@@ -106,9 +114,9 @@ def parse_command(body):
             names.append(word)
             index += 1
     names = list(dict.fromkeys(names or CATALOG["defaults"]))
-    unsupported = [name for name in names if mode not in CATALOG["examples"].get(name, {})]
+    unsupported = [name for name in names if mode not in EXAMPLES.get(name, ())]
     if unsupported:
-        choices = [name for name, spec in CATALOG["examples"].items() if mode in spec]
+        choices = [name for name, modes in EXAMPLES.items() if mode in modes]
         raise ValueError(f"unsupported {mode} examples: {', '.join(unsupported)}; choose: {', '.join(choices)}")
     return Command(mode, names, selectors.get("--base"), selectors.get("--head"), sizes)
 
@@ -130,12 +138,15 @@ def validate_config(config, mode):
         raise ValueError("invalid protocol source path")
     if not isinstance(config["curve"], str) or len(config["curve"]) > 128 or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", config["curve"]):
         raise ValueError("invalid curve name")
-    if config["analysis"] not in ((None,) if mode == "run" else ("completeness", "zk", "soundness")):
+    analyses = config["analysis"]
+    if mode == "run" and analyses is not None or mode == "analyze" and (
+            not isinstance(analyses, list) or not analyses or len(set(analyses)) != len(analyses)
+            or any(name not in ANALYSES for name in analyses)):
         raise ValueError("invalid analysis selection")
     rounds = config["rounds"]
     if not isinstance(rounds, list) or len(rounds) > 64 or any(not positive(value) or value >= 2**64 for value in rounds):
         raise ValueError("invalid soundness rounds")
-    if config["analysis"] == "soundness":
+    if analyses and "soundness" in analyses:
         if not rounds or any(value < 2 for value in rounds):
             raise ValueError("soundness requires transcript counts of at least two")
     elif rounds:

@@ -11,10 +11,9 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 
-from common import CATALOG, canonical, parse_command, read_json, validate_config
+from common import ANALYSES, CATALOG, canonical, parse_command, read_json, validate_config
 
 # Native timings and instruction profiles each take this many samples per phase.
 SAMPLES = 3
@@ -48,79 +47,49 @@ def environment():
     return env
 
 
-def harness(tree):
-    """The revision's own CI harness, which matches its library API; the
-    coordinator's for revisions that predate the harness."""
-    own = tree / "benches/ci"
-    if (own / "main.rs").exists() and (own / "profile.rs").exists():
-        return own
-    return Path(__file__).resolve().parents[3] / "benches/ci"
-
-
 def build(tree, directory, target_directory, timeout):
+    """Build the revision's own CI harness, which matches its library API."""
     directory.mkdir(parents=True, exist_ok=True)
     env = environment()
     env["CARGO_TARGET_DIR"] = str(target_directory)
-    source_harness = harness(tree)
-    manifest = tree / "Cargo.toml"
-    original = manifest.read_bytes()
     start = time.monotonic()
-    # Historical revisions need not contain the target or the shared
-    # registry, so the harness is built from an overlay with its own registry.
-    with tempfile.TemporaryDirectory(prefix="pr-bench-", dir=tree / "benches") as scratch:
-        overlay = Path(scratch)
-        main = (source_harness / "main.rs").read_text().replace('"../../examples/registry.rs"', '"registry.rs"')
-        (overlay / "main.rs").write_text(main)
-        shutil.copy2(source_harness / "profile.rs", overlay / "profile.rs")
-        registry = tree / "examples/registry.rs"
-        definitions = (registry if registry.exists() else tree / "examples/main.rs").read_text()
-        entries = re.findall(r'#\[path\s*=\s*"([^"\n]+/main\.rs)"\]\s*(?:pub(?:\(crate\))?\s+)?mod\s+([a-z][a-z0-9_]*)\s*;', definitions)
-        if not entries:
-            raise ValueError("snapshot has no example registrations")
-        source = "".join(f'#[path = "../../examples/{path}"]\npub mod {name};\n' for path, name in entries)
-        source += 'macro_rules! with_examples { ($callback:ident) => { $callback! { '
-        source += ",".join(name for _, name in entries)
-        source += ' } }; }\npub(crate) use with_examples;\n'
-        (overlay / "registry.rs").write_text(source)
-        addition = (f'\n[[bench]]\nname = "pr-bench-ci"\npath = "benches/{overlay.name}/main.rs"\n'
-                    'test = false\nharness = false\n').encode()
-        try:
-            manifest.write_bytes(original + addition)
-            log = directory / "build.jsonl"
-            try:
-                execute(["cargo", "build", "--locked", "--release", "--message-format=json",
-                         "-p", "zippel", "--bench", "pr-bench-ci"], tree, env, timeout, log)
-            except ValueError:
-                # The log is not uploaded; put the compiler's errors in the job log.
-                print(f"{tree.name} build failed:", file=sys.stderr)
-                for line in log.read_text().splitlines() if log.exists() else []:
-                    row = json.loads(line)
-                    if row.get("reason") == "compiler-message" and row["message"]["level"] == "error":
-                        print(row["message"]["rendered"], file=sys.stderr)
-                raise
-            executables = {row["executable"] for line in log.read_text().splitlines()
-                           if (row := json.loads(line)).get("reason") == "compiler-artifact"
-                           and row.get("target", {}).get("name") == "pr-bench-ci" and row.get("executable")}
-            if len(executables) != 1:
-                raise ValueError("Cargo did not identify one benchmark executable")
-            binary = directory / "ci"
-            shutil.copy2(next(iter(executables)), binary)
-        finally:
-            manifest.write_bytes(original)
+    log = directory / "build.jsonl"
+    try:
+        execute(["cargo", "build", "--locked", "--release", "--message-format=json",
+                 "-p", "zippel", "--bench", "ci"], tree, env, timeout, log)
+    except ValueError:
+        # The logs are not uploaded; put Cargo's errors in the job log.
+        print(f"{tree.name} build failed:", file=sys.stderr)
+        for line in log.read_text().splitlines() if log.exists() else []:
+            row = json.loads(line)
+            if row.get("reason") == "compiler-message" and row["message"]["level"] == "error":
+                print(row["message"]["rendered"], file=sys.stderr)
+        errors = log.with_suffix(".stderr")
+        print("\n".join(errors.read_text().splitlines()[-20:]) if errors.exists() else "", file=sys.stderr)
+        raise
+    executables = {row["executable"] for line in log.read_text().splitlines()
+                   if (row := json.loads(line)).get("reason") == "compiler-artifact"
+                   and row.get("target", {}).get("name") == "ci" and row.get("executable")}
+    if len(executables) != 1:
+        raise ValueError("Cargo did not identify one benchmark executable")
+    # Both revisions share the target directory, so keep this one's copy.
+    binary = directory / "ci"
+    shutil.copy2(next(iter(executables)), binary)
     return str(binary), time.monotonic() - start
 
 
-def phases(mode):
-    return ("compile", "prove", "verify") if mode == "run" else ("compile", "prepare", "analysis")
+def phases(mode, config):
+    """Measured phases; `analyze` times each analysis the example registers."""
+    if mode == "run":
+        return ("compile", "prove", "verify")
+    return ("compile", "prepare", *config["analysis"])
 
 
 def arguments(binary, mode, name, sizes=None):
-    spec = CATALOG["examples"][name][mode]
+    """Without sizes, the harness uses the example's own defaults for the mode."""
     args = [binary, mode, name]
-    for key, value in (spec["sizes"] if sizes is None else sizes).items():
+    for key, value in (sizes or {}).items():
         args += ["--size", f"{key}={value}"]
-    if mode == "analyze" and spec["pass"] is not None:
-        args += ["--analysis", spec["pass"]]
     return args
 
 
@@ -136,13 +105,14 @@ def native(binary, tree, mode, name, directory, timeout, sizes=None):
     env = environment()
     execute(arguments(binary, mode, name, sizes) + ["--samples", str(SAMPLES)], tree, env, timeout, log)
     row = final_record(log)
-    if set(row.get("ms", {})) != set(phases(mode)):
+    config = validate_config(row.get("config"), mode)
+    if set(row.get("ms", {})) != set(phases(mode, config)):
         raise ValueError("harness did not report the requested phases")
     if any(not isinstance(samples, list) or len(samples) != SAMPLES
            or any(type(v) not in (int, float) or not 0 <= v < 1e15 for v in samples)
            for samples in row["ms"].values()):
         raise ValueError("harness did not report three native samples per phase")
-    return {"ms": row["ms"], "config": validate_config(row.get("config"), mode)}
+    return {"ms": row["ms"], "config": config}
 
 
 def parse_profiles(directory, expected, samples=SAMPLES):
@@ -194,7 +164,7 @@ def instruction_total(content):
     return value
 
 
-def profile(binary, tree, mode, name, directory, timeout, sizes=None):
+def profile(binary, tree, mode, name, directory, timeout, expected, sizes=None):
     valgrind = shutil.which("valgrind")
     if not valgrind:
         raise FileNotFoundError("valgrind is not installed")
@@ -212,11 +182,10 @@ def profile(binary, tree, mode, name, directory, timeout, sizes=None):
 import os
 from pathlib import Path
 import sys
-import tempfile
 root = Path({str(directory)!r})
 phase = (root / "phase").read_text()
 name, _, index = phase.partition(".")
-if name not in ("compile", "prepare", "analysis") or not index.isdigit():
+if name not in {("compile", "prepare", *ANALYSES)!r} or not index.isdigit():
     raise ValueError("Singular launched outside a measured analysis phase")
 with (root / "children").open("a") as stream:
     stream.write(phase + "\\n")
@@ -231,14 +200,14 @@ os.execv({valgrind!r}, [{valgrind!r}, "--tool=callgrind", "--instr-atstart=yes",
     execute(args + arguments(binary, mode, name, sizes) + ["--samples", str(SAMPLES)], tree, env, timeout,
             directory / "profile.jsonl")
     final_record(directory / "profile.jsonl")
-    return parse_profiles(directory, phases(mode))
+    return parse_profiles(directory, expected)
 
 
 def workload(tree, name, source):
     common = sorted(path.relative_to(tree).as_posix() for path in (tree / "examples/common").glob("*.rs"))
     paths = [source, *common, f"examples/{name}/main.rs"]
     payload = b"".join(path.encode() + (tree / path).read_bytes() for path in paths)
-    payload += b"".join(file.encode() + (harness(tree) / file).read_bytes() for file in ("main.rs", "profile.rs"))
+    payload += b"".join(file.encode() + (tree / "benches/ci" / file).read_bytes() for file in ("main.rs", "profile.rs"))
     return hashlib.sha256(payload).hexdigest()
 
 
@@ -277,7 +246,7 @@ def comparison(request, trees, binaries, directory, deadline):
             try:
                 result["instructions"] = profile(binaries[side], trees[side], mode, name, stage,
                                                  deadline - time.monotonic(),
-                                                 request.get("sizes"))
+                                                 phases(mode, result["config"]), request.get("sizes"))
                 result["instruction_status"] = "ok"
             except (ValueError, OSError, subprocess.TimeoutExpired) as error:
                 print(f"{name} {side} profile: {error!r}", file=sys.stderr)

@@ -12,10 +12,11 @@ type F = <C as ArkConfig>::F;
 pub fn spec() -> common::ExampleSpec<C> {
     common::ExampleSpec {
         source: "examples/groth16/groth16.zippel",
-        defaults: &[("M", 2), ("L", 3), ("H", 4)],
+        run_defaults: &[("M", 2), ("L", 768), ("H", 1024)],
+        analysis_defaults: &[("M", 1), ("L", 1), ("H", 1)],
         validate: None,
         make_inputs,
-        analyses: &[],
+        analyses: &[common::Analysis::Completeness],
     }
 }
 

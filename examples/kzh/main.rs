@@ -70,7 +70,8 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381
 pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
     common::ExampleSpec {
         source: "examples/kzh/kzh.zippel",
-        defaults: &[("NX", 2), ("NY", 2)],
+        run_defaults: &[("NX", 6), ("NY", 6)],
+        analysis_defaults: &[("NX", 2), ("NY", 2)],
         validate: Some(|sizes, _analysis| {
             common::check_power_of_two(sizes, "NX")?;
             common::check_power_of_two(sizes, "NY")?;
@@ -78,6 +79,6 @@ pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
             Ok(())
         }),
         make_inputs,
-        analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
+        analyses: &[common::Analysis::Completeness],
     }
 }

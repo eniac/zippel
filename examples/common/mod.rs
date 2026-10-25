@@ -55,11 +55,26 @@ type MakeInputs<C> = fn(&Ctx<Tid, usize>) -> Ctx<Vid, Value<C>>;
 /// Protocol-specific data; orchestration belongs to this module.
 pub struct ExampleSpec<C: ArkConfig> {
     pub source: &'static str,
-    /// Complete size set used only when no sizes are supplied.
-    pub defaults: &'static [(&'static str, usize)],
+    /// Complete size set for `run` when no sizes are supplied: large enough
+    /// to benchmark (about 3 s per process single-threaded).
+    pub run_defaults: &'static [(&'static str, usize)],
+    /// Complete size set for `analyze` when no sizes are supplied: the
+    /// smallest sizes that exercise every code path.
+    pub analysis_defaults: &'static [(&'static str, usize)],
     pub validate: Option<ValidateSizes>,
     pub make_inputs: MakeInputs<C>,
     pub analyses: &'static [Analysis<'static>],
+}
+
+impl<C: ArkConfig> ExampleSpec<C> {
+    /// The default size set for `run` or, with `analysis`, for `analyze`.
+    pub const fn defaults(&self, analysis: bool) -> &'static [(&'static str, usize)] {
+        if analysis {
+            self.analysis_defaults
+        } else {
+            self.run_defaults
+        }
+    }
 }
 
 /// Read a registered size from the resolved context.
@@ -119,7 +134,7 @@ pub fn run<C: ArkConfig + HasOpFactory>(
         );
     }
     let given = if request.sizes.is_empty() {
-        spec.defaults
+        spec.defaults(matches!(request.operation, Operation::Analyze { .. }))
             .iter()
             .map(|&(name, value)| (name.to_owned(), value))
             .collect()

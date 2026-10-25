@@ -121,7 +121,8 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<C>> {
 pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
     common::ExampleSpec {
         source: "examples/dekart/dekart.zippel",
-        defaults: &[("n", 3), ("b", 2), ("l_chunk", 8)],
+        run_defaults: &[("n", 4095), ("b", 2), ("l_chunk", 16)],
+        analysis_defaults: &[("n", 3), ("b", 2), ("l_chunk", 1)],
         validate: Some(|sizes, analysis| {
             if analysis {
                 return Ok(());
@@ -140,6 +141,6 @@ pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
             Ok(())
         }),
         make_inputs,
-        analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
+        analyses: &[common::Analysis::Completeness],
     }
 }

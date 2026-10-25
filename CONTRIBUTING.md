@@ -72,12 +72,10 @@ commenting on the PR:
 /bench analyze
 ```
 
-`run` measures compilation, proving and verification. `analyze` measures
-compilation, analysis preparation and one static analysis: the one
-[`suite.json`](.github/scripts/bench/suite.json) names for the example,
-otherwise completeness (or the example's first registered analysis, if it has no
-completeness check). Without example names, both use PST13, KZG and IPA at the
-sizes in `suite.json`. To benchmark other examples, list any registered in
+`run` measures compilation, proving and verification at each example's run
+defaults. `analyze` measures compilation, analysis preparation and every
+analysis the example registers, at its analysis defaults. Without example names,
+both use PST13, KZG and IPA. To benchmark other examples, list any registered in
 `examples/registry.rs`:
 
 ```text
@@ -246,12 +244,12 @@ fn make_inputs(_sizes: &Ctx<Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
 pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
     common::ExampleSpec {
         source: "examples/schnorr4/schnorr4.zippel",
-        defaults: &[],
+        run_defaults: &[],
+        analysis_defaults: &[],
         validate: None,
         make_inputs,
         analyses: &[
             common::Analysis::Completeness,
-            common::Analysis::Zk,
             common::Analysis::Soundness(&[2]),
         ],
     }
@@ -267,17 +265,20 @@ Adapt this module to your protocol:
   argument. The keys must be the exact argument names in the source. Compute
   public claims from the generated witness, as `h` is computed from `x` above,
   so the resulting instance satisfies your relation.
-- List the analyses you want the harness to run in `analyses`. Soundness needs
-  the protocol's transcript count for each challenge round: Schnorr has one
-  round and uses `Soundness(&[2])`. Omit soundness if you have not established
-  those parameters.
+- List the analyses you want the harness to run in `analyses`, registering only
+  those that pass. Soundness needs the protocol's transcript count for each
+  challenge round: Schnorr has one round and uses `Soundness(&[2])`. Omit
+  soundness if you have not established those parameters.
 
-If your protocol declares sizes, put a small runnable value for each one in
-`defaults`, for example `&[("N", 4)]`. In `make_inputs`, read that value with
-`let n = common::size(sizes, "N");` and use it for input lengths and any
-size-dependent calculations. Choose defaults that exercise both recursive and
-base cases. See [the IPA module](examples/ipa/main.rs) for a sized example.
-Schnorr has no size parameters, so it uses `defaults: &[]` and ignores `_sizes`.
+If your protocol declares sizes, give each one a value in both default sets.
+`run_defaults` is what `run`, CI and PR benchmarks use: choose sizes where one
+`run` takes a few seconds, for example `&[("S", 10)]`. `analysis_defaults` is
+what `analyze` uses: choose the smallest sizes that exercise every code path,
+including both recursive and base cases, for example `&[("S", 1)]`. In
+`make_inputs`, read a size with `let n = common::size(sizes, "N");` and use it
+for input lengths and any size-dependent calculations. See
+[the IPA module](examples/ipa/main.rs) for a sized example. Schnorr has no size
+parameters, so both sets are `&[]` and `make_inputs` ignores `_sizes`.
 
 Start with `validate: None`. If your input generator needs additional size
 constraints, supply a callback that returns `Err` with an explanation for
@@ -307,4 +308,4 @@ run all analyses you registered. Analyses use `ark-gb` by default; to use
 Try your example at its defaults and at other supported sizes. Supply sizes with
 repeated `--size NAME=VALUE` flags. If you supply any, include every `Size`
 parameter: explicit sizes replace the entire default set. Use your example's
-`--help` to see its defaults and registered analyses.
+`--help` to see both default sets and its registered analyses.

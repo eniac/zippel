@@ -53,9 +53,10 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381
 pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
     common::ExampleSpec {
         source: "examples/marlin_kzg/marlin_kzg.zippel",
-        defaults: &[("N", 2)],
+        run_defaults: &[("N", 4096)],
+        analysis_defaults: &[("N", 2)],
         validate: None,
         make_inputs,
-        analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
+        analyses: &[common::Analysis::Completeness],
     }
 }

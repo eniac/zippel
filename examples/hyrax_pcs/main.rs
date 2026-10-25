@@ -65,7 +65,8 @@ fn eq_evals(x: &[F], one: F) -> Vec<F> {
 pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
     common::ExampleSpec {
         source: "examples/hyrax_pcs/hyrax_pcs.zippel",
-        defaults: &[("L", 2), ("M", 2)],
+        run_defaults: &[("L", 7), ("M", 8)],
+        analysis_defaults: &[("L", 2), ("M", 2)],
         validate: Some(|sizes, _analysis| {
             common::check_power_of_two(sizes, "L")?;
             common::check_power_of_two(sizes, "M")?;

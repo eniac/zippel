@@ -45,13 +45,10 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381
 pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
     common::ExampleSpec {
         source: "examples/r1cs_sigma/r1cs_sigma.zippel",
-        defaults: &[("N", 2), ("n", 1), ("m", 1)],
+        run_defaults: &[("N", 512), ("n", 1), ("m", 512)],
+        analysis_defaults: &[("N", 2), ("n", 1), ("m", 1)],
         validate: None,
         make_inputs,
-        analyses: &[
-            common::Analysis::Completeness,
-            common::Analysis::Zk,
-            common::Analysis::Soundness(&[2]),
-        ],
+        analyses: &[common::Analysis::Completeness],
     }
 }

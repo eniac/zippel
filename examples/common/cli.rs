@@ -44,17 +44,22 @@ pub fn request(matches: &ArgMatches, operation: &str) -> Request {
 /// Details shown when help names a particular example.
 pub fn example_help<C: ArkConfig>(spec: &ExampleSpec<C>) -> String {
     let mut help = String::new();
-    if !spec.defaults.is_empty() {
-        help.push_str("Defaults: ");
-        help.push_str(
-            &spec
-                .defaults
-                .iter()
-                .map(|(name, value)| format!("{name}={value}"))
-                .collect::<Vec<_>>()
-                .join(", "),
-        );
-        help.push('\n');
+    for (label, defaults) in [
+        ("Run defaults", spec.run_defaults),
+        ("Analysis defaults", spec.analysis_defaults),
+    ] {
+        if !defaults.is_empty() {
+            help.push_str(label);
+            help.push_str(": ");
+            help.push_str(
+                &defaults
+                    .iter()
+                    .map(|(name, value)| format!("{name}={value}"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            help.push('\n');
+        }
     }
     help.push_str("Analyses: ");
     help.push_str(

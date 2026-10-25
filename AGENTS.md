@@ -130,9 +130,13 @@ See `CONTRIBUTING.md` → "Creating a new protocol with Zippel" for the full
 step-by-step (create `examples/<name>/{<name>.zippel,main.rs}`, register it in
 `examples/registry.rs`, register an `ExampleSpec<ArkBls12_381>`). Input
 generators read the explicit size context; shared code owns compilation,
-execution, analysis and output. With no size flags, defaults apply. Any explicit
-sizes replace the entire default set and must cover every declared Size. CI runs
-each registration at its defaults.
+execution, analysis and output. With no size flags, `run` uses `run_defaults`
+(sized so one run takes seconds; CI and PR benchmarks use it) and `analyze` uses
+`analysis_defaults` (the smallest sizes that exercise every code path; keep them
+equal to the `gb_snapshots` and `benches/analysis` sizes). Any explicit sizes
+replace the entire default set and must cover every declared Size. Register only
+analyses that pass; expected failures live in `benches/analysis` and
+`gb_snapshots`.
 
 Iterate on the `.zippel` file with `cargo zcheck` before writing the harness: if
 it passes, compilation and projection will too. It reports errors with source

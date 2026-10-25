@@ -226,7 +226,8 @@ fn nonzero<R: rand::Rng>(rng: &mut R) -> F {
 pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
     common::ExampleSpec {
         source: "examples/pari/pari.zippel",
-        defaults: &[("M", 3), ("N", 2), ("KMN", 3)],
+        run_defaults: &[("M", 11), ("N", 1), ("KMN", 2)],
+        analysis_defaults: &[("M", 2), ("N", 1), ("KMN", 3)],
         validate: Some(|sizes, analysis| {
             common::check_power_of_two(sizes, "M")?;
             if !analysis
@@ -241,6 +242,6 @@ pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
             Ok(())
         }),
         make_inputs,
-        analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
+        analyses: &[common::Analysis::Completeness],
     }
 }

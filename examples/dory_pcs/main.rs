@@ -87,12 +87,13 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381
 pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
     common::ExampleSpec {
         source: "examples/dory_pcs/dory_pcs.zippel",
-        defaults: &[("K", 3)],
+        run_defaults: &[("K", 6)],
+        analysis_defaults: &[("K", 3)],
         validate: Some(|sizes, _analysis| {
             common::check_power_of_two(sizes, "K")?;
             Ok(())
         }),
         make_inputs,
-        analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
+        analyses: &[common::Analysis::Completeness],
     }
 }

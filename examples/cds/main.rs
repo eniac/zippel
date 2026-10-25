@@ -92,7 +92,8 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381
 pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
     common::ExampleSpec {
         source: "examples/cds/cds.zippel",
-        defaults: &[("N", 2)],
+        run_defaults: &[("N", 1024)],
+        analysis_defaults: &[("N", 2)],
         validate: Some(|sizes, _analysis| {
             if common::size(sizes, "N") <= K {
                 return Err(format!("N must exceed K = {K}: some instance must be real"));
@@ -100,6 +101,6 @@ pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
             Ok(())
         }),
         make_inputs,
-        analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
+        analyses: &[common::Analysis::Completeness],
     }
 }

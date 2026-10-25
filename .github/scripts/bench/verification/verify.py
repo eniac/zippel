@@ -79,7 +79,7 @@ def main():
                     raise ValueError(f"real {mode} case failed: {row['example']} {side}: {row[side]}")
         if mode == "analyze":
             soundness = next(row for row in result["rows"] if row["example"] == "schnorr")
-            if not any(count["children"] > 0 for count in soundness["base"]["instructions"].values()):
+            if not sum(soundness["base"]["instructions"]["soundness"]["children"]):
                 raise ValueError("soundness profile missed Singular children")
         (stage / "results.json").write_bytes(raw)
         (stage / "request.json").write_bytes(canonical(request))

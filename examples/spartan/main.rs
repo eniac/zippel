@@ -216,7 +216,8 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkCurve2551
 pub fn spec() -> common::ExampleSpec<ArkCurve25519> {
     common::ExampleSpec {
         source: "examples/spartan/spartan.zippel",
-        defaults: &[("M", 4)],
+        run_defaults: &[("M", 15)],
+        analysis_defaults: &[("M", 4)],
         validate: Some(|sizes, analysis| {
             common::check_power_of_two(sizes, "M")?;
             if !analysis && size(sizes, "M") < 3 {

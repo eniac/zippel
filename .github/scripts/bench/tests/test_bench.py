@@ -29,17 +29,17 @@ def request(mode="run", names=None):
             "observed_base_sha": "b" * 40, "observed_head_sha": "c" * 40}
 
 
-def results(req):
+def results(req, analyses=("completeness",)):
     rows = []
     for name in req["examples"]:
-        spec = CATALOG["examples"][name][req["mode"]]
-        analysis = (spec["pass"] or "completeness") if req["mode"] == "analyze" else None
+        analysis = list(analyses) if req["mode"] == "analyze" else None
         config = {"source": f"examples/{name}/{name}.zippel", "curve": "TestCurve",
-                  "sizes": req.get("sizes") if req.get("sizes") is not None else spec["sizes"],
-                  "analysis": analysis, "rounds": [2] if analysis == "soundness" else []}
-        side = {"status": "ok", "ms": {p: [1.0, 2.0, 3.0] for p in phases(req["mode"])},
+                  "sizes": req.get("sizes") if req.get("sizes") is not None else {"N": 2},
+                  "analysis": analysis, "rounds": [2] if analysis and "soundness" in analysis else []}
+        names = phases(req["mode"], config)
+        side = {"status": "ok", "ms": {p: [1.0, 2.0, 3.0] for p in names},
                 "workload": "d" * 64, "instruction_status": "ok", "config": config,
-                "instructions": {p: {"parent": [100, 101, 102], "children": [20, 20, 20]} for p in phases(req["mode"])}}
+                "instructions": {p: {"parent": [100, 101, 102], "children": [20, 20, 20]} for p in names}}
         rows.append({"example": name, "base": copy.deepcopy(side), "head": copy.deepcopy(side)})
     return {"mode": req["mode"], "examples": req["examples"],
             "base_sha": req["base_sha"], "head_sha": req["head_sha"], "rows": rows}
@@ -133,7 +133,7 @@ class Commands(unittest.TestCase):
 
     def test_invalid_names_and_shell_text_reject_whole_request(self):
         for body in ("/bench", "/bench runtime", "/bench run pst13 missing", "/bench run ../ipa",
-                     "/bench analyze schnorr --rounds 2", "/bench run ipa;echo", "/bench run $(id)",
+                     "/bench analyze schnorr --rounds 2", "/bench analyze spartan", "/bench run ipa;echo", "/bench run $(id)",
                      "/bench run ipa\n/bench run kzg"):
             with self.subTest(body=body), self.assertRaises(ValueError):
                 parse_command(body)
@@ -277,6 +277,24 @@ class Reports(unittest.TestCase):
             with self.subTest(change=change_result), self.assertRaises(ValueError):
                 validate_results(canonical(data), req)
 
+    def test_analyze_reports_every_registered_analysis(self):
+        req = request("analyze", ["schnorr"])
+        body = render(req, RUN_URL, validate_results(canonical(results(req, ("completeness", "soundness"))), req))
+        rows = [line.split(" | ")[0] for line in body.splitlines() if line.startswith("| schnorr")]
+        self.assertEqual(rows, ["| schnorr / compile", "| schnorr / prepare",
+                                "| schnorr / completeness", "| schnorr / soundness"])
+
+    def test_analysis_added_by_head_has_no_base_numbers(self):
+        req = request("analyze", ["pst13"])
+        data = results(req, ("completeness", "soundness"))
+        base = data["rows"][0]["base"]
+        base["config"].update(analysis=["completeness"], rounds=[])
+        for field in ("ms", "instructions"):
+            del base[field]["soundness"]
+        body = render(req, RUN_URL, validate_results(canonical(data), req))
+        line = next(line for line in body.splitlines() if "pst13 / soundness" in line)
+        self.assertIn("(workload changed) | — | 121 | — | — | 2.00 | — |", line)
+
     def test_incomplete_profile_preserves_native_time_with_no_instruction_delta(self):
         req = request("analyze", ["kzg"])
         data = results(req)
@@ -301,87 +319,45 @@ class Reports(unittest.TestCase):
 
 
 class Measurements(unittest.TestCase):
-    def test_revision_executables_survive_shared_target_rebuilds(self):
+    def test_each_revision_builds_its_own_harness_into_its_own_binary(self):
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root)
             shared = directory / "target"
             shared.mkdir()
             executable = shared / "ci"
             calls = []
-            for side in ("base", "head"):
-                tree = directory / side
-                (tree / "benches").mkdir(parents=True)
-                (tree / "Cargo.toml").write_text("[package]\nname = 'fixture'\n")
-                (tree / "examples").mkdir()
-                (tree / "examples/main.rs").write_text('#[path = "kzg/main.rs"]\nmod kzg;\n')
             def compile_revision(args, cwd, env, timeout, log):
-                calls.append(cwd.name)
+                calls.append((cwd.name, args[-2:]))
                 executable.write_text(cwd.name)
-                log.write_text(json.dumps({"reason": "compiler-artifact", "target": {"name": "pr-bench-ci"},
+                log.write_text(json.dumps({"reason": "compiler-artifact", "target": {"name": "ci"},
                                            "executable": str(executable)}))
             with patch("run.execute", side_effect=compile_revision):
                 base, _ = build(directory / "base", directory / "base-build", shared, 10)
                 head, _ = build(directory / "head", directory / "head-build", shared, 10)
+            # The shared target directory is rebuilt per side; each keeps its copy.
             self.assertEqual(Path(base).read_text(), "base")
             self.assertEqual(Path(head).read_text(), "head")
-            self.assertEqual(calls, ["base", "head"])
-            for side in ("base", "head"):
-                self.assertEqual((directory / side / "Cargo.toml").read_text(), "[package]\nname = 'fixture'\n")
-                self.assertEqual(list((directory / side / "benches").iterdir()), [])
+            self.assertEqual(calls, [("base", ["--bench", "ci"]), ("head", ["--bench", "ci"])])
 
-    def test_each_revision_builds_and_hashes_its_own_harness(self):
-        coordinator = (Path(__file__).resolve().parents[4] / "benches/ci/main.rs").read_text()
+    def test_workload_hashes_the_revisions_own_harness(self):
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root)
-            built = {}
-            for side, own in (("old", None), ("new", "// revision harness\n")):
+            for side, harness in (("base", "// one\n"), ("head", "// two\n")):
                 tree = directory / side
-                (tree / "benches").mkdir(parents=True)
-                (tree / "Cargo.toml").write_text("[package]\nname = 'fixture'\n")
                 (tree / "examples/common").mkdir(parents=True)
-                (tree / "examples/main.rs").write_text('#[path = "kzg/main.rs"]\nmod kzg;\n')
                 (tree / "examples/kzg").mkdir()
                 (tree / "examples/kzg/main.rs").write_text("")
                 (tree / "examples/kzg/kzg.zippel").write_text("")
-                if own:
-                    (tree / "benches/ci").mkdir()
-                    (tree / "benches/ci/main.rs").write_text(own)
-                    (tree / "benches/ci/profile.rs").write_text("")
-                def compile_revision(args, cwd, env, timeout, log):
-                    overlay = next(cwd.glob("benches/pr-bench-*"))
-                    built[cwd.name] = (overlay / "main.rs").read_text()
-                    executable = directory / f"{cwd.name}-ci"
-                    executable.write_text("")
-                    log.write_text(json.dumps({"reason": "compiler-artifact", "target": {"name": "pr-bench-ci"},
-                                               "executable": str(executable)}))
-                with patch("run.execute", side_effect=compile_revision):
-                    build(tree, directory / f"{side}-build", directory / "target", 10)
-            # A revision predating the harness gets the coordinator's; one with
-            # its own harness is built with it, since it matches its library.
-            self.assertEqual(built["old"], coordinator.replace('"../../examples/registry.rs"', '"registry.rs"'))
-            self.assertEqual(built["new"], "// revision harness\n")
-            hashes = {side: workload(directory / side, "kzg", "examples/kzg/kzg.zippel") for side in ("old", "new")}
-            self.assertNotEqual(hashes["old"], hashes["new"])
-
-    def test_failed_build_removes_harness_overlay_and_restores_manifest(self):
-        with tempfile.TemporaryDirectory() as root:
-            directory = Path(root)
-            tree = directory / "snapshot"
-            (tree / "benches").mkdir(parents=True)
-            manifest = tree / "Cargo.toml"
-            original = b"[package]\nname = 'fixture'\n"
-            manifest.write_bytes(original)
-            (tree / "examples").mkdir()
-            (tree / "examples/main.rs").write_text('#[path = "kzg/main.rs"]\nmod kzg;\n')
-            with patch("run.execute", side_effect=ValueError("failed build")), self.assertRaises(ValueError):
-                build(tree, directory / "build", directory / "target", 10)
-            self.assertEqual(manifest.read_bytes(), original)
-            self.assertEqual(list((tree / "benches").iterdir()), [])
+                (tree / "benches/ci").mkdir(parents=True)
+                (tree / "benches/ci/main.rs").write_text(harness)
+                (tree / "benches/ci/profile.rs").write_text("")
+            hashes = {side: workload(directory / side, "kzg", "examples/kzg/kzg.zippel") for side in ("base", "head")}
+            self.assertNotEqual(hashes["base"], hashes["head"])
 
     def test_native_batch_requires_three_samples_per_public_phase(self):
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root)
-            expected = {phase: [1.0, 2.0, 3.0] for phase in phases("run")}
+            expected = {phase: [1.0, 2.0, 3.0] for phase in phases("run", None)}
             def emit(args, cwd, env, timeout, log):
                 self.assertEqual(args[-2:], ["--samples", "3"])
                 log.write_text(json.dumps({"status": "ok", "ms": expected,

@@ -59,7 +59,8 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381
 pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
     common::ExampleSpec {
         source: "examples/membership/membership.zippel",
-        defaults: &[("N", 2), ("M", 2), ("S", 2)],
+        run_defaults: &[("N", 4096), ("M", 2), ("S", 8190)],
+        analysis_defaults: &[("N", 2), ("M", 2), ("S", 2)],
         validate: Some(|sizes, _analysis| {
             if size(sizes, "N") < 2
                 || size(sizes, "M") < 1
@@ -71,6 +72,6 @@ pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
             Ok(())
         }),
         make_inputs,
-        analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
+        analyses: &[common::Analysis::Completeness],
     }
 }
