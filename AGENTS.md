@@ -48,7 +48,7 @@ that examples and external users call into.
 | [`share/`](share) | Small utilities shared across the workspace: a generic `Ctx` map keyed by identifiers and `ScopedCtx`, a `Ctx` with an undo log for lexical environments (`context.rs`), stack growth for recursive passes (`stack.rs`), tree traversal helpers (`traversal.rs`), pretty-printing (`pretty.rs`), macros (`macros.rs`). |
 | [`fmt/`](fmt) | `zippel-fmt`, the source formatter for `.zippel` files (binary in `fmt/src/bin/zippel-fmt.rs`). |
 | [`check/`](check) | `zippel-check`: every compile-time check, no harness or inputs. A thin driver (`check/src/main.rs`) over the same stages and diagnostics as compilation plus explicit projection: `UModule::parse`, `UModule::concretize`, `CModule::typecheck`, and Graph IR construction/projection, with every error turned into a `Diagnostic` via `From` (`TypeError`, `ModuleError`, `GraphError`); it only adds default sizes (`lang::ast::minimal_sizes`). `check/tests/examples.rs` runs it over every example using automatic defaults. |
-| [`experiments/`](experiments) | The `experiments` crate: Zippel against existing (native/upstream) implementations of the same protocols. Vendored baselines (`*_upstream/` subdirs), Zippel harnesses, the `bench_all` time/memory driver behind the paper's Figure 7 (the artifact's Experiment 1), and cross-verification tests. Not a default workspace member (see below). Distinct from `benches/`, the Criterion benchmarks of Zippel alone. |
+| [`experiments/`](experiments) | The `experiments` crate: Zippel against existing (native/upstream) implementations of the same protocols. Vendored baselines (`*_upstream/` subdirs), Zippel harnesses, the `bench_all` time/memory driver behind the paper's Figure 7 (the artifact's Experiment 1), and cross-verification tests. Not a default workspace member (see below). Distinct from `benches/`, the benchmarks of Zippel alone. |
 | [`tools/`](tools) | Internal developer tools, not shipped. `stack-probe` measures the compile stages' stack use: `min-stack` binary-searches the smallest thread stack that compiles generated deep inputs (a child process per attempt, since an overflow aborts), and `frames` lists the largest prologue frames of a debug binary via objdump (x86-64). A minimum that grows with input size means some pass recurses per statement or nesting level. |
 | [`examples/`](examples) | 30+ protocol implementations. Each `examples/<name>/` has a `<name>.zippel` source file and a `main.rs` harness that compiles it against a concrete curve and runs prover/verifier/analyses. `examples/main.rs` is the single dispatch binary (`cargo zrun run <name> --size NAME=VALUE ...`; `cargo zrun analyze <name> [completeness|zk|soundness]`). Each module registers `spec()` with its source, curve, size defaults, input generator and analyses (soundness owns its round parameters). `examples/common/cli.rs` handles common size/backend arguments; `examples/common/mod.rs` owns size resolution, execution, analysis and uniform reporting. It prepares the analysis graph before timing passes. |
 | [`artifact/`](artifact) | Docker image and scripts (`artifact/scripts/`) to reproduce the paper's compilation/runtime benchmarks and completeness/soundness analysis results. |
@@ -97,7 +97,7 @@ automatically by `rustup`) — Zippel does not build on stable.
 cargo build                       # default members only
 cargo test                        # default members only
 cargo test --workspace            # everything, incl. benchmarks (needs gcc/m4/pkg-config)
-cargo zrun                        # list example protocols
+cargo zrun list                   # list example protocols
 cargo zrun run kzg --size N=2      # prove and verify
 cargo zrun analyze kzg --size N=2  # static analyses only
 cargo zrunr run hyperplonk_piop --size S=3 # release build
@@ -119,6 +119,10 @@ cargo zfmt --check examples/*/*.zippel  # .zippel formatting (--write to reforma
 tests built optimized, `--locked`); run them before committing. Some `analyses`
 tests use an optional Singular backend for Gröbner bases and are skipped with a
 warning if `singular` is not on `PATH`.
+
+Workflow scripts read `zippel list` and the JSON of the PR benchmark harness
+(`benches/ci`) directly, never help text or Rust source;
+`.github/scripts/bench/README.md` documents both.
 
 CI also rejects any path component that is a reserved Windows device
 name (`con`, `prn`, `aux`, `nul`, `com1`-`com9`, `lpt1`-`lpt9`,

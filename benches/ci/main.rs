@@ -1,10 +1,15 @@
 //! CI-only measurements using registered example inputs and public Zippel APIs.
+//!
+//! Stdout is exactly one JSON document: `list` prints the registered examples
+//! and their analyses; a measurement prints `{"status":"ok",...}` (with its
+//! phases in the order measured) or, exiting
+//! 1, `{"status":"failed","error":...}`. .github/scripts/bench/README.md documents both.
 
 use std::{collections::BTreeMap, time::Instant};
 
 use analyses::GbBackendKind;
 use backend::{ArkConfig, HasOpFactory};
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 use zippel::{Analysis, CompileOptions, ParsedModule};
 
 #[allow(dead_code)]
@@ -17,11 +22,16 @@ mod registry;
 
 macro_rules! examples {
     ($($name:ident),* $(,)?) => {
-        const NAMES: &[&str] = &[$(stringify!($name)),*];
-        fn dispatch(args: &Args) -> Result<(), String> {
-            match args.example.as_str() {
-                $(stringify!($name) => benchmark(&registry::$name::spec(), args),)*
-                _ => unreachable!("clap validates example names"),
+        fn list() -> serde_json::Value {
+            serde_json::json!([$({
+                "name": stringify!($name),
+                "analyses": registry::$name::spec().analyses.iter().map(|&pass| phase(pass)).collect::<Vec<_>>(),
+            }),*])
+        }
+        fn dispatch(mode: Mode, case: &Case) -> Result<serde_json::Value, String> {
+            match case.example.as_str() {
+                $(stringify!($name) => benchmark(&registry::$name::spec(), mode, case),)*
+                name => Err(format!("unknown example `{name}`")),
             }
         }
     };
@@ -29,19 +39,26 @@ macro_rules! examples {
 
 registry::with_examples!(examples);
 
-#[derive(Clone, Copy, ValueEnum)]
+#[derive(Clone, Copy)]
 enum Mode {
     Run,
     Analyze,
 }
 
 #[derive(Parser)]
-struct Args {
-    #[arg(value_enum)]
-    mode: Mode,
-    #[arg(value_parser = clap::builder::PossibleValuesParser::new(NAMES))]
+enum Command {
+    /// Print every registered example with the analyses it registers.
+    List,
+    /// Measure compile, prove and verify.
+    Run(Case),
+    /// Measure compile, analysis preparation and each registered analysis.
+    Analyze(Case),
+}
+
+#[derive(clap::Args)]
+struct Case {
     example: String,
-    #[arg(long = "size", value_parser = parse_size)]
+    #[arg(short = 's', long = "size", value_parser = parse_size)]
     sizes: Vec<(String, usize)>,
     #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..=3))]
     samples: u8,
@@ -61,28 +78,29 @@ const fn phase(pass: Analysis) -> &'static str {
     }
 }
 
-fn measure<T>(
-    times: &mut BTreeMap<&'static str, Vec<f64>>,
-    name: &'static str,
-    f: impl FnOnce() -> T,
-) -> T {
+/// Samples per phase, in the order phases were first measured.
+type Times = Vec<(&'static str, Vec<f64>)>;
+
+fn measure<T>(times: &mut Times, name: &'static str, f: impl FnOnce() -> T) -> T {
     let start = Instant::now();
     let result = profile::measure(name, f);
-    times
-        .entry(name)
-        .or_default()
-        .push(start.elapsed().as_secs_f64() * 1000.0);
+    let elapsed = start.elapsed().as_secs_f64() * 1000.0;
+    match times.iter_mut().find(|(phase, _)| *phase == name) {
+        Some((_, samples)) => samples.push(elapsed),
+        None => times.push((name, vec![elapsed])),
+    }
     result
 }
 
 fn benchmark<C: ArkConfig + HasOpFactory>(
     spec: &common::ExampleSpec<C>,
-    args: &Args,
-) -> Result<(), String> {
+    mode: Mode,
+    args: &Case,
+) -> Result<serde_json::Value, String> {
     let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(spec.source);
     let module = ParsedModule::load(source).map_err(|e| e.to_string())?;
     let given = if args.sizes.is_empty() {
-        spec.defaults(matches!(args.mode, Mode::Analyze))
+        spec.defaults(matches!(mode, Mode::Analyze))
             .iter()
             .map(|&(name, value)| (name.to_owned(), value))
             .collect()
@@ -91,14 +109,14 @@ fn benchmark<C: ArkConfig + HasOpFactory>(
     };
     let sizes = common::resolve(&module, &given)?;
     if let Some(validate) = spec.validate {
-        validate(&sizes, matches!(args.mode, Mode::Analyze))?;
+        validate(&sizes, matches!(mode, Mode::Analyze))?;
     }
     // An unmeasured first compile pays one-time process costs (lazy statics,
     // allocator growth), which would otherwise make sample 1 an outlier.
     module
         .compile::<C>(&sizes, CompileOptions::default())
         .map_err(|e| e.to_string())?;
-    let mut times = BTreeMap::new();
+    let mut times = Times::new();
     let mut compiled = None;
     for _ in 0..args.samples {
         compiled = Some(measure(&mut times, "compile", || {
@@ -115,7 +133,7 @@ fn benchmark<C: ArkConfig + HasOpFactory>(
         "analysis": null,
         "rounds": [],
     });
-    match args.mode {
+    match mode {
         Mode::Run => {
             let prover = protocol.project_prover();
             let verifier = protocol.project_verifier().map_err(|e| e.to_string())?;
@@ -173,20 +191,30 @@ fn benchmark<C: ArkConfig + HasOpFactory>(
             }
         }
     }
-    println!(
-        "{}",
-        serde_json::json!({"status": "ok", "config": config, "ms": times})
-    );
-    Ok(())
+    Ok(serde_json::json!({
+        "status": "ok",
+        "config": config,
+        "phases": times.iter().map(|(phase, _)| phase).collect::<Vec<_>>(),
+        "ms": times.into_iter().collect::<BTreeMap<_, _>>(),
+    }))
 }
 
 fn main() -> std::process::ExitCode {
-    let args = Args::parse();
-    let result = dispatch(&args);
+    let result = match Command::parse() {
+        Command::List => Ok(list()),
+        Command::Run(case) => dispatch(Mode::Run, &case),
+        Command::Analyze(case) => dispatch(Mode::Analyze, &case),
+    };
     match result {
-        Ok(()) => std::process::ExitCode::SUCCESS,
+        Ok(document) => {
+            println!("{document}");
+            std::process::ExitCode::SUCCESS
+        }
         Err(error) => {
-            eprintln!("{error}");
+            println!(
+                "{}",
+                serde_json::json!({"status": "failed", "error": error})
+            );
             std::process::ExitCode::FAILURE
         }
     }

@@ -1,4 +1,5 @@
-//! Registered protocol examples: `zippel run <example>` or `zippel analyze <example>`.
+//! Registered protocol examples: `zippel run <example>`, `zippel analyze <example>`
+//! or `zippel list`.
 
 #[path = "common/cli.rs"]
 mod cli;
@@ -9,12 +10,13 @@ mod registry;
 /// Register typed example descriptors and positional CLI choices.
 macro_rules! examples {
     ($($name:ident),* $(,)?) => {
+        const NAMES: &[&str] = &[$(stringify!($name)),*];
         fn command() -> clap::Command {
-            const NAMES: &[&str] = &[$(stringify!($name)),*];
             clap::Command::new("zippel").about("Run and analyze Zippel protocol examples")
                 .arg_required_else_help(true)
                 .subcommand(cli::operation("run", "Prove and verify an example", NAMES, false))
                 .subcommand(cli::operation("analyze", "Run static analyses", NAMES, true))
+                .subcommand(clap::Command::new("list").about("Print example names, one per line"))
         }
         fn example_help(name: &str) -> String {
             match name {
@@ -37,6 +39,12 @@ fn main() -> std::process::ExitCode {
     let mut command = command();
     let matches = command.clone().get_matches();
     let (operation, matches) = matches.subcommand().unwrap();
+    if operation == "list" {
+        for name in NAMES {
+            println!("{name}");
+        }
+        return std::process::ExitCode::SUCCESS;
+    }
     let name = matches.get_one::<String>("example");
     if matches.get_flag("help") {
         let mut help = command

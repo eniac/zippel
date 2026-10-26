@@ -83,6 +83,11 @@ both use PST13, KZG and IPA. To benchmark other examples, list any registered in
 /bench analyze schnorr hyperplonk_zerocheck
 ```
 
+Each revision decides which names it supports. A name that the base or head
+does not register, or `analyze` on an example without analyses, shows as
+`unsupported` for that side in the report. So a PR can benchmark an example it
+adds, and a misspelled name shows up in the report rather than in a reply.
+
 Two options change what is compared:
 
 - `--size NAME=VALUE` (or `-s`) sets a size, as with `cargo zrun`. Repeat it for
@@ -122,14 +127,6 @@ tests:
 
 ```sh
 python3 -m unittest discover -s .github/scripts/bench/tests
-```
-
-To run the whole comparison locally on real examples, with Valgrind and Singular
-on `PATH`, pass `verify.py` a new output directory:
-
-```sh
-python3 .github/scripts/bench/verification/verify.py \
-  --directory /tmp/zippel-bench
 ```
 
 ## Creating a new protocol with Zippel

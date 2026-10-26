@@ -69,16 +69,13 @@ runtime = { path = "./runtime" }
 
 [dev-dependencies]
 analyses = { path = "./analyses" }
-env_logger = "0.11.8"
 libc = "0.2"
 tempfile = "3.10"
-criterion = "0.5"
 ark-std = { version = "0.6", features = ["parallel"] }
 ark-ff = { version = "0.6", features = ["parallel"] }
 ark-poly = { version = "0.6", features = ["parallel"] }
 rand = { version = "0.8", features = ["std"] }
 ark-ec = { version = "0.6" }
-petgraph = "0.7.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 clap = { version = "4", features = ["derive"] }
@@ -98,11 +95,6 @@ ark-ec = { git = "https://github.com/arkworks-rs/algebra.git", rev = "d1789c3015
 ark-poly = { git = "https://github.com/arkworks-rs/algebra.git", rev = "d1789c3015125a65a1b40a447ef122725330b7f8" }
 ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git", rev = "d1789c3015125a65a1b40a447ef122725330b7f8" }
 ark-serialize-derive = { git = "https://github.com/arkworks-rs/algebra.git", rev = "d1789c3015125a65a1b40a447ef122725330b7f8" }
-
-[[bench]]
-name = "execution"
-test = false
-harness = false
 
 [[example]]
 name = "zippel"

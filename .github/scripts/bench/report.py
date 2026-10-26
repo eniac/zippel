@@ -1,84 +1,39 @@
-"""Validate untrusted measurements and update only their authorized PR report."""
+"""Report job: validate results.json against the trusted request and update the
+PR's report comment for the mode."""
 
 import argparse
 from datetime import datetime, timezone
-import math
 import os
 from pathlib import Path
 import re
 import statistics
 
-from common import GitHub, read_json, validate_config
-from run import SAMPLES, phases
+from github import GitHub
+from model import SAMPLES, Results
+from untrusted import load
+
+HEADER = ["| Example / phase | Base Ir | Head Ir | Δ Ir | Base ms | Head ms | Δ time |",
+          "|---|---:|---:|---:|---:|---:|---:|"]
 
 
-def number(value):
-    return type(value) in (int, float) and math.isfinite(value) and 0 <= value < 1e15
+def marker(mode):
+    """The first line of the bot's report comment for a mode."""
+    return f"<!-- zippel-benchmark-report:{mode} -->"
 
 
-def validate_results(data, request):
-    result = read_json(data)
-    identity = {"mode": request["mode"], "examples": request["examples"],
-                "base_sha": request["base_sha"], "head_sha": request["head_sha"]}
-    if type(result) is not dict or any(result.get(key) != value for key, value in identity.items()):
-        raise ValueError("result identity differs from the trusted request")
-    if "measurement_seconds" in result and not number(result["measurement_seconds"]):
-        raise ValueError("invalid measurement duration")
-    if "build_seconds" in result:
-        builds = result["build_seconds"]
-        if type(builds) is not dict or set(builds) != {"base", "head"} or not all(number(v) for v in builds.values()):
-            raise ValueError("invalid build durations")
-    rows = result.get("rows")
-    if not isinstance(rows, list) or [r.get("example") for r in rows if type(r) is dict] != request["examples"]:
-        raise ValueError("result does not contain the exact requested example list")
-    for row in rows:
-        if set(row) != {"example", "base", "head"}:
-            raise ValueError("unexpected result row fields")
-        for side in ("base", "head"):
-            measured = row[side]
-            if type(measured) is not dict or set(measured) - {"status", "ms", "instructions", "instruction_status", "workload", "config"}:
-                raise ValueError("unexpected measurement fields")
-            if measured.get("status") not in ("ok", "failed", "timeout", "budget", "incompatible"):
-                raise ValueError("unknown case status")
-            if "workload" in measured and not re.fullmatch(r"[a-f0-9]{64}", str(measured["workload"])):
-                raise ValueError("invalid workload identity")
-            times = measured.get("ms")
-            expected = None
-            if measured["status"] == "ok":
-                config = validate_config(measured.get("config"), request["mode"])
-                expected = set(phases(request["mode"], config))
-                if type(times) is not dict or set(times) != expected:
-                    raise ValueError("incomplete native timing phases")
-                for samples in times.values():
-                    if not isinstance(samples, list) or len(samples) != SAMPLES or not all(number(v) for v in samples):
-                        raise ValueError("invalid native timing samples")
-                if "workload" not in measured:
-                    raise ValueError("missing workload identity")
-                sizes = request.get("sizes")
-                if sizes is not None and config["sizes"] != sizes:
-                    raise ValueError("resolved sizes differ from the requested sizes")
-            elif times != {}:
-                raise ValueError("failed cases cannot provide successful samples")
-            if measured.get("instruction_status") not in ("ok", "timeout", "unavailable"):
-                raise ValueError("unknown instruction status")
-            counters = measured.get("instructions")
-            if measured["instruction_status"] == "ok":
-                if measured["status"] != "ok" or type(counters) is not dict or set(counters) != expected:
-                    raise ValueError("incomplete instruction phases")
-                for count in counters.values():
-                    if type(count) is not dict or set(count) != {"parent", "children"}:
-                        raise ValueError("incomplete parent/child counts")
-                    if not all(isinstance(v, list) and len(v) == SAMPLES
-                               and all(type(n) is int and 0 <= n < 2**64 for n in v) for v in count.values()):
-                        raise ValueError("invalid instruction units/counts")
-            elif counters is not None:
-                raise ValueError("incomplete profiles cannot provide counts")
-    return result
+def code(value):
+    """Untrusted text as inline code: no mentions, links or HTML, and no way out
+    of the code span or the table cell."""
+    value = " ".join(str(value).split()).replace("|", "\\|")
+    fence = "`" * (max(map(len, re.findall("`+", value)), default=0) + 1)
+    return f"{fence} {value} {fence}"
 
 
 def change(base, head):
-    """Median change: bold when the two sides' samples do not overlap,
-    "(noise)" when they do."""
+    """Median change: bold when the two sides' samples do not overlap, "(noise)"
+    when they do."""
+    if base is None or head is None:
+        return "—"
     low, high = statistics.median(base), statistics.median(head)
     if low <= 0:
         return "—"
@@ -89,102 +44,103 @@ def change(base, head):
 
 
 def ms_cell(samples):
+    if samples is None:
+        return "—"
     median = statistics.median(samples)
     digits = 0 if median >= 100 else 1 if median >= 10 else 2 if median >= 1 else 3
     return f"{median:.{digits}f}"
 
 
+def ir_cell(case, phase):
+    if case.instructions is not None and phase in case.instructions:
+        return f"{round(statistics.median(case.instructions[phase].totals())):,}"
+    # A phase this side measured but did not profile says why.
+    return case.instruction_status if phase in case.measurement.ms else "—"
+
+
+def table_rows(row):
+    """One line per phase, or one line saying why the example was not compared."""
+    base, head = row.base, row.head
+    name = code(row.example)
+    if base.status != "ok" or head.status != "ok":
+        return [f"| {name} | {base.status} | {head.status} | — | — | — | — |"]
+    changed = base.workload != head.workload or base.measurement.config != head.measurement.config
+    lines = []
+    # A revision can register different analyses; show the union.
+    for phase in dict.fromkeys(head.measurement.phases + base.measurement.phases):
+        times = [case.measurement.ms.get(phase) for case in (base, head)]
+        counts = [case.instructions[phase].totals() if case.instructions and phase in case.instructions else None
+                  for case in (base, head)]
+        label = f"{name} / {code(phase)}" + (" (workload changed)" if changed else "")
+        cells = [label, ir_cell(base, phase), ir_cell(head, phase), change(*counts),
+                 ms_cell(times[0]), ms_cell(times[1]), change(*times)]
+        lines.append(f"| {' | '.join(cells)} |")
+    return lines
+
+
 def describe_config(config):
-    parts = [config["curve"], *(f"{name}={value}" for name, value in config["sizes"].items())]
-    if config["analysis"]:
-        parts += config["analysis"]
-    if config["rounds"]:
-        parts.append("rounds " + ",".join(map(str, config["rounds"])))
-    return ", ".join(parts)
+    parts = [config.curve, *(f"{name}={value}" for name, value in config.sizes.items())]
+    parts += config.analysis or []
+    if config.rounds:
+        parts.append("rounds " + ",".join(map(str, config.rounds)))
+    return ", ".join(map(code, parts))
 
 
 def describe_example(request, name, row):
-    if row and row["base"]["status"] == "ok" and row["head"]["status"] == "ok":
-        base, head = describe_config(row["base"]["config"]), describe_config(row["head"]["config"])
+    if row is not None and row.base.status == "ok" and row.head.status == "ok":
+        base, head = (describe_config(case.measurement.config) for case in (row.base, row.head))
         label = base if base == head else f"base {base}; head {head}"
     else:
-        label = ", ".join(f"{k}={v}" for k, v in (request.get("sizes") or {}).items())
-    return f"`{name}` ({label})" if label else f"`{name}`"
+        label = ", ".join(code(f"{size}={value}") for size, value in (request.get("sizes") or {}).items())
+    return f"{code(name)} ({label})" if label else code(name)
 
 
-def render(request, run_url, result=None, failure=None):
-    rows = {row["example"]: row for row in result["rows"]} if result else {}
-    lines = [f"<!-- zippel-benchmark-report:{request['mode']} -->",
-             f"### Zippel benchmarks: {request['mode']}", "",
+def render(request, run_url, results=None, failure=None):
+    mode = request["mode"]
+    lines = [marker(mode), f"### Zippel benchmarks: {mode}", "",
              f"Base `{request['base_sha'][:12]}` → head `{request['head_sha'][:12]}`", ""]
-    if result is None:
+    if results is None:
         lines.append(f"No comparison: {failure}.")
     else:
-        lines += ["| Example / phase | Base Ir | Head Ir | Δ Ir | Base ms | Head ms | Δ time |",
-                  "|---|---:|---:|---:|---:|---:|---:|"]
-        for row in result["rows"]:
-            base, head = row["base"], row["head"]
-            name = row["example"]
-            if base["status"] != "ok" or head["status"] != "ok":
-                lines.append(f"| {name} | {base['status']} | {head['status']} | — | — | — | — |")
-                continue
-            changed = base["workload"] != head["workload"] or base["config"] != head["config"]
-            # A revision can register different analyses; show the union.
-            names = dict.fromkeys(phases(request["mode"], head["config"]) + phases(request["mode"], base["config"]))
-            for phase in names:
-                counts, times = [], []
-                for side in (base, head):
-                    value = side["instructions"]
-                    present = phase in side["ms"]
-                    counts.append([p + c for p, c in zip(value[phase]["parent"], value[phase]["children"])]
-                                  if value is not None and present else None)
-                    times.append(side["ms"].get(phase))
-                count_cells = [f"{round(statistics.median(count)):,}" if count is not None
-                               else side["instruction_status"] if phase in side["ms"] else "—"
-                               for count, side in zip(counts, (base, head))]
-                di = change(*counts) if all(v is not None for v in counts) else "—"
-                time_cells = [ms_cell(t) if t is not None else "—" for t in times]
-                dt = change(*times) if all(t is not None for t in times) else "—"
-                label = f"{name} / {phase}" + (" (workload changed)" if changed else "")
-                lines.append(f"| {label} | {count_cells[0]} | {count_cells[1]} | {di} | {time_cells[0]} | {time_cells[1]} | {dt} |")
+        lines += HEADER
+        for row in results.rows:
+            lines += table_rows(row)
+    rows = {row.example: row for row in results.rows} if results else {}
     examples = ", ".join(describe_example(request, name, rows.get(name)) for name in request["examples"])
-    samples = f"median of {SAMPLES} per side on one runner with one Rayon worker"
-    if request["mode"] == "run":
-        samples += "; fresh example inputs per sample, generated outside the measured phases"
-    else:
-        samples += "; analysis Ir includes Singular"
     lines += ["", f"- **Examples:** {examples}"]
-    if result is not None:
+    if results is not None:
+        samples = f"median of {SAMPLES} per side on one runner with one Rayon worker"
+        samples += ("; fresh example inputs per sample, generated outside the measured phases" if mode == "run"
+                    else "; analysis Ir includes Singular")
         lines.append(f"- **Samples:** {samples}")
-    if result is not None and "build_seconds" in result:
-        builds = result["build_seconds"]
-        duration = f"builds {builds['base']:.0f} s (base) and {builds['head']:.0f} s (head)"
-        if "measurement_seconds" in result:
-            duration += f"; measurement {result['measurement_seconds']:.0f} s"
-        lines.append(f"- **Duration:** {duration}")
-    run = [datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")]
-    if run_url is not None:
-        run += [f"[workflow]({run_url})", f"[raw results and profiles]({run_url}#artifacts)"]
-    if request.get("local_working_trees"):
-        run.append("local working trees, so uncommitted changes are not in the commit labels")
+        if results.build_seconds is not None:
+            builds = results.build_seconds
+            duration = f"builds {builds['base']:.0f} s (base) and {builds['head']:.0f} s (head)"
+            if results.measurement_seconds is not None:
+                duration += f"; measurement {results.measurement_seconds:.0f} s"
+            lines.append(f"- **Duration:** {duration}")
+    run = [datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+           f"[workflow]({run_url})", f"[raw results and profiles]({run_url}#artifacts)"]
     lines.append(f"- **Run:** {' · '.join(run)}")
     return "\n".join(lines)
 
 
-def publish(api, request, run_url, result=None, failure=None):
+def publish(api, request, run_url, results=None, failure=None):
+    """Create or update the mode's report on an open PR; False if it is closed."""
     pr = api.api(api.repo_path(f"pulls/{request['pr']}"))
     if pr["state"] != "open":
         return False
     if ((request["selectors"]["head"] is None and pr["head"]["sha"] != request["observed_head_sha"])
             or (request["selectors"]["base"] is None and pr["base"]["sha"] != request["observed_base_sha"])):
         # Numbers for a superseded tip would mislead; say why there are none.
-        result, failure = None, "the PR's base or head moved after the request; comment the command again to measure the new tip"
-    body = render(request, run_url, result, failure)
-    marker = f"<!-- zippel-benchmark-report:{request['mode']} -->"
-    matches = [c for c in api.pages(api.repo_path(f"issues/{request['pr']}/comments"))
-               if c["user"]["login"] == "github-actions[bot]" and c["body"].startswith(marker + "\n")]
-    if matches:
-        api.api(api.repo_path(f"issues/comments/{matches[-1]['id']}"), "PATCH", {"body": body})
+        results, failure = None, ("the PR's base or head moved after the request; "
+                                  "comment the command again to measure the new tip")
+    body = render(request, run_url, results, failure)
+    first_line = marker(request["mode"]) + "\n"
+    reports = [comment for comment in api.pages(api.repo_path(f"issues/{request['pr']}/comments"))
+               if comment["user"]["login"] == "github-actions[bot]" and comment["body"].startswith(first_line)]
+    if reports:
+        api.api(api.repo_path(f"issues/comments/{reports[-1]['id']}"), "PATCH", {"body": body})
     else:
         api.comment(request["pr"], body)
     return True
@@ -192,28 +148,19 @@ def publish(api, request, run_url, result=None, failure=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("publish", "local"))
     parser.add_argument("--results", type=Path, required=True)
-    parser.add_argument("--request", type=Path, help="local only: request.json written by run.py local")
-    parser.add_argument("--output", type=Path, help="local only: Markdown destination")
     args = parser.parse_args()
-    if args.action == "local":
-        request = read_json(args.request.read_bytes())
-        result = validate_results(args.results.read_bytes(), request)
-        local = {**request, "pr": 0, "repository": "eniac/zippel"}
-        args.output.write_text(render(local, None, result))
-        return
     # The request comes from the trusted request job; only the results
     # artifact was produced next to PR code, so only it is validated.
-    request = read_json(os.environ["REQUEST"].encode())
+    request = load(os.environ["REQUEST"].encode())
     run_url = f"https://github.com/{request['repository']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
     try:
         if args.results.is_symlink():
             raise ValueError("results must be a regular file")
-        result, failure = validate_results(args.results.read_bytes(), request), None
-    except (OSError, ValueError, KeyError, TypeError):
-        result, failure = None, "build/run failed or results were missing/invalid; see the workflow logs"
-    publish(GitHub(), request, run_url, result, failure)
+        results, failure = Results.from_json(args.results.read_bytes(), request), None
+    except (OSError, ValueError):
+        results, failure = None, "build/run failed or results were missing/invalid; see the workflow logs"
+    publish(GitHub(), request, run_url, results, failure)
 
 
 if __name__ == "__main__":

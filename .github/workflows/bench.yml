@@ -81,7 +81,7 @@ jobs:
       - name: Build and compare
         env:
           REQUEST: ${{ needs.request.outputs.request }}
-        run: python3 control/.github/scripts/bench/run.py compare --base-dir base --head-dir head --output control/results
+        run: python3 control/.github/scripts/bench/run.py --base-dir base --head-dir head --output control/results
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -122,4 +122,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REQUEST: ${{ needs.request.outputs.request }}
-        run: python3 .github/scripts/bench/report.py publish --results "$RUNNER_TEMP/results/results.json"
+        run: python3 .github/scripts/bench/report.py --results "$RUNNER_TEMP/results/results.json"

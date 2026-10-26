@@ -125,8 +125,7 @@ jobs:
       - name: Run every example (prover and verifier, no analyses)
         run: |
           bin=target/release/examples/zippel
-          mapfile -t names < <("$bin" run --help | sed -n '/^Examples:/,/^$/p' \
-            | grep -oE '^  [a-z0-9_]+' | tr -d ' ' | grep -vx help)
+          mapfile -t names < <("$bin" list)
           if [ "${#names[@]}" -eq 0 ]; then echo "no examples found"; exit 1; fi
           failed=()
           for name in "${names[@]}"; do

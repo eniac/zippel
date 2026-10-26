@@ -1,11 +1,82 @@
-"""Authorize a PR comment and freeze it into the benchmark request the later jobs run."""
+"""Request job: authorize a `/bench` comment and freeze it into the request the
+later jobs run."""
 
+import argparse
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 
-from common import SHA, GitHub, is_command, output, parse_command, read_json
+from github import GitHub, output
+from untrusted import load
+
+SUITE = json.loads(Path(__file__).with_name("suite.json").read_bytes())
+SHA = re.compile(r"[0-9a-f]{40}\Z")
+# Names, sizes and analyses are each revision's to define (`ci list`); a request
+# only bounds how many examples one PR comment reports.
+MAX_EXAMPLES = 64
+
+
+@dataclass(frozen=True)
+class Command:
+    mode: str
+    examples: list[str]
+    base: str | None = None
+    head: str | None = None
+    sizes: dict[str, int] | None = None
+
+
+class _Parser(argparse.ArgumentParser):
+    """Raises instead of exiting, so the bot can reply with the message."""
+
+    def error(self, message):
+        raise ValueError(f"{message}\n{self.format_usage()}")
+
+
+def _commit(value):
+    if value in ("main", "pr") or re.fullmatch(r"[0-9a-fA-F]{7,40}", value):
+        return value.lower()
+    raise argparse.ArgumentTypeError("expected main, pr, or a 7–40 character commit SHA")
+
+
+def _size(value):
+    name, separator, number = value.partition("=")
+    if not separator or not name or not re.fullmatch(r"[0-9]+", number) or int(number) >= 2**64:
+        raise argparse.ArgumentTypeError("expected NAME=VALUE with a nonnegative machine integer")
+    return name, int(number)
+
+
+PARSER = _Parser(prog="/bench", add_help=False, allow_abbrev=False)
+PARSER.add_argument("mode", choices=("run", "analyze"))
+PARSER.add_argument("examples", nargs="*", metavar="example")
+PARSER.add_argument("--base", type=_commit, metavar="COMMIT")
+PARSER.add_argument("--head", type=_commit, metavar="COMMIT")
+PARSER.add_argument("-s", "--size", type=_size, action="append", dest="sizes", metavar="NAME=VALUE")
+
+
+def is_command(body):
+    words = body.split(maxsplit=1)
+    return bool(words) and words[0] == "/bench"
+
+
+def parse_command(body):
+    """The command in a comment, or None for other comments."""
+    if not is_command(body):
+        return None
+    line = body.strip()
+    if len(line) > 4096 or "\n" in line or "\r" in line:
+        raise ValueError("use one command line")
+    # Intermixed, so names may come before and after options.
+    args = PARSER.parse_intermixed_args(line.split()[1:])
+    names = list(dict.fromkeys(args.examples or SUITE["defaults"]))
+    if len(names) > MAX_EXAMPLES:
+        raise ValueError(f"at most {MAX_EXAMPLES} examples per request")
+    sizes = None if args.sizes is None else dict(args.sizes)
+    if sizes is not None and len(sizes) != len(args.sizes):
+        raise ValueError("a size is given twice")
+    return Command(args.mode, names, args.base, args.head, sizes)
 
 
 class Unauthorized(ValueError):
@@ -84,7 +155,7 @@ def reply(api, pr, message):
 
 def main():
     api = GitHub()
-    event = read_json(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes())
+    event = load(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes())
     try:
         request = prepare(api, event)
     except Unauthorized:
