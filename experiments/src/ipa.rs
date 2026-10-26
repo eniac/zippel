@@ -218,7 +218,7 @@ pub mod zippel_side {
 pub mod native_side {
     use super::*;
     use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
-    use ark_ff::{Field, PrimeField};
+    use ark_ff::Field;
     use ark_secp256k1::{Affine as SecpAffine, Fr, Projective};
     use ark_serialize::CanonicalSerialize;
     use ark_std::UniformRand;
@@ -285,108 +285,18 @@ pub mod native_side {
 
             let g_proj_init: Vec<Projective> = self.g_vec.iter().map(|p| p.into_group()).collect();
             let h_proj_init: Vec<Projective> = self.h_vec.iter().map(|p| p.into_group()).collect();
+            let statement = Statement {
+                g: &g_proj_init,
+                h: &h_proj_init,
+                q: self.q,
+                p: p_initial,
+                c: ip_val_claimed,
+            };
 
-            // ---- Prover ----
-            let (prove, prove_peak, (final_a, final_b, proofs)) = crate::sample(|| {
-                let mut prover_transcript = Transcript::new(b"ipa-bench");
-                absorb_point(&mut prover_transcript, b"p_initial", &p_initial);
-                absorb_scalar(&mut prover_transcript, b"c", &ip_val_claimed);
-                let x_chal = challenge_scalar(&mut prover_transcript, b"x_chal");
-                let q_raised = self.q * x_chal;
-                let p_prime = p_initial + q_raised * ip_val_claimed;
-
-                // The first round folds straight from the inputs; each later
-                // round owns the halves the previous one built.
-                let mut a: Cow<[Fr]> = Cow::Borrowed(&a_vec);
-                let mut b: Cow<[Fr]> = Cow::Borrowed(&b_vec);
-                let mut g: Cow<[Projective]> = Cow::Borrowed(&g_proj_init);
-                let mut h: Cow<[Projective]> = Cow::Borrowed(&h_proj_init);
-                let mut p_cur = p_prime;
-                let mut proofs: Vec<(Projective, Projective)> = Vec::new();
-                while a.len() > 1 {
-                    let n = a.len() / 2;
-                    let l = msm_proj(&g[n..], &a[..n])
-                        + msm_proj(&h[..n], &b[n..])
-                        + q_raised * ip_fr(&a[..n], &b[n..]);
-                    let r = msm_proj(&g[..n], &a[n..])
-                        + msm_proj(&h[n..], &b[..n])
-                        + q_raised * ip_fr(&a[n..], &b[..n]);
-                    absorb_point(&mut prover_transcript, b"L", &l);
-                    absorb_point(&mut prover_transcript, b"R", &r);
-                    let x = challenge_scalar(&mut prover_transcript, b"x");
-                    let x_inv = x.inverse().expect("nonzero challenge");
-                    p_cur = l * x.square() + r * x_inv.square() + p_cur;
-                    let a_next: Vec<Fr> = a[..n]
-                        .par_iter()
-                        .zip(&a[n..])
-                        .map(|(lo, hi)| x * lo + x_inv * hi)
-                        .collect();
-                    let b_next: Vec<Fr> = b[..n]
-                        .par_iter()
-                        .zip(&b[n..])
-                        .map(|(lo, hi)| x_inv * lo + x * hi)
-                        .collect();
-                    let g_next: Vec<Projective> = g[..n]
-                        .par_iter()
-                        .zip(&g[n..])
-                        .map(|(lo, hi)| *lo * x_inv + *hi * x)
-                        .collect();
-                    let h_next: Vec<Projective> = h[..n]
-                        .par_iter()
-                        .zip(&h[n..])
-                        .map(|(lo, hi)| *lo * x + *hi * x_inv)
-                        .collect();
-                    proofs.push((l, r));
-                    a = Cow::Owned(a_next);
-                    b = Cow::Owned(b_next);
-                    g = Cow::Owned(g_next);
-                    h = Cow::Owned(h_next);
-                }
-                let final_a = a[0];
-                let final_b = b[0];
-                let _ = std::hint::black_box(p_cur);
-                (final_a, final_b, proofs)
-            });
-
-            // ---- Verifier (naive: fold bases each round, matching upstream) ----
-            // The first round folds straight from the bases the verifier
-            // keeps; each later round owns the halves the previous one built.
-            let (verify, verify_peak, passed) = crate::sample(|| {
-                let mut verifier_transcript = Transcript::new(b"ipa-bench");
-                let mut g: Cow<[Projective]> = Cow::Borrowed(&g_proj_init);
-                let mut h: Cow<[Projective]> = Cow::Borrowed(&h_proj_init);
-                absorb_point(&mut verifier_transcript, b"p_initial", &p_initial);
-                absorb_scalar(&mut verifier_transcript, b"c", &ip_val_claimed);
-                let x_chal = challenge_scalar(&mut verifier_transcript, b"x_chal");
-                let q_raised = self.q * x_chal;
-                let p_prime = p_initial + q_raised * ip_val_claimed;
-
-                let mut p_cur = p_prime;
-                for (l, r) in &proofs {
-                    absorb_point(&mut verifier_transcript, b"L", l);
-                    absorb_point(&mut verifier_transcript, b"R", r);
-                    let x = challenge_scalar(&mut verifier_transcript, b"x");
-                    let x_inv = x.inverse().expect("nonzero challenge");
-                    p_cur = *l * x.square() + *r * x_inv.square() + p_cur;
-                    let n = g.len() / 2;
-                    g = Cow::Owned(
-                        g[..n]
-                            .par_iter()
-                            .zip(&g[n..])
-                            .map(|(lo, hi)| *lo * x_inv + *hi * x)
-                            .collect(),
-                    );
-                    h = Cow::Owned(
-                        h[..n]
-                            .par_iter()
-                            .zip(&h[n..])
-                            .map(|(lo, hi)| *lo * x + *hi * x_inv)
-                            .collect(),
-                    );
-                }
-                let expected = g[0] * final_a + h[0] * final_b + q_raised * (final_a * final_b);
-                p_cur == expected
-            });
+            let (prove, prove_peak, proof) =
+                crate::sample(|| prove(&statement, &a_vec, &b_vec, &mut IpaTranscript::new()));
+            let (verify, verify_peak, passed) =
+                crate::sample(|| verify(&statement, &proof, &mut IpaTranscript::new()));
 
             assert!(passed, "vendored Bp2aryStep IPA verification FAILED");
             Timing {
@@ -398,6 +308,176 @@ pub mod native_side {
         }
     }
 
+    /// The IPA statement: `p = <g, a> + <h, b>` and `c = <a, b>`, with binding
+    /// point `q`.
+    pub(crate) struct Statement<'a> {
+        pub g: &'a [Projective],
+        pub h: &'a [Projective],
+        pub q: Projective,
+        pub p: Projective,
+        pub c: Fr,
+    }
+
+    /// Each round's `(L, R)`, and the folded `a` and `b`.
+    pub(crate) struct Proof {
+        pub rounds: Vec<(Projective, Projective)>,
+        pub a: Fr,
+        pub b: Fr,
+    }
+
+    /// The merlin transcript; in test builds its challenges come from
+    /// `Challenges::default()`, for cross-verification against Zippel.
+    pub(crate) struct IpaTranscript {
+        transcript: Transcript,
+        #[cfg(test)]
+        challenges: crate::cross::Challenges,
+    }
+
+    impl IpaTranscript {
+        pub(crate) fn new() -> Self {
+            Self {
+                transcript: Transcript::new(b"ipa-bench"),
+                #[cfg(test)]
+                challenges: crate::cross::Challenges::default(),
+            }
+        }
+
+        fn point(&mut self, label: &'static [u8], p: &Projective) {
+            let mut buf = Vec::new();
+            p.into_affine()
+                .serialize_compressed(&mut buf)
+                .expect("serialize");
+            self.transcript.append_message(label, &buf);
+        }
+
+        fn scalar(&mut self, label: &'static [u8], s: &Fr) {
+            let mut buf = Vec::new();
+            s.serialize_compressed(&mut buf).expect("serialize");
+            self.transcript.append_message(label, &buf);
+        }
+
+        #[cfg_attr(test, allow(unused_variables))]
+        fn challenge(&mut self, label: &'static [u8]) -> Fr {
+            #[cfg(test)]
+            return self.challenges.next_scalar();
+            #[cfg(not(test))]
+            {
+                use ark_ff::PrimeField;
+                let mut buf = [0u8; 64];
+                self.transcript.challenge_bytes(label, &mut buf);
+                Fr::from_le_bytes_mod_order(&buf)
+            }
+        }
+    }
+
+    /// Protocol 1 (binding `q` to `p` with a challenge), then the recursive folding
+    /// of Protocol 2.
+    pub(crate) fn prove(
+        st: &Statement<'_>,
+        a_vec: &[Fr],
+        b_vec: &[Fr],
+        t: &mut IpaTranscript,
+    ) -> Proof {
+        t.point(b"p_initial", &st.p);
+        t.scalar(b"c", &st.c);
+        let x_chal = t.challenge(b"x_chal");
+        let q_raised = st.q * x_chal;
+        let p_prime = st.p + q_raised * st.c;
+
+        // The first round folds straight from the inputs; each later
+        // round owns the halves the previous one built.
+        let mut a: Cow<[Fr]> = Cow::Borrowed(a_vec);
+        let mut b: Cow<[Fr]> = Cow::Borrowed(b_vec);
+        let mut g: Cow<[Projective]> = Cow::Borrowed(st.g);
+        let mut h: Cow<[Projective]> = Cow::Borrowed(st.h);
+        let mut p_cur = p_prime;
+        let mut rounds: Vec<(Projective, Projective)> = Vec::new();
+        while a.len() > 1 {
+            let n = a.len() / 2;
+            let l = msm_proj(&g[n..], &a[..n])
+                + msm_proj(&h[..n], &b[n..])
+                + q_raised * ip_fr(&a[..n], &b[n..]);
+            let r = msm_proj(&g[..n], &a[n..])
+                + msm_proj(&h[n..], &b[..n])
+                + q_raised * ip_fr(&a[n..], &b[..n]);
+            t.point(b"L", &l);
+            t.point(b"R", &r);
+            let x = t.challenge(b"x");
+            let x_inv = x.inverse().expect("nonzero challenge");
+            p_cur = l * x.square() + r * x_inv.square() + p_cur;
+            let a_next: Vec<Fr> = a[..n]
+                .par_iter()
+                .zip(&a[n..])
+                .map(|(lo, hi)| x * lo + x_inv * hi)
+                .collect();
+            let b_next: Vec<Fr> = b[..n]
+                .par_iter()
+                .zip(&b[n..])
+                .map(|(lo, hi)| x_inv * lo + x * hi)
+                .collect();
+            let g_next: Vec<Projective> = g[..n]
+                .par_iter()
+                .zip(&g[n..])
+                .map(|(lo, hi)| *lo * x_inv + *hi * x)
+                .collect();
+            let h_next: Vec<Projective> = h[..n]
+                .par_iter()
+                .zip(&h[n..])
+                .map(|(lo, hi)| *lo * x + *hi * x_inv)
+                .collect();
+            rounds.push((l, r));
+            a = Cow::Owned(a_next);
+            b = Cow::Owned(b_next);
+            g = Cow::Owned(g_next);
+            h = Cow::Owned(h_next);
+        }
+        let _ = std::hint::black_box(p_cur);
+        Proof {
+            rounds,
+            a: a[0],
+            b: b[0],
+        }
+    }
+
+    /// The naive verifier: folds the bases each round, matching upstream.
+    pub(crate) fn verify(st: &Statement<'_>, proof: &Proof, t: &mut IpaTranscript) -> bool {
+        // The first round folds straight from the bases the verifier
+        // keeps; each later round owns the halves the previous one built.
+        let mut g: Cow<[Projective]> = Cow::Borrowed(st.g);
+        let mut h: Cow<[Projective]> = Cow::Borrowed(st.h);
+        t.point(b"p_initial", &st.p);
+        t.scalar(b"c", &st.c);
+        let x_chal = t.challenge(b"x_chal");
+        let q_raised = st.q * x_chal;
+        let p_prime = st.p + q_raised * st.c;
+
+        let mut p_cur = p_prime;
+        for (l, r) in &proof.rounds {
+            t.point(b"L", l);
+            t.point(b"R", r);
+            let x = t.challenge(b"x");
+            let x_inv = x.inverse().expect("nonzero challenge");
+            p_cur = *l * x.square() + *r * x_inv.square() + p_cur;
+            let n = g.len() / 2;
+            g = Cow::Owned(
+                g[..n]
+                    .par_iter()
+                    .zip(&g[n..])
+                    .map(|(lo, hi)| *lo * x_inv + *hi * x)
+                    .collect(),
+            );
+            h = Cow::Owned(
+                h[..n]
+                    .par_iter()
+                    .zip(&h[n..])
+                    .map(|(lo, hi)| *lo * x + *hi * x_inv)
+                    .collect(),
+            );
+        }
+        let expected = g[0] * proof.a + h[0] * proof.b + q_raised * (proof.a * proof.b);
+        p_cur == expected
+    }
+
     fn msm_proj(bases: &[Projective], scalars: &[Fr]) -> Projective {
         let affine = Projective::normalize_batch(bases);
         Projective::msm(&affine, scalars).expect("msm")
@@ -406,24 +486,126 @@ pub mod native_side {
     fn ip_fr(a: &[Fr], b: &[Fr]) -> Fr {
         a.par_iter().zip(b).map(|(x, y)| *x * y).sum()
     }
+}
 
-    fn absorb_point(t: &mut Transcript, label: &'static [u8], p: &Projective) {
-        let mut buf = Vec::new();
-        p.into_affine()
-            .serialize_compressed(&mut buf)
-            .expect("serialize");
-        t.append_message(label, &buf);
+// ---------------------------------------------------------------------------
+// Cross-verification: at the same challenges, each verifier accepts the other's
+// proof.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod cross_tests {
+    use super::native_side::{IpaTranscript, Proof, Statement, prove, verify};
+    use crate::cross::{Challenges, Direction};
+    use ark_ec::{CurveGroup, VariableBaseMSM};
+    use ark_ff::{One, UniformRand};
+    use ark_secp256k1::{Fr, Projective};
+    use backend::{ArkSecp256k1, Value};
+
+    type V = Value<ArkSecp256k1>;
+
+    fn g(v: &V) -> Projective {
+        match v {
+            Value::G1(g) => **g,
+            Value::G1Affine(g) => (**g).into(),
+            _ => panic!("expected a point, got {v}"),
+        }
+    }
+    fn scalar(v: &V) -> Fr {
+        match v {
+            Value::Scalar(f) => *f,
+            _ => panic!("expected a scalar, got {v}"),
+        }
     }
 
-    fn absorb_scalar(t: &mut Transcript, label: &'static [u8], s: &Fr) {
-        let mut buf = Vec::new();
-        s.serialize_compressed(&mut buf).expect("serialize");
-        t.append_message(label, &buf);
+    /// The native proof as Zippel's messages: each round's L and R, then a and b.
+    fn as_zippel(p: &Proof) -> Vec<V> {
+        p.rounds
+            .iter()
+            .flat_map(|(l, r)| [Value::g1(*l), Value::g1(*r)])
+            .chain([Value::Scalar(p.a), Value::Scalar(p.b)])
+            .collect()
     }
 
-    fn challenge_scalar(t: &mut Transcript, label: &'static [u8]) -> Fr {
-        let mut buf = [0u8; 64];
-        t.challenge_bytes(label, &mut buf);
-        Fr::from_le_bytes_mod_order(&buf)
+    fn as_native(m: &[V]) -> Proof {
+        let (rounds, last) = m.split_at(m.len() - 2);
+        Proof {
+            rounds: rounds.chunks(2).map(|lr| (g(&lr[0]), g(&lr[1]))).collect(),
+            a: scalar(&last[0]),
+            b: scalar(&last[1]),
+        }
+    }
+
+    #[test]
+    fn native_prove_then_zippel_verify() {
+        cross_verify(Direction::NativeToZippel);
+    }
+
+    #[test]
+    fn zippel_prove_then_native_verify() {
+        cross_verify(Direction::ZippelToNative);
+    }
+
+    fn cross_verify(direction: Direction) {
+        let mut rng = ark_std::test_rng();
+        for s in [1usize, 2, 4] {
+            let n = 1 << s;
+            let gs: Vec<Projective> = (0..n).map(|_| Projective::rand(&mut rng)).collect();
+            let hs: Vec<Projective> = (0..n).map(|_| Projective::rand(&mut rng)).collect();
+            let a: Vec<Fr> = (0..n).map(|_| Fr::rand(&mut rng)).collect();
+            let b: Vec<Fr> = (0..n).map(|_| Fr::rand(&mut rng)).collect();
+            let st = Statement {
+                g: &gs,
+                h: &hs,
+                q: Projective::rand(&mut rng),
+                p: Projective::msm(&Projective::normalize_batch(&gs), &a).unwrap()
+                    + Projective::msm(&Projective::normalize_batch(&hs), &b).unwrap(),
+                c: a.iter().zip(&b).map(|(x, y)| *x * y).sum(),
+            };
+            let (prover, verifier) = crate::cross::compile::<ArkSecp256k1>("ipa", &[("S", s)]);
+            let inputs = crate::harness_inputs([
+                ("g_vec", Value::vec_g1(gs.clone())),
+                ("h_vec", Value::vec_g1(hs.clone())),
+                ("p_initial_commitment", Value::g1(st.p)),
+                ("ip_val_claimed", Value::Scalar(st.c)),
+                ("u_aux_base", Value::g1(st.q)),
+                ("a_vec_witness", Value::vec_scalar(a.clone())),
+                ("b_vec_witness", Value::vec_scalar(b.clone())),
+            ]);
+
+            match direction {
+                Direction::NativeToZippel => {
+                    let native = as_zippel(&prove(&st, &a, &b, &mut IpaTranscript::new()));
+                    assert!(
+                        verifier
+                            .verify_with(
+                                native.clone(),
+                                crate::lend(&inputs),
+                                &mut Challenges::default()
+                            )
+                            .unwrap(),
+                        "s = {s}: Zippel rejects the native proof"
+                    );
+                    let mut wrong = native;
+                    let last = wrong.len() - 1;
+                    wrong[last] = Value::Scalar(scalar(&wrong[last]) + Fr::one());
+                    assert!(
+                        !verifier
+                            .verify_with(wrong, crate::lend(&inputs), &mut Challenges::default())
+                            .unwrap(),
+                        "s = {s}: Zippel accepts a wrong final b"
+                    );
+                }
+                Direction::ZippelToNative => {
+                    let ours = prover
+                        .prove_with(crate::lend(&inputs), &mut Challenges::default())
+                        .unwrap();
+                    assert_eq!(ours.len(), 2 * s + 2, "s = {s}: Zippel's message count");
+                    assert!(
+                        verify(&st, &as_native(&ours), &mut IpaTranscript::new()),
+                        "s = {s}: the native verifier rejects Zippel's proof"
+                    );
+                }
+            }
+        }
     }
 }

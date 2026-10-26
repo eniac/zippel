@@ -1,11 +1,11 @@
+use crate::AnalysisBackend;
 use crate::Var;
 use crate::frontend::Polynomial;
-use backend::ArkConfig;
 use graph::GraphError;
 use thiserror::Error;
 
 /// Reason why no valid extractor was found for a witness slot.
-pub enum ExtractorRejection<C: ArkConfig> {
+pub enum ExtractorRejection<C: AnalysisBackend> {
     /// No basis polynomial has this witness as leading term.
     NoExtractor,
     /// Extractor depends on variables not visible to the verifier.
@@ -16,7 +16,7 @@ pub enum ExtractorRejection<C: ArkConfig> {
     MultiGroupTerm(Polynomial<C::F>),
 }
 
-impl<C: ArkConfig> std::fmt::Debug for ExtractorRejection<C> {
+impl<C: AnalysisBackend> std::fmt::Debug for ExtractorRejection<C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ExtractorRejection::NoExtractor => write!(f, "NoExtractor"),
@@ -31,7 +31,7 @@ impl<C: ArkConfig> std::fmt::Debug for ExtractorRejection<C> {
     }
 }
 
-impl<C: ArkConfig> Clone for ExtractorRejection<C> {
+impl<C: AnalysisBackend> Clone for ExtractorRejection<C> {
     fn clone(&self) -> Self {
         match self {
             ExtractorRejection::NoExtractor => ExtractorRejection::NoExtractor,
@@ -52,7 +52,7 @@ impl<C: ArkConfig> Clone for ExtractorRejection<C> {
 /// for a rarely-occurring error path, so we allow the lint.
 #[derive(Error, Debug)]
 #[allow(clippy::result_large_err)]
-pub enum AnalysisError<C: ArkConfig> {
+pub enum AnalysisError<C: AnalysisBackend> {
     /// Gröbner-basis backend could not complete the computation.
     #[error("Backend error: {0}")]
     Backend(#[from] crate::frontend::BackendError),

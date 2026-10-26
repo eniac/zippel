@@ -1,6 +1,13 @@
-// Spartan protocol (Setty 2020).
-// Parametric over M (the number of variables in the R1CS constraint system).
-// Pin M in main.rs via sizes.insert(&Tid::new("M"), &M).
+// Spartan NIZK (Setty 2020), as libspartan (`spartan` 0.9) and ark-spartan
+// implement it: zero-knowledge sumchecks (each round polynomial committed and
+// proved with a dot-product proof), knowledge, product and equality proofs for
+// the claims between them, and a Hyrax commitment to the witness opened with a
+// logarithmic dot-product proof. Parametric over M (the number of variables in
+// the R1CS constraint system).
+//
+// Generators, as libspartan's: `g_1`/`h_1` commit single values (the PCS's
+// `gens_1`, which the sumchecks share), `g_vec_w` with `h_1` the witness rows,
+// and `g_3`/`h_3`, `g_4`/`h_4` the round polynomials of degree 2 and 3.
 //
 // Derived sizes (all expressible as Size arithmetic):
 //   NW     = M - 1              (number of wires)
@@ -14,9 +21,9 @@ fn eq_weights<G: Group, F: Scalar<G>>(instance x: [F; 1]) -> [F; 2] {
 }
 
 fn eq_weights<G: Group, F: Scalar<G>, M: Size, EK: 2..M + 1>(instance x: [F; EK]) -> [F; 2 ^ EK] {
-    let x_lo = x[0..EK - 1];
-    let a = x[EK - 1];
-    let prev = eq_weights(x_lo);
+    let x_rest = x[1..EK];
+    let a = x[0];
+    let prev = eq_weights(x_rest);
     prev * (1 - a) ++ prev * a
 }
 
@@ -33,116 +40,108 @@ fn draw_taus<G: Group, F: Scalar<G>, M: Size, DK: 2..M + 1>(
     prev ++ [t]
 }
 
-fn sc_recurse_d3<G: Group, F: Scalar<G>, M: Size, V: 3..M + 1>(
-    instance curr_poly: Poly<F, V, 3>,
-    instance points: [F; 4],
+// One round of libspartan's `ZKSumcheckInstanceProof` for a round polynomial of
+// degree D: commit to its D + 1 coefficients, draw the round challenge `r`, commit
+// to its value at `r`, and prove both claims under commitment — the sum over
+// {0, 1} is the claim `comm_claim` commits to (the dot product with
+// [2, 1, ..., 1]) and the value at `r` (the dot product with the powers of `r`) —
+// with one dot-product proof of their random combination. D ranges over the
+// degrees Spartan's sumchecks have: 3 (#1) and 2 (#2); a size that varies per call
+// is a range-kinded parameter, and a range has an upper bound.
+fn zk_round<G: Group, F: Scalar<G>, D: 2..4>(
+    instance g_1: G,
+    instance h_1: G,
+    instance g_n: [G; D + 1],
+    instance h_n: G,
+    witness coeffs: [F; D + 1],
+    witness blind_claim: F,
+    instance comm_claim: G,
+) -> {r: F, blind_value: F, comm_value: G} {
+    let blind_poly = random<F>;
+    comm_poly <- dot(g_n, coeffs) + h_n * blind_poly;
+    r <- challenge<F>;
+    let a_sc = [1 + 0 ^ i for i in 0..D + 1];
+    let a_eval = [r ^ i for i in 0..D + 1];
+    let eval_r = dot(coeffs, a_eval);
+    let blind_eval = random<F>;
+    comm_eval <- g_1 * eval_r + h_1 * blind_eval;
+    w_sc <- challenge<F>;
+    w_eval <- challenge<F>;
+    let a = a_sc * w_sc + a_eval * w_eval;
+    let blind_target = blind_claim * w_sc + blind_eval * w_eval;
+    let comm_target = comm_claim * w_sc + comm_eval * w_eval;
+    let d = [random<F> for _ in 0..D + 1];
+    let r_delta = random<F>;
+    let r_beta = random<F>;
+    delta <- dot(g_n, d) + h_n * r_delta;
+    beta <- g_1 * dot(a, d) + h_1 * r_beta;
+    c <- challenge<F>;
+    z <- coeffs * c + d;
+    z_delta <- blind_poly * c + r_delta;
+    z_beta <- blind_target * c + r_beta;
+    verify(comm_poly * c + delta == dot(g_n, z) + h_n * z_delta);
+    verify(comm_target * c + beta == g_1 * dot(z, a) + h_1 * z_beta);
+    {|r: r, blind_value: blind_eval, comm_value: comm_eval|}
+}
+
+// A round polynomial's coefficients, by interpolating its values at 0..D (a sum
+// of products of one-variable MLEs evaluates, but has no coefficient form).
+fn round_coeffs<G: Group, F: Scalar<G>, D: 2..4>(witness p: Uni<F, D>) -> [F; D + 1] {
+    let pts = [i for i in 0..D + 1];
+    coef(interpolate(pts, [p(t) for t in pts]))
+}
+
+// The rounds after the first of a sumcheck over `curr_poly`, of degree D, whose
+// highest variable is bound to `round_challenge`: each round sums over every variable
+// but the next, and proves that univariate polynomial with `zk_round`. Returns the
+// last round's blinding and commitment, and every round's challenge.
+fn sc_zk<G: Group, F: Scalar<G>, M: Size, D: 2..4, V: 3..M + 1>(
+    instance g_1: G,
+    instance h_1: G,
+    instance g_n: [G; D + 1],
+    instance h_n: G,
+    witness curr_poly: Poly<F, V, D>,
     instance prev_challenges: [F; M - V + 1],
-    instance prev_eval: F,
+    witness blind_claim: F,
+    instance comm_claim: G,
     instance round_challenge: F,
-) -> {final_eval: F, challenges: [F; M]} {
-    let residual_poly = eval(curr_poly, [round_challenge]);
+) -> {blind: F, comm: G, challenges: [F; M]} {
+    let residual_poly = eval<0..V - 1>(curr_poly, [round_challenge]);
     let round_poly = reduce(
         +,
         [
-            eval<0>(residual_poly, tail)
+            eval<V - 2>(residual_poly, tail)
             for tail in [[i / 2 ^ j % 2 for j in 0..V - 2] for i in 0..2 ^ (V - 2)]
         ],
     );
-    let evs_local = [round_poly(t) for t in points];
-    evs <- evs_local;
-    verify(prev_eval == evs[0] + evs[1]);
-    let g = interpolate(points, evs);
-    r_next <- challenge<F>;
-    let next_prev = g(r_next);
-    let new_challenges = prev_challenges ++ [r_next];
-
-    // NOTE (2026-08-30): the per-round Pedersen commit + Schnorr PoK
-    // block that used to sit here was a partial port of libspartan's
-    // `ZKSumcheckInstanceProof::prove_quad` "combine two claims" proof.
-    // Its only `verify` was a knowledge-of-opening for `comm_evs`, but
-    // `evs` is already sent in the clear right above (`evs <- evs_local`),
-    // so the proof was strictly redundant — the verifier can check
-    // `dot(g_evs_d3, evs) == comm_evs` directly if it wants that
-    // commitment at all. Removed. The current spec matches what this
-    // helper was actually delivering (non-ZK round polys); to add real
-    // ZK for round polys, do a full port of `prove_quad` — do NOT
-    // resurrect this half-form.
-
-    sc_recurse_d3(residual_poly, points, new_challenges, next_prev, r_next)
+    let round = zk_round(g_1, h_1, g_n, h_n, round_coeffs(round_poly), blind_claim, comm_claim);
+    sc_zk(
+        g_1,
+        h_1,
+        g_n,
+        h_n,
+        residual_poly,
+        prev_challenges ++ [round.r],
+        round.blind_value,
+        round.comm_value,
+        round.r,
+    )
 }
 
-fn sc_recurse_d3<G: Group, F: Scalar<G>, M: Size>(
-    instance curr_poly: Poly<F, 2, 3>,
-    instance points: [F; 4],
+fn sc_zk<G: Group, F: Scalar<G>, M: Size, D: 2..4>(
+    instance g_1: G,
+    instance h_1: G,
+    instance g_n: [G; D + 1],
+    instance h_n: G,
+    witness curr_poly: Poly<F, 2, D>,
     instance prev_challenges: [F; M - 1],
-    instance prev_eval: F,
+    witness blind_claim: F,
+    instance comm_claim: G,
     instance round_challenge: F,
-) -> {final_eval: F, challenges: [F; M]} {
-    let residual_poly = eval(curr_poly, [round_challenge]);
-    let evs_local = [residual_poly(t) for t in points];
-    evs <- evs_local;
-    verify(prev_eval == evs[0] + evs[1]);
-    let g = interpolate(points, evs);
-    r_final <- challenge<F>;
-    let final_eval = g(r_final);
-
-    // NOTE (2026-08-30): removed the redundant per-round Pedersen
-    // commit + Schnorr PoK block (see the V-generic sibling for the
-    // full rationale).
-
-    {|final_eval: final_eval, challenges: prev_challenges ++ [r_final]|}
-}
-
-fn sc_recurse_d2<G: Group, F: Scalar<G>, M: Size, V: 3..M + 1>(
-    instance curr_poly: Poly<F, V, 2>,
-    instance points: [F; 3],
-    instance prev_challenges: [F; M - V + 1],
-    instance prev_eval: F,
-    instance round_challenge: F,
-) -> {final_eval: F, challenges: [F; M]} {
-    let residual_poly = eval(curr_poly, [round_challenge]);
-    let round_poly = reduce(
-        +,
-        [
-            eval<0>(residual_poly, tail)
-            for tail in [[i / 2 ^ j % 2 for j in 0..V - 2] for i in 0..2 ^ (V - 2)]
-        ],
-    );
-    let evs_local = [round_poly(t) for t in points];
-    evs <- evs_local;
-    verify(prev_eval == evs[0] + evs[1]);
-    let g = interpolate(points, evs);
-    r_next <- challenge<F>;
-    let next_prev = g(r_next);
-    let new_challenges = prev_challenges ++ [r_next];
-
-    // NOTE (2026-08-30): removed the redundant per-round Pedersen
-    // commit + Schnorr PoK block (see sc_recurse_d3 V-generic for
-    // the full rationale).
-
-    sc_recurse_d2(residual_poly, points, new_challenges, next_prev, r_next)
-}
-
-fn sc_recurse_d2<G: Group, F: Scalar<G>, M: Size>(
-    instance curr_poly: Poly<F, 2, 2>,
-    instance points: [F; 3],
-    instance prev_challenges: [F; M - 1],
-    instance prev_eval: F,
-    instance round_challenge: F,
-) -> {final_eval: F, challenges: [F; M]} {
-    let residual_poly = eval(curr_poly, [round_challenge]);
-    let evs_local = [residual_poly(t) for t in points];
-    evs <- evs_local;
-    verify(prev_eval == evs[0] + evs[1]);
-    let g = interpolate(points, evs);
-    r_final <- challenge<F>;
-    let final_eval = g(r_final);
-
-    // NOTE (2026-08-30): removed the redundant per-round Pedersen
-    // commit + Schnorr PoK block (see sc_recurse_d3 V-generic for
-    // the full rationale).
-
-    {|final_eval: final_eval, challenges: prev_challenges ++ [r_final]|}
+) -> {blind: F, comm: G, challenges: [F; M]} {
+    let residual_poly = eval<0>(curr_poly, [round_challenge]);
+    let round = zk_round(g_1, h_1, g_n, h_n, round_coeffs(residual_poly), blind_claim, comm_claim);
+    {|blind: round.blind_value, comm: round.comm_value, challenges: prev_challenges ++ [round.r]|}
 }
 
 fn compute_s_vec<G: Group, F: Scalar<G>>(instance c: [F; 1], instance c_inv: [F; 1]) -> [F; 2] {
@@ -279,24 +278,26 @@ proto spartan<G: Group, F: Scalar<G>, M: Size>(
     witness bz: [F; 2 ^ M],
     witness cz: [F; 2 ^ M],
     instance g_vec_w: [G; 2 ^ (M - 1 - (M - 1) / 2)],
-    instance g_base_w: G,
-    instance h_base_w: G,
-    instance g_evs_d3: [G; 4],
-    instance g_evs_d2: [G; 3],
-    instance h_evs: G,
+    instance g_1: G,
+    instance h_1: G,
+    instance g_4: [G; 4],
+    instance h_4: G,
+    instance g_3: [G; 3],
+    instance h_3: G,
     instance placeholder_tau: [F; M],
 ) where
-    // R1CS: (A·z) ∘ (B·z) == C·z for z = w ++ io ++ [1], with az, bz, cz the
+    // R1CS: (A·z) ∘ (B·z) == C·z for z = w ++ [1] ++ io, with az, bz, cz the
     // three products.
-    let z = w ++ io ++ [1];
+    let z = w ++ [1] ++ io;
     az * bz == cz
         && az == mat_vec(mat_a_t, z)
         && bz == mat_vec(mat_b_t, z)
         && cz == mat_vec(mat_c_t, z)
 {
+    // Hyrax commitment to the witness, one row at a time (libspartan's `comm_vars`).
     let r_rows = [random<F> for _ in 0..2 ^ ((M - 1) / 2)];
     c_rows <- [
-        h_base_w * r_rows[i]
+        h_1 * r_rows[i]
             + dot(
                 g_vec_w,
                 [w[i * 2 ^ (M - 1 - (M - 1) / 2) + j] for j in 0..2 ^ (M - 1 - (M - 1) / 2)],
@@ -304,7 +305,7 @@ proto spartan<G: Group, F: Scalar<G>, M: Size>(
         for i in 0..2 ^ ((M - 1) / 2)
     ];
 
-    let z = w ++ io ++ [1];
+    let z = w ++ [1] ++ io;
 
     let f_a = mle(az);
     let f_b = mle(bz);
@@ -317,123 +318,137 @@ proto spartan<G: Group, F: Scalar<G>, M: Size>(
     let g_sub = f_a * f_b + f_c * -1;
     let g_poly = g_sub * eq_tau;
 
-    let pts3 = [0, 1, 2, 3];
+    // Sumcheck #1: Σ eq(τ, x)·(Az(x)·Bz(x) − Cz(x)) = 0, the claim 0 committed with
+    // blinding 0.
     let round_poly1_0 = reduce(
         +,
         [
-            eval<0>(g_poly, tail)
+            eval<M - 1>(g_poly, tail)
             for tail in [[i / 2 ^ j % 2 for j in 0..M - 1] for i in 0..2 ^ (M - 1)]
         ],
     );
-    let evs1_0_local = [round_poly1_0(t) for t in pts3];
-    evs1_0 <- evs1_0_local;
-    verify(0 == evs1_0[0] + evs1_0[1]);
-    let g1_r1 = interpolate(pts3, evs1_0);
-    rx0 <- challenge<F>;
-    let prev1 = g1_r1(rx0);
-
-    // NOTE (2026-08-30): removed the phase-1 round-0 per-round
-    // Pedersen commit + Schnorr PoK block (see sc_recurse_d3
-    // V-generic for the full rationale).
-
-    let sc1 = sc_recurse_d3(g_poly, pts3, [rx0], prev1, rx0);
+    let round1_0 = zk_round(g_1, h_1, g_4, h_4, round_coeffs(round_poly1_0), 0, g_1 * 0);
+    let sc1 = sc_zk(
+        g_1,
+        h_1,
+        g_4,
+        h_4,
+        g_poly,
+        [round1_0.r],
+        round1_0.blind_value,
+        round1_0.comm_value,
+        round1_0.r,
+    );
     let rx = sc1.challenges;
-    let e_x = sc1.final_eval;
 
+    // The claims Az(rx), Bz(rx), Cz(rx) under commitment: a knowledge proof for Cz
+    // and a product proof for Az·Bz.
     let lx = eq_weights(rx);
-    v_a <- dot(lx, az);
-    v_b <- dot(lx, bz);
-    v_c <- dot(lx, cz);
+    let v_a = dot(lx, az);
+    let v_b = dot(lx, bz);
+    let v_c = dot(lx, cz);
     let eq_tau_at_rx = dot(lx, eq_tau_evs);
-    verify(e_x == (v_a * v_b - v_c) * eq_tau_at_rx);
 
     let r_va = random<F>;
     let r_vb = random<F>;
     let r_vc = random<F>;
     let r_prod = random<F>;
-    comm_va_phase1 <- g_evs_d3[0] * v_a + h_evs * r_va;
-    comm_vb_phase1 <- g_evs_d3[0] * v_b + h_evs * r_vb;
-    comm_vc_phase1 <- g_evs_d3[0] * v_c + h_evs * r_vc;
-    comm_prod_phase1 <- g_evs_d3[0] * (v_a * v_b) + h_evs * r_prod;
-    let d1_phase1 = random<F>;
-    let d2_phase1 = random<F>;
-    let r_d_phase1 = random<F>;
-    let r_e_phase1 = random<F>;
-    let r_f_phase1 = random<F>;
-    alpha_phase1 <- g_evs_d3[0] * d1_phase1 + h_evs * r_d_phase1;
-    beta_p1_phase1 <- g_evs_d3[0] * d2_phase1 + h_evs * r_e_phase1;
-    delta_phase1 <- comm_va_phase1 * d2_phase1 + h_evs * r_f_phase1;
-    c_phase1 <- challenge<F>;
-    z1_phase1 <- c_phase1 * v_a + d1_phase1;
-    z2_phase1 <- c_phase1 * r_va + r_d_phase1;
-    z3_phase1 <- c_phase1 * v_b + d2_phase1;
-    z4_phase1 <- c_phase1 * r_vb + r_e_phase1;
-    z5_phase1 <- c_phase1 * (r_prod - r_va * v_b) + r_f_phase1;
-    verify(g_evs_d3[0] * z1_phase1 + h_evs * z2_phase1 == comm_va_phase1 * c_phase1 + alpha_phase1);
-    verify(
-        g_evs_d3[0] * z3_phase1 + h_evs * z4_phase1 == comm_vb_phase1 * c_phase1 + beta_p1_phase1,
-    );
-    verify(
-        comm_va_phase1 * z3_phase1 + h_evs * z5_phase1
-            == comm_prod_phase1 * c_phase1 + delta_phase1,
-    );
-    let t1_pok_vc = random<F>;
-    let t2_pok_vc = random<F>;
-    alpha_pok_vc <- g_evs_d3[0] * t1_pok_vc + h_evs * t2_pok_vc;
-    c_pok_vc <- challenge<F>;
-    z1_pok_vc <- v_c * c_pok_vc + t1_pok_vc;
-    z2_pok_vc <- r_vc * c_pok_vc + t2_pok_vc;
-    verify(g_evs_d3[0] * z1_pok_vc + h_evs * z2_pok_vc == comm_vc_phase1 * c_pok_vc + alpha_pok_vc);
-    let r_postsc_blind = random<F>;
-    let r_eq_p1 = random<F>;
-    let derived_blind_p1 = eq_tau_at_rx * (r_prod - r_vc);
-    comm_postsc_p1 <- g_evs_d3[0] * e_x + h_evs * r_postsc_blind;
-    let comm_derived_p1 = (comm_prod_phase1 - comm_vc_phase1) * eq_tau_at_rx;
-    alpha_eq_p1 <- h_evs * r_eq_p1;
-    c_eq_p1 <- challenge<F>;
-    z_eq_p1 <- c_eq_p1 * (r_postsc_blind - derived_blind_p1) + r_eq_p1;
-    verify(h_evs * z_eq_p1 == (comm_postsc_p1 - comm_derived_p1) * c_eq_p1 + alpha_eq_p1);
 
+    comm_vc <- g_1 * v_c + h_1 * r_vc;
+    let t1_pok = random<F>;
+    let t2_pok = random<F>;
+    alpha_pok <- g_1 * t1_pok + h_1 * t2_pok;
+    c_pok <- challenge<F>;
+    z1_pok <- v_c * c_pok + t1_pok;
+    z2_pok <- r_vc * c_pok + t2_pok;
+    verify(g_1 * z1_pok + h_1 * z2_pok == comm_vc * c_pok + alpha_pok);
+
+    comm_va <- g_1 * v_a + h_1 * r_va;
+    comm_vb <- g_1 * v_b + h_1 * r_vb;
+    comm_prod <- g_1 * (v_a * v_b) + h_1 * r_prod;
+    let b1 = random<F>;
+    let b2 = random<F>;
+    let b3 = random<F>;
+    let b4 = random<F>;
+    let b5 = random<F>;
+    alpha_prod <- g_1 * b1 + h_1 * b2;
+    beta_prod <- g_1 * b3 + h_1 * b4;
+    delta_prod <- comm_va * b3 + h_1 * b5;
+    c_prod <- challenge<F>;
+    z1_prod <- b1 + c_prod * v_a;
+    z2_prod <- b2 + c_prod * r_va;
+    z3_prod <- b3 + c_prod * v_b;
+    z4_prod <- b4 + c_prod * r_vb;
+    z5_prod <- b5 + c_prod * (r_prod - r_va * v_b);
+    verify(alpha_prod + comm_va * c_prod == g_1 * z1_prod + h_1 * z2_prod);
+    verify(beta_prod + comm_vb * c_prod == g_1 * z3_prod + h_1 * z4_prod);
+    verify(delta_prod + comm_prod * c_prod == comm_va * z3_prod + h_1 * z5_prod);
+
+    // The end of sumcheck #1: its last claim equals eq(τ, rx)·(Az·Bz − Cz), under
+    // commitment.
+    let comm_expected1 = (comm_prod - comm_vc) * eq_tau_at_rx;
+    let blind_expected1 = eq_tau_at_rx * (r_prod - r_vc);
+    let r_eq1 = random<F>;
+    alpha_eq1 <- h_1 * r_eq1;
+    c_eq1 <- challenge<F>;
+    z_eq1 <- c_eq1 * (blind_expected1 - sc1.blind) + r_eq1;
+    verify(h_1 * z_eq1 == (comm_expected1 - sc1.comm) * c_eq1 + alpha_eq1);
+
+    // Sumcheck #2: Σ (rA·A(rx, y) + rB·B(rx, y) + rC·C(rx, y))·z(y) = rA·Az + rB·Bz + rC·Cz.
     ra <- challenge<F>;
     rb <- challenge<F>;
     rc <- challenge<F>;
-    let t2 = ra * v_a + rb * v_b + rc * v_c;
+    let blind_claim2 = ra * r_va + rb * r_vb + rc * r_vc;
+    let comm_claim2 = comm_va * ra + comm_vb * rb + comm_vc * rc;
 
-    let partial_a = eval(mat_a_t, rx);
-    let partial_b = eval(mat_b_t, rx);
-    let partial_c = eval(mat_c_t, rx);
+    // Runtime MLE coordinates use low bits first; native Spartan draws them
+    // from the highest variable down.
+    let rx_low_first = [rx[M - 1 - i] for i in 0..M];
+    let partial_a = eval(mat_a_t, rx_low_first);
+    let partial_b = eval(mat_b_t, rx_low_first);
+    let partial_c = eval(mat_c_t, rx_low_first);
 
-    let l_mle = partial_a * ra + partial_b * rb + partial_c * rc;
+    // One table: every round of sumcheck #2 folds and sums it, so materializing the
+    // combination once beats carrying three products through each round.
+    let l_mle = mle(partial_a * ra + partial_b * rb + partial_c * rc);
     let z_mle = mle(z);
     let m_poly = l_mle * z_mle;
 
-    let pts2 = [0, 1, 2];
     let round_poly2_0 = reduce(
         +,
         [
-            eval<0>(m_poly, tail)
+            eval<M - 1>(m_poly, tail)
             for tail in [[i / 2 ^ j % 2 for j in 0..M - 1] for i in 0..2 ^ (M - 1)]
         ],
     );
-    let evs2_0_local = [round_poly2_0(t) for t in pts2];
-    evs2_0 <- evs2_0_local;
-    verify(t2 == evs2_0[0] + evs2_0[1]);
-    let g2_r1 = interpolate(pts2, evs2_0);
-    ry0 <- challenge<F>;
-    let prev2 = g2_r1(ry0);
-
-    // NOTE (2026-08-30): removed the phase-2 round-0 per-round
-    // Pedersen commit + Schnorr PoK block (see sc_recurse_d3
-    // V-generic for the full rationale).
-
-    let sc2 = sc_recurse_d2(m_poly, pts2, [ry0], prev2, ry0);
+    let round2_0 = zk_round(
+        g_1,
+        h_1,
+        g_3,
+        h_3,
+        round_coeffs(round_poly2_0),
+        blind_claim2,
+        comm_claim2,
+    );
+    let sc2 = sc_zk(
+        g_1,
+        h_1,
+        g_3,
+        h_3,
+        m_poly,
+        [round2_0.r],
+        round2_0.blind_value,
+        round2_0.comm_value,
+        round2_0.r,
+    );
     let ry = sc2.challenges;
-    let e_y = sc2.final_eval;
 
-    let pcs_z = ry[0..M - 1];
+    // The witness at ry, committed (libspartan's `comm_vars_at_ry`) and proved with a
+    // logarithmic dot-product proof over the Hyrax rows (`PolyEvalProof`).
+    let pcs_z = ry[1..M];
     let ly_lo = eq_weights(pcs_z);
-    let z_col = pcs_z[0..M - 1 - (M - 1) / 2];
-    let z_row = pcs_z[M - 1 - (M - 1) / 2..M - 1];
+    let z_row = pcs_z[0..(M - 1) / 2];
+    let z_col = pcs_z[(M - 1) / 2..M - 1];
     let l_vec = eq_weights(z_row);
     let r_vec = eq_weights(z_col);
 
@@ -444,67 +459,50 @@ proto spartan<G: Group, F: Scalar<G>, M: Size>(
         for j in 0..2 ^ (M - 1 - (M - 1) / 2)
     ];
 
-    let v_w_val = dot(ly_lo, w);
-    sent_v_w <- v_w_val;
-
+    let v_w = dot(ly_lo, w);
     let r_tau = random<F>;
-    tau_pcs <- g_base_w * sent_v_w + h_base_w * r_tau;
+    tau_pcs <- g_1 * v_w + h_1 * r_tau;
     rho_pcs <- challenge<F>;
     let upsilon_pcs = big_t + tau_pcs * rho_pcs;
     let r_upsilon_pcs = r_big_t + r_tau * rho_pcs;
-    let a_rho_pcs = [r_vec[j] * rho_pcs for j in 0..2 ^ (M - 1 - (M - 1) / 2)];
-    let y_rho_pcs = sent_v_w * rho_pcs;
-    let bullet = bullet_collect(
-        g_base_w,
-        h_base_w,
-        g_vec_w,
-        a_rho_pcs,
-        u_vec,
-        y_rho_pcs,
-        r_upsilon_pcs,
-    );
+    let g_pcs = g_1 * rho_pcs;
+    let bullet = bullet_collect(g_pcs, h_1, g_vec_w, r_vec, u_vec, v_w, r_upsilon_pcs);
     let b_challenges = bullet.challenges;
     let b_challenges_inv = bullet.challenges_inv;
-    let b_Ls = bullet.Ls;
-    let b_Rs = bullet.Rs;
-    let b_final_y = bullet.final_y;
-    let b_final_r = bullet.final_r;
     let s_vec = compute_s_vec(b_challenges, b_challenges_inv);
     let g_hat = dot(g_vec_w, s_vec);
-    let a_hat = dot(a_rho_pcs, s_vec);
+    let a_hat = dot(r_vec, s_vec);
     let c_sq_vec = [b_challenges[i] * b_challenges[i] for i in 0..M - 1 - (M - 1) / 2];
     let c_inv_sq_vec = [b_challenges_inv[i] * b_challenges_inv[i] for i in 0..M - 1 - (M - 1) / 2];
-    let upsilon_combined = upsilon_pcs + dot(b_Ls, c_sq_vec) + dot(b_Rs, c_inv_sq_vec);
+    let upsilon_combined = upsilon_pcs + dot(bullet.Ls, c_sq_vec) + dot(bullet.Rs, c_inv_sq_vec);
     let d_ipa = random<F>;
     let r_delta_ipa = random<F>;
     let r_beta_ipa = random<F>;
-    delta_ipa <- g_hat * d_ipa + h_base_w * r_delta_ipa;
-    beta_ipa <- g_base_w * d_ipa + h_base_w * r_beta_ipa;
+    delta_ipa <- g_hat * d_ipa + h_1 * r_delta_ipa;
+    beta_ipa <- g_pcs * d_ipa + h_1 * r_beta_ipa;
     c_ipa <- challenge<F>;
-    z1_ipa <- d_ipa + c_ipa * b_final_y;
-    z2_ipa <- a_hat * (c_ipa * b_final_r + r_beta_ipa) + r_delta_ipa;
-    let lhs_ipa = (upsilon_combined * c_ipa + beta_ipa) * a_hat + delta_ipa;
-    let rhs_ipa = (g_hat + g_base_w * a_hat) * z1_ipa + h_base_w * z2_ipa;
+    z1_ipa <- d_ipa + c_ipa * bullet.final_y;
+    z2_ipa <- a_hat * (c_ipa * bullet.final_r + r_beta_ipa) + r_delta_ipa;
+    verify(
+        (upsilon_combined * c_ipa + beta_ipa) * a_hat + delta_ipa
+            == (g_hat + g_pcs * a_hat) * z1_ipa + h_1 * z2_ipa,
+    );
 
-    let io_block = io ++ [1];
-    let v_io = dot(ly_lo, io_block);
-    let ry_top = ry[M - 1];
-    let v_z = (1 - ry_top) * sent_v_w + ry_top * v_io;
-
-    let v1 = eval(partial_a, ry);
-    let v2 = eval(partial_b, ry);
-    let v3 = eval(partial_c, ry);
-
-    let r_ey = random<F>;
-    let d_p2 = random<F>;
-    let r_d_p2 = random<F>;
-    comm_ey_p2 <- g_evs_d2[0] * e_y + h_evs * r_ey;
-    alpha_p2 <- g_evs_d2[0] * d_p2 + h_evs * r_d_p2;
-    c_p2 <- challenge<F>;
-    z1_p2 <- c_p2 * e_y + d_p2;
-    z2_p2 <- c_p2 * r_ey + r_d_p2;
-    verify(g_evs_d2[0] * z1_p2 + h_evs * z2_p2 == comm_ey_p2 * c_p2 + alpha_p2);
-
-    verify(lhs_ipa == rhs_ipa);
-    verify(e_y == (ra * v1 + rb * v2 + rc * v3) * v_z)
+    // The end of sumcheck #2: its last claim equals (rA·A + rB·B + rC·C)(rx, ry)·z(ry),
+    // under commitment; z(ry) = (1 − ry_top)·w(ry) + ry_top·([1] ++ io)(ry).
+    let ry_low_first = [ry[M - 1 - i] for i in 0..M];
+    let v1 = eval(partial_a, ry_low_first);
+    let v2 = eval(partial_b, ry_low_first);
+    let v3 = eval(partial_c, ry_low_first);
+    let abc_at_ry = ra * v1 + rb * v2 + rc * v3;
+    let ry_top = ry[0];
+    let v_io = dot(ly_lo, [1] ++ io);
+    let comm_z_at_ry = tau_pcs * (1 - ry_top) + g_1 * (ry_top * v_io);
+    let comm_expected2 = comm_z_at_ry * abc_at_ry;
+    let blind_expected2 = abc_at_ry * ((1 - ry_top) * r_tau);
+    let r_eq2 = random<F>;
+    alpha_eq2 <- h_1 * r_eq2;
+    c_eq2 <- challenge<F>;
+    z_eq2 <- c_eq2 * (blind_expected2 - sc2.blind) + r_eq2;
+    verify(h_1 * z_eq2 == (comm_expected2 - sc2.comm) * c_eq2 + alpha_eq2)
 }

@@ -4,8 +4,8 @@
 //! provides mutable access to the `IdealBuilder` (for sentinel/witness
 //! allocation and recursive `add_op` dispatch) and the ideal being built.
 
-use backend::op::HasOpFactory;
-use backend::{ATyp, ArkConfig};
+use crate::AnalysisBackend;
+use backend::ATyp;
 
 use crate::Var;
 use crate::frontend::Polynomial;
@@ -21,12 +21,12 @@ pub(crate) use super::combinatorics::{dft_row, hypercube, lagrange_basis, multi_
 /// Context passed to every op encoder. Provides access to the
 /// `IdealBuilder` (for sentinel allocation and recursive `add_op`
 /// dispatch) and the ideal being built.
-pub struct EncodeCtx<'a, C: ArkConfig> {
+pub struct EncodeCtx<'a, C: AnalysisBackend> {
     pub builder: &'a mut IdealBuilder<C>,
     pub ideal: &'a mut Ideal<C>,
 }
 
-impl<'a, C: ArkConfig + HasOpFactory> EncodeCtx<'a, C> {
+impl<'a, C: AnalysisBackend> EncodeCtx<'a, C> {
     /// Allocate a sentinel variable with `name` and `typ`, registering it
     /// in the ideal's var_order.
     pub fn sentinel_var(&mut self, name: &str, typ: ATyp) -> Var {
@@ -42,7 +42,7 @@ impl<'a, C: ArkConfig + HasOpFactory> EncodeCtx<'a, C> {
 /// dividend's own upper bound) and remainder `m' - 1` — so the witness
 /// and target must have the same number of physical slots. A mismatch
 /// indicates a bug in either the type checker or the caller.
-pub fn link_to_witness<C: ArkConfig>(ideal: &mut Ideal<C>, var: &Var, wit: &Var) {
+pub fn link_to_witness<C: AnalysisBackend>(ideal: &mut Ideal<C>, var: &Var, wit: &Var) {
     let var_slots = var.slots();
     let wit_slots = wit.slots();
     assert_eq!(
@@ -65,7 +65,11 @@ pub fn link_to_witness<C: ArkConfig>(ideal: &mut Ideal<C>, var: &Var, wit: &Var)
 /// Registers `pl[var[j]] = polys[j]` and emits `polys[j] − var(var[j]) = 0`.
 ///
 /// Asserts that `var` has exactly `polys.len()` physical slots.
-pub fn link_to_polys<C: ArkConfig>(ideal: &mut Ideal<C>, var: &Var, polys: Vec<Polynomial<C::F>>) {
+pub fn link_to_polys<C: AnalysisBackend>(
+    ideal: &mut Ideal<C>,
+    var: &Var,
+    polys: Vec<Polynomial<C::F>>,
+) {
     let var_slots = var.slots();
     assert_eq!(
         var_slots.len(),

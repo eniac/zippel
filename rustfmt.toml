@@ -1,10 +1,4 @@
 # Same edition as `[workspace.package]` in Cargo.toml, so plain `rustfmt` matches `cargo fmt`.
 edition = "2024"
 
-ignore = [
-    "experiments/src/pari_upstream",
-    "experiments/src/sumcheck_upstream",
-    "experiments/src/pst13_upstream",
-    "experiments/src/hyrax_upstream",
-    "experiments/src/ark_spartan_upstream",
-]
+ignore = ["experiments/src/upstream"]

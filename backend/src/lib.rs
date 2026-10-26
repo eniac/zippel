@@ -1,12 +1,14 @@
 //! Cryptographic backend for Zippel: the layer that turns the language's
-//! source-level types into concrete `arkworks` field, curve, and pairing
-//! elements and defines the typed IR operation set executed by `runtime`.
+//! source-level types into concrete field, group, and pairing elements and
+//! defines the typed IR operation set executed by `runtime`.
 //!
 //! Three things live here:
 //!
-//! - [`ArkConfig`] and its instances ([`ArkBls12_381`], [`ArkBn254`], …), which
-//!   bundle a scalar field, one or two curve groups, and an optional pairing
-//!   into a single type parameter `C` threaded through the whole compiler.
+//! - [`Backend`] and its instances ([`ArkBls12_381`], [`ArkBn254`], …), which
+//!   bundle a scalar [`Field`], one or two [`Group`]s, and an optional
+//!   [`Pairing`] into a single type parameter `C` threaded through the whole
+//!   compiler. The shipped backends are arkworks'; any library implementing
+//!   the three traits can be one.
 //! - [`ATyp`]/[`ABase`], the IR type level. Unlike the source-level
 //!   `lang::typ::Typ`, `ATyp` splits polynomials into their physical encodings
 //!   (`Uni`, `Mle`, `VPoly`) so layout is unambiguous at runtime.
@@ -15,41 +17,30 @@
 //!   consume and produce.
 
 #![feature(deref_patterns)]
-#![feature(associated_type_defaults)]
-/// The `ArkConfig` trait and its concrete curve/field instantiations.
-pub mod config;
-/// Stub field, curve, and pairing types used to fill unused `ArkConfig`
-/// associated types on field-only or pairing-free configurations.
-pub mod nothing;
-/// The typed IR operation enum `Op<C, R>` and its hash-consing factory.
-pub mod op;
-/// Process-global counters recording which sumcheck optimization paths ran.
-pub mod optimization;
-/// Concrete polynomial encodings (dense/sparse univariate, multilinear,
-/// sparse multivariate) and the arithmetic defined over them.
-pub mod poly_variant;
-/// Vectors that share their storage: O(1) clones and slices, copy-on-write.
-pub mod shared;
-/// The IR type level: `ATyp`/`ABase` and conversion from source-level `CTyp`.
-pub mod types;
+/// The `Field`, `Group` and `Pairing` traits a backend implements.
+pub mod algebra;
+/// The `Backend` trait, keys, and the backends Zippel ships.
+pub mod backends;
+/// The IR: typed operations and their types.
+pub mod ir;
+/// Polynomials: concrete encodings and virtual sums of products.
+pub mod poly;
 /// Runtime values `Value<C>` and the evaluation of each `Op` over them.
-pub mod values;
-/// Sum-of-products polynomial representation used by sumcheck-style protocols.
-pub mod virtual_polynomial;
+pub mod value;
 
-pub use config::{
-    ArkBls12_381, ArkBn254, ArkConfig, ArkCurve25519, ArkEd25519, ArkField17, ArkField65537,
-    ArkFieldN, ArkGroupOps, ArkMNT4_298, ArkPairingOps, ArkPallas, ArkScalarOps, ArkSecp256k1,
-    ArkVesta, DivisionByZero,
+pub use algebra::{DivisionByZero, Field, Group, Pairing};
+pub use backends::nothing::{NoGroup, NoPairing};
+pub use backends::{
+    ArkBls12_381, ArkBn254, ArkCurve25519, ArkEd25519, ArkFrRistretto, ArkMNT4_298, ArkPallas,
+    ArkSecp256k1, ArkVesta, Backend, DalekRistretto, G1Affine, G1Points, G2Affine, G2Points, GT,
+    PastaPallas,
 };
-pub use nothing::{NoCurve, NoField, NoPairing};
-pub use op::{GOp, HasOpFactory, Op, OpExclusion, Ref};
-pub use optimization::{OptimizationStats, optimization_stats_snapshot, reset_optimization_stats};
-pub use poly_variant::{PolyError, PolyVariant};
-pub use shared::Shared;
-pub use types::{ABase, ATyp, binomial};
-pub use values::{PreparedG2Vec, Value, value_to_bytes};
-pub use virtual_polynomial::{SelectedEvalShape, VirtualPolynomial};
+pub use ir::op::{GOp, Op, OpExclusion, Ref};
+pub use ir::types::{ABase, ATyp, binomial};
+pub use poly::variant::{PolyError, PolyVariant};
+pub use poly::virtual_polynomial::{SelectedEvalShape, VirtualPolynomial};
+pub use value::shared::Shared;
+pub use value::{Value, value_to_bytes};
 
 #[cfg(test)]
 mod tests;

@@ -1,19 +1,19 @@
 //! One execution of a [`MutexGraph`]: every node runs as a job of one
 //! `rayon::scope` as soon as its dependencies have finished.
 
-use backend::{ArkConfig, Value};
+use backend::{Backend, Value};
 use graph::{ArgKind, Node, Op};
 use lang::id::Vid;
 use log::debug;
 use petgraph::graph::NodeIndex;
-use spongefish::{DuplexSpongeInterface, ProverState};
+use rand::rngs::ThreadRng;
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use crate::error::RuntimeError;
 use crate::graph::MutexGraph;
-use crate::transcript::Transcript;
+use crate::transcript::{Challenger, Transcript};
 
 /// Specifies what kind of result to collect from graph execution.
 ///
@@ -32,7 +32,7 @@ pub enum ResultKind {
 /// - `Prover`: proof transcript values in transcript order.
 /// - `Verifier`: per-Verify pass/fail booleans.
 #[derive(Debug)]
-pub enum RunResult<C: ArkConfig> {
+pub enum RunResult<C: Backend> {
     /// Proof transcript values emitted by the prover, in transcript order.
     Prover(Vec<Value<C>>),
     /// Outcome of the verifier graph's checks.
@@ -68,7 +68,7 @@ impl FirstError {
 ///
 /// The scope returns when the last job does: no thread waits or polls for
 /// work, and the run computes on exactly the pool's threads.
-struct Run<'a, C: ArkConfig, H: DuplexSpongeInterface<U = u8>> {
+struct Run<'a, C: Backend, Ch: Challenger<C>> {
     graph: &'a MutexGraph<C>,
     /// The run's inputs, each taken out when its `Arg` node delivers it, so
     /// an input the caller gave up is freed after its last reader.
@@ -76,12 +76,12 @@ struct Run<'a, C: ArkConfig, H: DuplexSpongeInterface<U = u8>> {
     /// Every supplied input name, for error messages.
     names: Vec<Vid>,
     error: FirstError,
-    transcript: Mutex<Transcript<'a, C, H>>,
+    transcript: Mutex<Transcript<'a, C, Ch>>,
     /// Whether each `Verify` node's checks passed, as they run.
     checks: Mutex<HashMap<NodeIndex, bool>>,
 }
 
-impl<C: ArkConfig, H: DuplexSpongeInterface<U = u8> + Send> Run<'_, C, H> {
+impl<C: Backend, Ch: Challenger<C> + Send> Run<'_, C, Ch> {
     /// Runs the ready `node`, then releases its successors.
     ///
     /// # Panics
@@ -147,7 +147,7 @@ impl<C: ArkConfig, H: DuplexSpongeInterface<U = u8> + Send> Run<'_, C, H> {
     /// Evaluates `node`, recording the outcome of any checks it evaluated, or
     /// records the run's error and returns `None` if it fails.
     fn evaluate(&self, node: NodeIndex) -> Option<Value<C>> {
-        match self.graph.evaluate(node) {
+        match self.graph.evaluate(node, &mut ThreadRng::default()) {
             Ok((value, passed)) => {
                 if let Some(passed) = passed {
                     self.checks.lock().unwrap().insert(node, passed);
@@ -235,7 +235,7 @@ impl<C: ArkConfig, H: DuplexSpongeInterface<U = u8> + Send> Run<'_, C, H> {
     }
 }
 
-impl<C: ArkConfig> MutexGraph<C> {
+impl<C: Backend> MutexGraph<C> {
     /// Execute all nodes in the DAG, each as soon as its dependencies have
     /// finished, in parallel on the rayon pool.
     ///
@@ -287,10 +287,10 @@ impl<C: ArkConfig> MutexGraph<C> {
     /// [`MutexGraph::evaluate`]) or, with debug assertions and no error,
     /// never runs; if a transcript value cannot be serialized for the
     /// sponge, or if a mutex is poisoned.
-    pub fn run_graph<H: DuplexSpongeInterface<U = u8> + Send>(
+    pub fn run_graph<Ch: Challenger<C> + Send>(
         g: Arc<Self>,
         inputs: HashMap<Vid, Value<C>>,
-        prover_state: &mut ProverState<H>,
+        challenger: &mut Ch,
         result_kind: ResultKind,
     ) -> Result<RunResult<C>, RuntimeError> {
         debug!(
@@ -304,7 +304,7 @@ impl<C: ArkConfig> MutexGraph<C> {
             inputs: Mutex::new(inputs),
             error: FirstError::default(),
             transcript: Mutex::new(Transcript::new(
-                prover_state,
+                challenger,
                 matches!(result_kind, ResultKind::Prover),
             )),
             checks: Mutex::new(HashMap::new()),

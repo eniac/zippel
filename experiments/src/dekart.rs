@@ -1,6 +1,6 @@
 //! DeKART range-proof comparison: zippel-compiled `examples/dekart/dekart.zippel`
 //! vs. the Aptos univariate DeKART v2 prover/verifier (vendored + ported to
-//! arkworks 0.6 in `src/dekart_upstream/`), both on BLS12-381.
+//! arkworks 0.6 in `src/upstream/dekart/`), both on BLS12-381.
 //!
 //! Statement on both sides: n values z_1..z_n, each in [0, 2^ell), under a
 //! hiding KZG commitment to f with f(ω^0) = 0, f(ω^i) = z_i on a domain of
@@ -74,8 +74,8 @@ pub mod shared {
         let n = num_omegas - 1;
         let srs = crate::cache::load_or_build_canonical("dekart_srs", log_n, || {
             let mut rng = StdRng::seed_from_u64(0xDEC0);
-            let tau: Fr = crate::dekart_upstream::sample_field_element(&mut rng);
-            let xi: Fr = crate::dekart_upstream::sample_field_element(&mut rng);
+            let tau: Fr = crate::upstream::dekart::sample_field_element(&mut rng);
+            let xi: Fr = crate::upstream::dekart::sample_field_element(&mut rng);
             let g1 = G1Projective::from(G1Affine::generator());
             let mut pows = Vec::with_capacity(num_omegas);
             let mut acc = Fr::from(1u64);
@@ -86,7 +86,7 @@ pub mod shared {
             let powers_g1 = g1.batch_mul(&pows);
             let dom = Radix2EvaluationDomain::<Fr>::new(num_omegas).unwrap();
             let lagr_g1 =
-                crate::dekart_upstream::lagrange_basis::<G1Projective>(g1, tau, num_omegas, dom);
+                crate::upstream::dekart::lagrange_basis::<G1Projective>(g1, tau, num_omegas, dom);
             // Σ_i ℓ_i(τ) = 1, so the Lagrange basis must sum to [1]_1.
             debug_assert_eq!(
                 lagr_g1
@@ -114,7 +114,7 @@ pub mod shared {
                 }
             })
             .collect();
-        let rho: Fr = crate::dekart_upstream::sample_field_element(&mut rng);
+        let rho: Fr = crate::upstream::dekart::sample_field_element(&mut rng);
         let scalars: Vec<Fr> = values.iter().map(|&z| Fr::from(z)).collect();
         let xi_1 = G1Projective::from(G1Affine::generator()) * srs.xi;
         let com_f =
@@ -303,7 +303,7 @@ pub mod zippel_side {
 
 pub mod native_side {
     use super::*;
-    use crate::dekart_upstream::{self as dk, Proof, ProverKey, VerificationKey};
+    use crate::upstream::dekart::{self as dk, Proof, ProverKey, VerificationKey};
     use ark_bls12_381::{Bls12_381, Fr};
     use ark_ec::CurveGroup;
     use ark_std::rand::{SeedableRng, rngs::StdRng};

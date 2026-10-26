@@ -10,10 +10,10 @@
 //!   * Uni(n)      → n + 1 slots (coefficient vector for degree bound n).
 //!   * Vec(_, n)   → n slots.
 
+use crate::AnalysisBackend;
 use ark_ff::{Field, One};
 
 use crate::frontend::Polynomial;
-use backend::ArkConfig;
 
 /// All multi-indices `(k_1, …, k_n)` with `sum(k_i) ≤ m`, in graded-lex order
 /// (by total degree, then lex within the same degree).
@@ -60,7 +60,7 @@ pub fn hypercube(n: usize) -> Vec<Vec<usize>> {
 /// set of N linear polynomial equations. The caller is responsible for
 /// providing `ω` such that `ω^N = 1` and `ω` has order exactly `N`
 /// (typically `C::F::get_root_of_unity(N)`).
-pub fn dft_row<C: ArkConfig>(
+pub fn dft_row<C: AnalysisBackend>(
     coeffs: &[Polynomial<C::F>],
     omega: C::F,
     i: usize,

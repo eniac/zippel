@@ -1,6 +1,6 @@
 //! KZH-2 multilinear PCS comparison: zippel-compiled `examples/kzh/kzh.zippel`
 //! vs. irondict's KZH-k at k = 2 (ported to arkworks 0.6 in
-//! `src/kzh_upstream/`), both on BLS12-381.
+//! `src/upstream/kzh/`), both on BLS12-381.
 //!
 //! Statement on both sides: the prover knows a multilinear f with 2^N
 //! evaluations; it commits and proves f(x0, y0) = z0 at a public point.
@@ -20,7 +20,7 @@
 use crate::Timing;
 
 pub mod shared {
-    use crate::kzh_upstream::UniversalParams;
+    use crate::upstream::kzh::UniversalParams;
     use ark_bls12_381::{Bls12_381, Fr};
     use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
     use ark_std::UniformRand;
@@ -47,7 +47,7 @@ pub mod shared {
             let f: Vec<Fr> = (0..1usize << n).map(|_| Fr::rand(&mut rng)).collect();
             let point: Vec<Fr> = (0..n).map(|_| Fr::rand(&mut rng)).collect();
             let (pp, _) = srs.trim();
-            let (_, value) = crate::kzh_upstream::open(&pp, &f, &point);
+            let (_, value) = crate::upstream::kzh::open(&pp, &f, &point);
             Shared {
                 n,
                 srs,
@@ -62,7 +62,7 @@ pub mod shared {
 pub mod zippel_side {
     use super::*;
     use ark_ec::AffineRepr;
-    use backend::{ArkBls12_381, PreparedG2Vec, Value};
+    use backend::{ArkBls12_381, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::collections::HashMap;
@@ -109,11 +109,9 @@ pub mod zippel_side {
                     ("z0", Value::Scalar(sh.value)),
                     ("h1", Value::vec_g1_affine(sh.srs.h_tensors[0].clone())),
                     ("h2", Value::vec_g1_affine(sh.srs.h_tensors[1].clone())),
-                    // Prepared once here, as native's verifier key stores V1.
-                    (
-                        "v1",
-                        Value::VecG2Prepared(PreparedG2Vec::new(sh.srs.v_mat[0].clone())),
-                    ),
+                    // A verifier key: a pairing backend prepares it once here, as
+                    // native's verifier key stores V1.
+                    ("v1", Value::vec_g2_key(sh.srs.v_mat[0].clone())),
                     ("v_gen", Value::g2(sh.srs.v.into_group())),
                     ("g_gen", Value::g1(sh.srs.g.into_group())),
                 ]
@@ -161,7 +159,7 @@ pub mod zippel_side {
 
 pub mod native_side {
     use super::*;
-    use crate::kzh_upstream::{self as kzh, ProverParam, VerifierParam};
+    use crate::upstream::kzh::{self as kzh, ProverParam, VerifierParam};
     use ark_bls12_381::{Bls12_381, Fr};
 
     pub struct Setup {
@@ -201,6 +199,120 @@ pub mod native_side {
                 verify,
                 prove_peak,
                 verify_peak,
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod cross_tests {
+    use super::shared;
+    use crate::cross::Direction;
+    use crate::upstream::kzh::{self as kzh, OpeningProof};
+    use ark_bls12_381::{Bls12_381, Fr, G1Affine};
+    use ark_ec::{AffineRepr, CurveGroup};
+    use ark_ff::One;
+    use backend::{ArkBls12_381, Value};
+
+    type V = Value<ArkBls12_381>;
+
+    fn g1(v: &V) -> G1Affine {
+        match v {
+            Value::G1(g) => g.into_affine(),
+            Value::G1Affine(g) => **g,
+            _ => panic!("expected G1, got {v}"),
+        }
+    }
+
+    fn g1s(v: &V) -> Vec<G1Affine> {
+        match v {
+            Value::VecG1(gs) => gs.iter().map(|g| g.into_affine()).collect(),
+            Value::VecG1Affine(gs) => gs.to_vec(),
+            _ => panic!("expected G1 vector, got {v}"),
+        }
+    }
+
+    fn frs(v: &V) -> Vec<Fr> {
+        match v {
+            Value::VecScalar(fs) => fs.to_vec(),
+            _ => panic!("expected scalars, got {v}"),
+        }
+    }
+
+    #[test]
+    fn native_prove_then_zippel_verify() {
+        cross_verify(Direction::NativeToZippel);
+    }
+
+    #[test]
+    fn zippel_prove_then_native_verify() {
+        cross_verify(Direction::ZippelToNative);
+    }
+
+    fn cross_verify(direction: Direction) {
+        // Include both square and rectangular evaluation tables.
+        for n in [2usize, 3, 4, 5, 6] {
+            let sh = shared::build(n);
+            let (nx, ny) = (sh.srs.dimensions[0], sh.srs.dimensions[1]);
+            let (pp, vp) = sh.srs.trim();
+            let (prover, verifier) =
+                crate::cross::compile::<ArkBls12_381>("kzh", &[("NX", nx), ("NY", ny)]);
+            let inputs = crate::harness_inputs([
+                ("f", Value::vec_scalar(sh.f.clone())),
+                ("x0", Value::vec_scalar(sh.point[..nx].to_vec())),
+                ("y0", Value::vec_scalar(sh.point[nx..].to_vec())),
+                ("z0", Value::Scalar(sh.value)),
+                ("h1", Value::vec_g1_affine(sh.srs.h_tensors[0].clone())),
+                ("h2", Value::vec_g1_affine(sh.srs.h_tensors[1].clone())),
+                ("v1", Value::vec_g2_affine(sh.srs.v_mat[0].clone())),
+                ("v_gen", Value::g2(sh.srs.v.into_group())),
+                ("g_gen", Value::g1(sh.srs.g.into_group())),
+            ]);
+
+            match direction {
+                Direction::NativeToZippel => {
+                    let com = kzh::commit(&pp, &sh.f);
+                    let (proof, value) = kzh::open(&pp, &sh.f, &sh.point);
+                    assert_eq!(value, sh.value);
+                    assert!(kzh::verify(&vp, &com, &sh.point, &value, &proof));
+                    let native = vec![
+                        Value::g1_affine(com),
+                        Value::vec_g1_affine(proof.d[0].clone()),
+                        Value::vec_scalar(proof.f),
+                    ];
+                    assert!(
+                        verifier
+                            .verify(native.clone(), crate::lend(&inputs))
+                            .unwrap(),
+                        "n = {n}: Zippel rejects the native proof"
+                    );
+                    let mut wrong = native;
+                    let mut f = frs(&wrong[2]);
+                    f[0] += Fr::one();
+                    wrong[2] = Value::vec_scalar(f);
+                    assert!(
+                        !verifier.verify(wrong, crate::lend(&inputs)).unwrap(),
+                        "n = {n}: Zippel accepts a wrong partial evaluation"
+                    );
+                }
+                Direction::ZippelToNative => {
+                    let ours = prover.prove(crate::lend(&inputs)).unwrap();
+                    assert_eq!(ours.len(), 3, "n = {n}: Zippel's message count");
+                    let com = g1(&ours[0]);
+                    let mut proof = OpeningProof::<Bls12_381> {
+                        d: vec![g1s(&ours[1])],
+                        f: frs(&ours[2]),
+                    };
+                    assert!(
+                        kzh::verify(&vp, &com, &sh.point, &sh.value, &proof),
+                        "n = {n}: the native verifier rejects Zippel's proof"
+                    );
+                    proof.f[0] += Fr::one();
+                    assert!(
+                        !kzh::verify(&vp, &com, &sh.point, &sh.value, &proof),
+                        "n = {n}: the native verifier accepts a wrong partial evaluation"
+                    );
+                }
             }
         }
     }

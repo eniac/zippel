@@ -23,7 +23,7 @@
 //!   spartan  : M           (num_constraints = 2^M)
 //!
 //! Thread sweeping is done by running this binary multiple times with
-//! different `RAYON_NUM_THREADS`. The wrapper script `run_sweep.sh` does that
+//! different `RAYON_NUM_THREADS`. The wrapper script `run_all.sh` does that
 //! and concatenates the CSVs. We tried `rayon::ThreadPool::install` to vary
 //! threads in-process, but arkworks' `parallel` feature hangs on a
 //! single-thread pool installed mid-process — running with the global pool
@@ -58,6 +58,8 @@ const ALL_SYSTEMS: &[&str] = &[
     "pst13",
     "hyrax",
     "spartan",
+    "spartan-ristretto",
+    "spartan-hybrid",
     "dekart",
     "kzh",
     "dory",
@@ -693,7 +695,7 @@ fn run_hyperplonk(threads: usize, ns: &[usize]) -> Vec<Row> {
 fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
     ms.iter()
         .map(|&m| {
-            let mut z = setup_pool().install(|| spartan::Setup::new(m));
+            let mut z = setup_pool().install(|| spartan::Setup::<backend::ArkCurve25519>::new(m));
             let compile = z.compile_time();
             let (prover_nodes, verifier_nodes) = z.graph_sizes();
             // `z.timing()` IS the timed region for the zippel side —
@@ -701,47 +703,10 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
             // it to the global (bench) pool, not the setup pool.
             let zippel = z.timing();
 
+            let native = libspartan_timing(m);
             let num_cons = 1usize << m;
             let num_vars = 1usize << (m - 1);
             let num_inputs = num_vars - 1;
-            // Synthesize the R1CS instance + gens off the bench pool.
-            // `produce_synthetic_r1cs` + `NIZKGens::new` are pure setup
-            // (libspartan with the multicore feature uses rayon, so the
-            // install routes them onto every core).
-            let (inst, vars, inputs, gens) = setup_pool().install(|| {
-                let (inst, vars, inputs) =
-                    Instance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
-                let gens = NIZKGens::new(num_cons, num_vars, num_inputs);
-                (inst, vars, inputs, gens)
-            });
-
-            // Each run makes its transcript inside the timer and the heap
-            // count, as zippel makes its sponge inside each run. Each system
-            // binds its own instance: `NIZK::prove`/`verify` append the
-            // instance (serialized and compressed once, in setup), zippel
-            // absorbs its matrices and `io` in every run. The prover
-            // computes Az, Bz, Cz inside `prove`; zippel's harness computes
-            // them inside its timed call too (see `spartan::Setup`).
-            // `prove` takes the witness by value, so a caller that keeps it
-            // copies it per run, inside the measurement.
-            let (native_prove, native_prove_peak, proof) = experiments::sample(|| {
-                let mut pt = Transcript::new(b"bench_all_spartan");
-                timed_pool().install(|| NIZK::prove(&inst, vars.clone(), &inputs, &gens, &mut pt))
-            });
-
-            let (native_verify, native_verify_peak, ()) = experiments::sample(|| {
-                let mut vt = Transcript::new(b"bench_all_spartan");
-                timed_pool()
-                    .install(|| proof.verify(&inst, &inputs, &mut vt, &gens))
-                    .expect("verify");
-            });
-
-            let native = Timing {
-                prove: native_prove,
-                verify: native_verify,
-                prove_peak: native_prove_peak,
-                verify_peak: native_verify_peak,
-            };
 
             // Second native baseline: ark-spartan on ark-curve25519 v0.6
             // (same curve as the zippel side; different arkworks stack
@@ -751,7 +716,7 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
             // as libspartan above.
             let ark_native = {
                 use ark_curve25519::EdwardsProjective as C25519;
-                use experiments::ark_spartan_upstream::{
+                use experiments::upstream::ark_spartan::{
                     Instance as ArkInstance, NIZK as ArkNIZK, NIZKGens as ArkNIZKGens,
                 };
 
@@ -823,6 +788,91 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
         .collect()
 }
 
+/// libspartan's NIZK (curve25519-dalek, Ristretto255) on a synthetic R1CS with `2^m`
+/// constraints, the baseline of both Spartan rows.
+fn libspartan_timing(m: usize) -> Timing {
+    let num_cons = 1usize << m;
+    let num_vars = 1usize << (m - 1);
+    let num_inputs = num_vars - 1;
+    // Synthesize the R1CS instance + gens off the bench pool.
+    // `produce_synthetic_r1cs` + `NIZKGens::new` are pure setup
+    // (libspartan with the multicore feature uses rayon, so the
+    // install routes them onto every core).
+    let (inst, vars, inputs, gens) = setup_pool().install(|| {
+        let (inst, vars, inputs) = Instance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
+        let gens = NIZKGens::new(num_cons, num_vars, num_inputs);
+        (inst, vars, inputs, gens)
+    });
+
+    // Each run makes its transcript inside the timer and the heap
+    // count, as zippel makes its sponge inside each run. Each system
+    // binds its own instance: `NIZK::prove`/`verify` append the
+    // instance (serialized and compressed once, in setup), zippel
+    // absorbs its matrices and `io` in every run. The prover
+    // computes Az, Bz, Cz inside `prove`; zippel's harness computes
+    // them inside its timed call too (see `spartan::Setup`).
+    // `prove` takes the witness by value, so a caller that keeps it
+    // copies it per run, inside the measurement.
+    let (native_prove, native_prove_peak, proof) = experiments::sample(|| {
+        let mut pt = Transcript::new(b"bench_all_spartan");
+        timed_pool().install(|| NIZK::prove(&inst, vars.clone(), &inputs, &gens, &mut pt))
+    });
+
+    let (native_verify, native_verify_peak, ()) = experiments::sample(|| {
+        let mut vt = Transcript::new(b"bench_all_spartan");
+        timed_pool()
+            .install(|| proof.verify(&inst, &inputs, &mut vt, &gens))
+            .expect("verify");
+    });
+
+    Timing {
+        prove: native_prove,
+        verify: native_verify,
+        prove_peak: native_prove_peak,
+        verify_peak: native_verify_peak,
+    }
+}
+
+/// Zippel's Spartan on a backend over the curve25519-dalek group libspartan uses
+/// (`DalekRistretto` as `spartan-ristretto`, `ArkFrRistretto` with arkworks scalars as
+/// `spartan-hybrid`), against libspartan. libspartan pins curve25519-dalek 4 and the
+/// backends use 5, so compare their MSMs separately before crediting a difference to
+/// Zippel.
+fn run_spartan_ristretto<C: backend::Backend>(
+    system: &'static str,
+    threads: usize,
+    ms: &[usize],
+) -> Vec<Row> {
+    ms.iter()
+        .map(|&m| {
+            let mut z = setup_pool().install(|| spartan::Setup::<C>::new(m));
+            let compile = z.compile_time();
+            let (prover_nodes, verifier_nodes) = z.graph_sizes();
+            let zippel = z.timing();
+            let native = libspartan_timing(m);
+            let r = Row {
+                system,
+                threads,
+                log_size: m,
+                zippel,
+                compile,
+                baselines: vec![Baseline {
+                    name: "spartan",
+                    ncloc: native_ncloc("spartan"),
+                    prove: native.prove,
+                    verify: native.verify,
+                    prove_peak: native.prove_peak,
+                    verify_peak: native.verify_peak,
+                }],
+                prover_nodes,
+                verifier_nodes,
+            };
+            print_row(&r);
+            r
+        })
+        .collect()
+}
+
 // Separate rayon pool used for the setup/SRS-generation work that runs
 // OUTSIDE the timed prove/verify. The global pool is constrained to the
 // benchmark thread count (1, 2, 4, 8, 16...) so we can measure scaling,
@@ -841,7 +891,7 @@ fn setup_pool() -> &'static rayon::ThreadPool {
 // `R1CSProof`). Rationale: a rayon `par_iter` issued from a thread
 // OUTSIDE the pool recruits extra effective compute beyond the
 // RAYON_NUM_THREADS=1 worker (measured ~1.5x on the M=18 Hyrax
-// row-commit block — see `bin/commit_head_to_head.rs`), so at
+// row-commit block — see the retired same-process commitment probe), so at
 // "threads=1" an unconfined native prover runs on ~1.5 cores while
 // the zippel runtime — whose compute is `rayon::spawn`ed onto the
 // global pool with the main thread only coordinating — runs on 1.
@@ -1163,6 +1213,16 @@ fn main() {
             "pst13" => run_pst13(threads, &pst13_ns),
             "hyrax" => run_hyrax(threads, &hyrax_ns),
             "spartan" => run_spartan(threads, &spartan_ms),
+            "spartan-ristretto" => run_spartan_ristretto::<backend::DalekRistretto>(
+                "spartan-ristretto",
+                threads,
+                &spartan_ms,
+            ),
+            "spartan-hybrid" => run_spartan_ristretto::<backend::ArkFrRistretto>(
+                "spartan-hybrid",
+                threads,
+                &spartan_ms,
+            ),
             "dekart" => run_dekart(threads, &dekart_ls, DEKART_ELL),
             "kzh" => run_kzh(threads, &kzh_ns),
             "dory" => run_dory(threads, &dory_ns),

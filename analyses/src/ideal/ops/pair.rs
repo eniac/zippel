@@ -1,7 +1,7 @@
 //! Bilinear-pairing op encoder: `pair_op`, `pair_op_inner`.
 
-use backend::op::HasOpFactory;
-use backend::{ATyp, ArkConfig};
+use crate::AnalysisBackend;
+use backend::ATyp;
 use graph::HOp;
 
 use crate::Var;
@@ -10,18 +10,13 @@ use crate::frontend::Polynomial;
 use super::PolySource;
 use super::{EncodeCtx, link_to_polys};
 
-pub fn pair_op<C: ArkConfig + HasOpFactory>(
-    ctx: &mut EncodeCtx<'_, C>,
-    var: &Var,
-    a: &HOp<C>,
-    b: &HOp<C>,
-) {
+pub fn pair_op<C: AnalysisBackend>(ctx: &mut EncodeCtx<'_, C>, var: &Var, a: &HOp<C>, b: &HOp<C>) {
     let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
     let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
     pair_op_inner(ctx, var, &a_src, &b_src);
 }
 
-fn pair_op_inner<C: ArkConfig + HasOpFactory>(
+fn pair_op_inner<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     a: &PolySource<C>,
@@ -71,7 +66,7 @@ mod tests {
     use crate::frontend::Polynomial;
     use backend::ATyp;
     use backend::ArkBls12_381;
-    use backend::op::mk;
+    use backend::ir::op::mk;
     use graph::Op;
 
     #[test]

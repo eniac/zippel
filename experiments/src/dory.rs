@@ -1,6 +1,6 @@
 //! Dory PCS comparison: zippel-compiled `examples/dory_pcs/dory_pcs.zippel`
 //! vs. a16z's `dory-pcs` transparent mode (ported to arkworks 0.6 in
-//! `src/dory_upstream/`), both on BLS12-381.
+//! `src/upstream/dory/`), both on BLS12-381.
 //!
 //! Statement on both sides: the prover knows a multilinear f with 2^(2K)
 //! coefficients (a 2^K × 2^K matrix); it commits and proves f(point) = y.
@@ -20,7 +20,7 @@
 use crate::Timing;
 
 pub mod shared {
-    use crate::dory_upstream::{self as dory, ProverSetup, VerifierSetup};
+    use crate::upstream::dory::{self as dory, ProverSetup, VerifierSetup};
     use ark_bls12_381::Fr;
     use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
     use ark_std::UniformRand;
@@ -69,7 +69,7 @@ pub mod shared {
 pub mod zippel_side {
     use super::*;
     use ark_ec::CurveGroup;
-    use backend::{ArkBls12_381, PreparedG2Vec, Value};
+    use backend::{ArkBls12_381, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::collections::HashMap;
@@ -87,17 +87,9 @@ pub mod zippel_side {
 
     impl Setup {
         pub fn new(sh: &shared::Shared) -> Self {
-            Self::with_proto(
-                sh,
-                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("..")
-                    .join("examples/dory_pcs/dory_pcs.zippel"),
-            )
-        }
-
-        /// Same inputs, a different proto source (the cross-check test runs a
-        /// copy that echoes the challenges).
-        pub fn with_proto(sh: &shared::Shared, proto: PathBuf) -> Self {
+            let proto = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("examples/dory_pcs/dory_pcs.zippel");
             let k = sh.k;
             let ((prover, verifier), compile_time) = crate::sample_compile(|| {
                 let module = ParsedModule::load(&proto).expect("parse protocol");
@@ -127,11 +119,12 @@ pub mod zippel_side {
                             &s.g1_vec[..nv],
                         )),
                     ),
-                    // Prepared once here, as native's prepared-setup cache holds Γ2.
+                    // A verifier key: a pairing backend prepares it once here, as
+                    // native's prepared-setup cache holds Γ2.
                     (
                         "g2_vec",
-                        Value::VecG2Prepared(PreparedG2Vec::new(
-                            ark_bls12_381::G2Projective::normalize_batch(&s.g2_vec[..nv]),
+                        Value::vec_g2_key(ark_bls12_381::G2Projective::normalize_batch(
+                            &s.g2_vec[..nv],
                         )),
                     ),
                     ("g1_0", Value::g1(v.g1_0)),
@@ -166,6 +159,33 @@ pub mod zippel_side {
                 .expect("run_prover failed")
         }
 
+        /// One prover run under `challenger`'s transcript.
+        ///
+        /// # Panics
+        /// Panics if the prover graph fails to execute.
+        pub fn prove_with(
+            &self,
+            challenger: &mut (impl zippel::runtime::Challenger<ArkBls12_381> + Send),
+        ) -> Vec<Value<ArkBls12_381>> {
+            self.prover
+                .prove_with(crate::lend(&self.inputs), challenger)
+                .expect("run_prover failed")
+        }
+
+        /// Whether the verifier accepts `proof` under `challenger`'s transcript.
+        ///
+        /// # Panics
+        /// Panics if the verifier graph fails to execute.
+        pub fn verify_with(
+            &self,
+            proof: Vec<Value<ArkBls12_381>>,
+            challenger: &mut (impl zippel::runtime::Challenger<ArkBls12_381> + Send),
+        ) -> bool {
+            self.verifier
+                .verify_with(proof, crate::lend(&self.inputs), challenger)
+                .expect("run_verifier failed")
+        }
+
         pub fn compile_time(&self) -> Vec<std::time::Duration> {
             self.compile_time.clone()
         }
@@ -198,7 +218,7 @@ pub mod zippel_side {
 
 pub mod native_side {
     use super::*;
-    use crate::dory_upstream::{self as dory, Blake2bTranscript, PreparedCache};
+    use crate::upstream::dory::{self as dory, Blake2bTranscript, PreparedCache};
 
     pub struct Setup<'a> {
         sh: &'a shared::Shared,
@@ -255,113 +275,173 @@ pub mod native_side {
 }
 
 // ---------------------------------------------------------------------------
-// Cross-check: the two provers compute the same messages. The zippel proto is
-// rerun with every challenge echoed as a prover message, the native prover is
-// replayed under those challenges, and every message must match exactly.
+// Cross-verification: at the same challenges, each verifier accepts the other
+// implementation's proof.
 // ---------------------------------------------------------------------------
 #[cfg(test)]
 mod cross_tests {
     use super::{shared, zippel_side};
-    use crate::dory_upstream::{self as dory, Blake2bTranscript, GT, PreparedCache};
-    use ark_bls12_381::{Fr, G1Projective, G2Projective};
+    use crate::cross::{Challenges, Direction};
+    use crate::upstream::dory::{
+        self as dory, Blake2bTranscript, DoryProof, FirstReduceMessage, GT, PreparedCache,
+        ScalarProductMessage, SecondReduceMessage, VMVMessage,
+    };
+    use ark_bls12_381::{G1Projective, G2Projective};
     use backend::{ArkBls12_381, Value};
-    use std::path::PathBuf;
 
-    fn echo_proto() -> PathBuf {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
-        let src = std::fs::read_to_string(root.join("examples/dory_pcs/dory_pcs.zippel")).unwrap();
-        let mut out = String::new();
-        for line in src.lines() {
-            out.push_str(line);
-            out.push('\n');
-            let t = line.trim_start();
-            for c in ["beta", "alpha", "gamma", "d"] {
-                if t.starts_with(&format!("{c} <- challenge<F")) {
-                    out.push_str(&format!("    {c}_echo <- {c};\n"));
-                }
-            }
-        }
-        let path =
-            std::env::temp_dir().join(format!("dory_pcs_echo_{}.zippel", std::process::id()));
-        std::fs::write(&path, out).unwrap();
-        path
-    }
+    type V = Value<ArkBls12_381>;
 
-    fn gt(v: &Value<ArkBls12_381>) -> GT {
+    fn gt(v: &V) -> GT {
         match v {
             Value::GT(g) => **g,
             _ => panic!("expected GT, got {v}"),
         }
     }
-    fn g1(v: &Value<ArkBls12_381>) -> G1Projective {
+    fn g1(v: &V) -> G1Projective {
         match v {
             Value::G1(g) => **g,
-            Value::G1Affine(g) => (*(*g)).into(),
+            Value::G1Affine(g) => (**g).into(),
             _ => panic!("expected G1, got {v}"),
         }
     }
-    fn g2(v: &Value<ArkBls12_381>) -> G2Projective {
+    fn g2(v: &V) -> G2Projective {
         match v {
             Value::G2(g) => **g,
             Value::G2Affine(g) => (**g).into(),
             _ => panic!("expected G2, got {v}"),
         }
     }
-    fn fr(v: &Value<ArkBls12_381>) -> Fr {
-        match v {
-            Value::Scalar(f) => *f,
-            _ => panic!("expected scalar, got {v}"),
+
+    /// The native proof as Zippel's messages: the commitment, the VMV message,
+    /// each round's 12 messages, and the final message.
+    fn as_zippel(com: GT, p: &DoryProof) -> Vec<V> {
+        let mut out = vec![
+            Value::gt(com),
+            Value::gt(p.vmv_message.c),
+            Value::gt(p.vmv_message.d2),
+            Value::g1(p.vmv_message.e1),
+        ];
+        for (f, s) in p.first_messages.iter().zip(&p.second_messages) {
+            out.extend([
+                Value::gt(f.d1_left),
+                Value::gt(f.d1_right),
+                Value::gt(f.d2_left),
+                Value::gt(f.d2_right),
+                Value::g1(f.e1_beta),
+                Value::g2(f.e2_beta),
+                Value::gt(s.c_plus),
+                Value::gt(s.c_minus),
+                Value::g1(s.e1_plus),
+                Value::g1(s.e1_minus),
+                Value::g2(s.e2_plus),
+                Value::g2(s.e2_minus),
+            ]);
         }
+        out.extend([Value::g1(p.final_message.e1), Value::g2(p.final_message.e2)]);
+        out
+    }
+
+    /// Zippel's messages as the native proof, and the commitment.
+    fn as_native(m: &[V], k: usize) -> (GT, DoryProof) {
+        assert_eq!(m.len(), 4 + 12 * k + 2, "Zippel's message count");
+        let rounds = |r: usize| &m[4 + 12 * r..4 + 12 * (r + 1)];
+        let proof = DoryProof {
+            vmv_message: VMVMessage {
+                c: gt(&m[1]),
+                d2: gt(&m[2]),
+                e1: g1(&m[3]),
+            },
+            first_messages: (0..k)
+                .map(|r| {
+                    let x = rounds(r);
+                    FirstReduceMessage {
+                        d1_left: gt(&x[0]),
+                        d1_right: gt(&x[1]),
+                        d2_left: gt(&x[2]),
+                        d2_right: gt(&x[3]),
+                        e1_beta: g1(&x[4]),
+                        e2_beta: g2(&x[5]),
+                    }
+                })
+                .collect(),
+            second_messages: (0..k)
+                .map(|r| {
+                    let x = rounds(r);
+                    SecondReduceMessage {
+                        c_plus: gt(&x[6]),
+                        c_minus: gt(&x[7]),
+                        e1_plus: g1(&x[8]),
+                        e1_minus: g1(&x[9]),
+                        e2_plus: g2(&x[10]),
+                        e2_minus: g2(&x[11]),
+                    }
+                })
+                .collect(),
+            final_message: ScalarProductMessage {
+                e1: g1(&m[4 + 12 * k]),
+                e2: g2(&m[5 + 12 * k]),
+            },
+            nu: k,
+            sigma: k,
+        };
+        (gt(&m[0]), proof)
     }
 
     #[test]
-    fn zippel_and_native_provers_send_identical_messages() {
-        let proto = echo_proto();
-        for n in [2usize, 4, 6, 8] {
+    fn native_prove_then_zippel_verify() {
+        cross_verify(Direction::NativeToZippel);
+    }
+
+    #[test]
+    fn zippel_prove_then_native_verify() {
+        cross_verify(Direction::ZippelToNative);
+    }
+
+    fn cross_verify(direction: Direction) {
+        for n in [2usize, 4, 6] {
             let sh = shared::build(n);
             let k = sh.k;
-            let msgs = zippel_side::Setup::with_proto(&sh, proto.clone()).prove_once();
-            // com, vmv (3), K × (6 + beta + 6 + alpha), gamma, final (2), d
-            assert_eq!(msgs.len(), 1 + 3 + 14 * k + 1 + 2 + 1, "n = {n}");
-            let mut challenges = Vec::new();
-            for r in 0..k {
-                let base = 4 + 14 * r;
-                challenges.push(fr(&msgs[base + 6]));
-                challenges.push(fr(&msgs[base + 13]));
-            }
-            let tail = 4 + 14 * k;
-            challenges.push(fr(&msgs[tail]));
-            challenges.push(fr(&msgs[tail + 3]));
-
+            let z = zippel_side::Setup::new(&sh);
             let cache = PreparedCache::new(&sh.setup);
-            let (com, rows) = dory::commit(&sh.coeffs, k, k, &sh.setup, &cache);
-            let mut t = Blake2bTranscript::replay(challenges);
-            let p = dory::create_evaluation_proof(
-                &sh.coeffs, &sh.point, rows, k, k, &sh.setup, &cache, &mut t,
-            );
 
-            assert_eq!(gt(&msgs[0]), com, "n = {n}: commitment");
-            assert_eq!(gt(&msgs[1]), p.vmv_message.c, "n = {n}: vmv c");
-            assert_eq!(gt(&msgs[2]), p.vmv_message.d2, "n = {n}: vmv d2");
-            assert_eq!(g1(&msgs[3]), p.vmv_message.e1, "n = {n}: vmv e1");
-            for r in 0..k {
-                let (b, f, s) = (4 + 14 * r, &p.first_messages[r], &p.second_messages[r]);
-                assert_eq!(gt(&msgs[b]), f.d1_left, "n = {n} round {r}: d1_left");
-                assert_eq!(gt(&msgs[b + 1]), f.d1_right, "n = {n} round {r}: d1_right");
-                assert_eq!(gt(&msgs[b + 2]), f.d2_left, "n = {n} round {r}: d2_left");
-                assert_eq!(gt(&msgs[b + 3]), f.d2_right, "n = {n} round {r}: d2_right");
-                assert_eq!(g1(&msgs[b + 4]), f.e1_beta, "n = {n} round {r}: e1_beta");
-                assert_eq!(g2(&msgs[b + 5]), f.e2_beta, "n = {n} round {r}: e2_beta");
-                assert_eq!(gt(&msgs[b + 7]), s.c_plus, "n = {n} round {r}: c_plus");
-                assert_eq!(gt(&msgs[b + 8]), s.c_minus, "n = {n} round {r}: c_minus");
-                assert_eq!(g1(&msgs[b + 9]), s.e1_plus, "n = {n} round {r}: e1_plus");
-                assert_eq!(g1(&msgs[b + 10]), s.e1_minus, "n = {n} round {r}: e1_minus");
-                assert_eq!(g2(&msgs[b + 11]), s.e2_plus, "n = {n} round {r}: e2_plus");
-                assert_eq!(g2(&msgs[b + 12]), s.e2_minus, "n = {n} round {r}: e2_minus");
+            match direction {
+                Direction::NativeToZippel => {
+                    let (com, rows) = dory::commit(&sh.coeffs, k, k, &sh.setup, &cache);
+                    let native = dory::create_evaluation_proof(
+                        &sh.coeffs,
+                        &sh.point,
+                        rows,
+                        k,
+                        k,
+                        &sh.setup,
+                        &cache,
+                        &mut Blake2bTranscript::new(b"dory-cross"),
+                    );
+                    let native = as_zippel(com, &native);
+                    assert!(
+                        z.verify_with(native.clone(), &mut Challenges::default()),
+                        "n = {n}: Zippel rejects the native proof"
+                    );
+                    assert!(
+                        !z.verify_with(native, &mut Challenges::seeded(1)),
+                        "n = {n}: Zippel accepts the native proof at other challenges"
+                    );
+                }
+                Direction::ZippelToNative => {
+                    let (com, proof) = as_native(&z.prove_with(&mut Challenges::default()), k);
+                    assert!(
+                        dory::verify_evaluation_proof(
+                            com,
+                            sh.y,
+                            &sh.point,
+                            &proof,
+                            &sh.vsetup,
+                            &mut Blake2bTranscript::new(b"dory-cross"),
+                        ),
+                        "n = {n}: the native verifier rejects Zippel's proof"
+                    );
+                }
             }
-            assert_eq!(g1(&msgs[tail + 1]), p.final_message.e1, "n = {n}: final e1");
-            assert_eq!(g2(&msgs[tail + 2]), p.final_message.e2, "n = {n}: final e2");
         }
-        let _ = std::fs::remove_file(proto);
     }
 }

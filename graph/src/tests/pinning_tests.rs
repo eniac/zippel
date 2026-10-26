@@ -1522,10 +1522,9 @@ fn pin_app_univariate_poly() {
 #[test]
 fn pin_fun_lit() {
     use ark_ff::{One, Zero};
-    use ark_poly::DenseUVPolynomial;
-    use ark_poly::univariate::DensePolynomial;
+    use backend::poly::variant::DenseUni;
     use backend::{PolyVariant, Value, VirtualPolynomial};
-    type F = <B as backend::ArkConfig>::F;
+    type F = <B as backend::Backend>::F;
 
     let src = r#"
         fn f<F: Field>() -> Uni<F, 1> { fun(x) => x }
@@ -1537,7 +1536,7 @@ fn pin_fun_lit() {
     let (_inp, _) = expected_inp(&mut expected, "f", &[]);
 
     // fun(x) => x → DensePolynomial [0, 1] representing the identity
-    let poly = DensePolynomial::from_coefficients_vec(vec![F::zero(), F::one()]);
+    let poly = DenseUni::new(vec![F::zero(), F::one()]);
     let pv = PolyVariant::DenseUni(poly);
     let vp = VirtualPolynomial::from_poly(pv);
     let val = GOp::<B>::Value(Value::poly(vp));
@@ -2632,9 +2631,9 @@ fn pin_multi_transcript() {
 #[test]
 fn pin_fun_multilinear() {
     use ark_ff::{One, Zero};
-    use ark_poly::evaluations::multivariate::multilinear::DenseMultilinearExtension;
+    use backend::poly::variant::DenseMle;
     use backend::{PolyVariant, Value, VirtualPolynomial};
-    type F = <B as backend::ArkConfig>::F;
+    type F = <B as backend::Backend>::F;
 
     let src = r#"
         fn f<F: Field>() -> Mle<F, 2> { fun(x, y) => x + y }
@@ -2649,7 +2648,7 @@ fn pin_fun_multilinear() {
     // x: evaluations [0,1,0,1], y: evaluations [0,0,1,1]
     // x + y: evaluations [0,1,1,2]
     let evals = vec![F::zero(), F::one(), F::one(), F::from(2u64)];
-    let mle = DenseMultilinearExtension::from_evaluations_vec(2, evals);
+    let mle = DenseMle::new(2, evals);
     let pv = PolyVariant::DenseMle(mle);
     let vp = VirtualPolynomial::from_poly(pv);
     let val = GOp::<B>::Value(Value::poly(vp));

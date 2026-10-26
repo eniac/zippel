@@ -18,7 +18,7 @@ use crate::Timing;
 pub mod zippel_side {
     use super::*;
     use ark_std::UniformRand;
-    use backend::{ArkBls12_381, ArkConfig, ArkGroupOps, Value};
+    use backend::{ArkBls12_381, Backend, Value};
     use lang::id::Vid;
     use share::Ctx;
     use std::path::PathBuf;
@@ -83,14 +83,13 @@ pub mod zippel_side {
         /// Panics if the prover or verifier graph fails to execute, or if the
         /// verifier rejects the honestly generated proof.
         pub fn time_protocol(&mut self) -> Timing {
-            type F = <ArkBls12_381 as ArkConfig>::F;
-            type G1 = <ArkBls12_381 as ArkConfig>::G1;
-            type G1Ops = <ArkBls12_381 as ArkConfig>::G1Ops;
+            type F = <ArkBls12_381 as Backend>::F;
+            type G1 = <ArkBls12_381 as Backend>::G1;
 
             let mut rng = rand::rngs::OsRng;
             let x = F::rand(&mut rng);
             let g = G1::rand(&mut rng);
-            let h_affines = G1Ops::vec_mul(&g, &[x]);
+            let h_affines = backend::Group::batch_mul(&g, &[x]);
             let h = h_affines.into_iter().next().unwrap();
             let inputs = crate::harness_inputs([
                 (Vid("x".to_string()), Value::Scalar(x)),
@@ -197,6 +196,146 @@ pub mod native_side {
     impl Default for Setup {
         fn default() -> Self {
             Self::new()
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Cross-verification: each verifier accepts the other's proof. The native
+// challenge is the signature hash, so Zippel draws it through `SignatureHash`.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod cross_tests {
+    use crate::cross::Direction;
+    use ark_bls12_381::{Fr, G1Affine, G1Projective};
+    use ark_crypto_primitives::signature::SignatureScheme;
+    use ark_crypto_primitives::signature::schnorr::{Parameters, Schnorr, Signature};
+    use ark_ec::CurveGroup;
+    use ark_ff::Field;
+    use ark_serialize::CanonicalSerialize;
+    use backend::{ArkBls12_381, Value};
+    use blake2::{Blake2s256, Digest};
+    use zippel::runtime::Challenger;
+
+    type SchnorrSig = Schnorr<G1Projective, Blake2s256>;
+    type V = Value<ArkBls12_381>;
+
+    const MESSAGE: &[u8] = b"cross-verification";
+
+    fn g1(v: &V) -> G1Affine {
+        match v {
+            Value::G1(g) => g.into_affine(),
+            Value::G1Affine(g) => **g,
+            _ => panic!("expected G1, got {v}"),
+        }
+    }
+    fn scalar(v: &V) -> Fr {
+        match v {
+            Value::Scalar(f) => *f,
+            _ => panic!("expected a scalar, got {v}"),
+        }
+    }
+
+    /// The native's challenge `e = H(salt ‖ u ‖ message)`, drawn as Zippel's
+    /// `c = -e`: the native responds `s = r - x·e`, Zippel `z = r + x·c`. A hash
+    /// that is no field element makes the native signer retry with a fresh nonce;
+    /// `valid` says whether this one was.
+    struct SignatureHash<'a> {
+        params: &'a Parameters<G1Projective, Blake2s256>,
+        u: Option<G1Affine>,
+        valid: bool,
+    }
+
+    impl Challenger<ArkBls12_381> for SignatureHash<'_> {
+        fn instance(&mut self, _: &V) {}
+
+        fn message(&mut self, value: &V) {
+            self.u = Some(g1(value));
+        }
+
+        fn challenge(&mut self) -> V {
+            let mut input = Vec::new();
+            self.params.salt.serialize_compressed(&mut input).unwrap();
+            self.u.expect("u").serialize_compressed(&mut input).unwrap();
+            MESSAGE.serialize_compressed(&mut input).unwrap();
+            let e = Fr::from_random_bytes(&Blake2s256::digest(&input));
+            self.valid = e.is_some();
+            Value::Scalar(-e.unwrap_or_default())
+        }
+    }
+
+    #[test]
+    fn native_prove_then_zippel_verify() {
+        cross_verify(Direction::NativeToZippel);
+    }
+
+    #[test]
+    fn zippel_prove_then_native_verify() {
+        cross_verify(Direction::ZippelToNative);
+    }
+
+    fn cross_verify(direction: Direction) {
+        let mut rng = ark_std::test_rng();
+        let params = SchnorrSig::setup(&mut rng).unwrap();
+        let (pk, sk) = SchnorrSig::keygen(&params, &mut rng).unwrap();
+        let (prover, verifier) = crate::cross::compile::<ArkBls12_381>("schnorr", &[]);
+        let inputs = crate::harness_inputs([
+            ("x", Value::Scalar(sk.0)),
+            ("g", Value::g1_affine(params.generator)),
+            ("h", Value::g1_affine(pk)),
+        ]);
+        let hash = || SignatureHash {
+            params: &params,
+            u: None,
+            valid: false,
+        };
+
+        for _ in 0..8 {
+            match direction {
+                Direction::NativeToZippel => {
+                    let sig = SchnorrSig::sign(&params, &sk, MESSAGE, &mut rng).unwrap();
+                    let (s, e) = (sig.prover_response, sig.verifier_challenge);
+                    let u = params.generator * s + pk * e;
+                    assert!(
+                        verifier
+                            .verify_with(
+                                vec![Value::g1(u), Value::Scalar(s)],
+                                crate::lend(&inputs),
+                                &mut hash()
+                            )
+                            .unwrap(),
+                        "Zippel rejects the native signature"
+                    );
+                    assert!(
+                        !verifier
+                            .verify_with(
+                                vec![Value::g1(u), Value::Scalar(s + Fr::ONE)],
+                                crate::lend(&inputs),
+                                &mut hash()
+                            )
+                            .unwrap(),
+                        "Zippel accepts a wrong response"
+                    );
+                }
+                Direction::ZippelToNative => {
+                    let (proof, c) = loop {
+                        let mut h = hash();
+                        let proof = prover.prove_with(crate::lend(&inputs), &mut h).unwrap();
+                        if h.valid {
+                            let c = scalar(&h.challenge());
+                            break (proof, c);
+                        }
+                    };
+                    let sig = Signature {
+                        prover_response: scalar(&proof[1]),
+                        verifier_challenge: -c,
+                    };
+                    assert!(
+                        SchnorrSig::verify(&params, &pk, MESSAGE, &sig).unwrap(),
+                        "the native verifier rejects Zippel's proof"
+                    );
+                }
+            }
         }
     }
 }

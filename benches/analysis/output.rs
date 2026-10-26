@@ -9,12 +9,12 @@
 use std::io::Write as _;
 
 use analyses::frontend::Polynomial;
-use backend::{ArkBls12_381, ArkConfig};
+use backend::{ArkBls12_381, Backend};
 use serde::Serialize;
 
 use crate::memory::peak_rss_mib;
 
-pub type Poly = Polynomial<<ArkBls12_381 as ArkConfig>::F>;
+pub type Poly = Polynomial<<ArkBls12_381 as Backend>::F>;
 
 /// The status of a run.
 #[derive(Serialize, Default, Clone, Copy)]

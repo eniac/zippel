@@ -1,3 +1,4 @@
+use crate::AnalysisBackend;
 use crate::TransClos;
 use crate::Var;
 use crate::backend::{GbBackendKind, GbBasis};
@@ -5,8 +6,7 @@ use crate::error::AnalysisError;
 use crate::frontend::{Block, BlockKind, MonoOrder, Polynomial};
 use crate::ideal::{Ideal, IdealBuilder};
 use crate::uniform::UniformityPropagation;
-use backend::ArkConfig;
-use backend::op::{HasOpFactory, Ref};
+use backend::ir::op::Ref;
 use graph::QDag;
 use lang::typ::Distribution;
 use log::warn;
@@ -25,7 +25,10 @@ fn is_elim_var(v: &Var, dist_map: &Ctx<Ref, Distribution>) -> bool {
 
 /// Build the block ordering for knowledge analysis: elim-block (GrevLex) first,
 /// then the remaining vars (GrevLex).
-fn knowledge_order(result: &Ideal<impl ArkConfig>, dist_map: &Ctx<Ref, Distribution>) -> MonoOrder {
+fn knowledge_order(
+    result: &Ideal<impl AnalysisBackend>,
+    dist_map: &Ctx<Ref, Distribution>,
+) -> MonoOrder {
     let elim_vars: Vec<Var> = result
         .var_order
         .iter()
@@ -59,7 +62,7 @@ pub struct KnowledgeInputs<F: ark_ff::PrimeField> {
 }
 
 /// Perform a knowledge analysis using Groebner bases.
-pub struct KnowledgeAnalysis<C: ArkConfig> {
+pub struct KnowledgeAnalysis<C: AnalysisBackend> {
     /// Gröbner basis of (prover ∪ relation) under the knowledge block order.
     /// Computed in `try_from_inputs`.
     pub basis: GbBasis<C::F>,
@@ -71,7 +74,7 @@ pub struct KnowledgeAnalysis<C: ArkConfig> {
     dist_map: Ctx<Ref, Distribution>,
 }
 
-impl<C: HasOpFactory> KnowledgeAnalysis<C> {
+impl<C: AnalysisBackend> KnowledgeAnalysis<C> {
     /// Encode the prover and relation without computing Gröbner bases.
     pub fn build_inputs(dag: &QDag<C>) -> KnowledgeInputs<C::F> {
         let dist_map = UniformityPropagation::from_dag(dag).distributions;
@@ -255,7 +258,7 @@ mod tests {
         let inputs = KnowledgeAnalysis::<ArkBls12_381>::build_inputs(&g);
         let has_definedness =
             |generators: &[crate::frontend::Polynomial<
-                <ArkBls12_381 as backend::ArkConfig>::F,
+                <ArkBls12_381 as backend::Backend>::F,
             >]| { generators.iter().any(|p| !p.constant_coeff().is_zero()) };
         assert!(
             has_definedness(&inputs.generating_set),

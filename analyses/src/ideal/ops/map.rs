@@ -2,11 +2,11 @@
 //! `body_to_poly`, `body_child`, `rebuild_body_op`, `explode_domain`,
 //! `const_eval_int`.
 
+use crate::AnalysisBackend;
 use graph::{GOp, HOp, Op, mk};
 use lang::ast::BinOp;
 
-use backend::op::HasOpFactory;
-use backend::{ATyp, ArkConfig, Value};
+use backend::{ATyp, Value};
 use share::Ctx;
 
 use crate::Var;
@@ -23,7 +23,10 @@ use super::{EncodeCtx, link_to_polys, link_to_witness};
 /// non-literal (e.g. an instance arg used as a reduce domain). If the op does
 /// not reference such a level, the `None` entry is irrelevant and a dummy
 /// fill is safe. If it does reference a `None` level, we return `None`.
-fn const_eval_int<C: ArkConfig>(op: &HOp<C>, loop_vals: &[Option<Value<C>>]) -> Option<Value<C>> {
+fn const_eval_int<C: AnalysisBackend>(
+    op: &HOp<C>,
+    loop_vals: &[Option<Value<C>>],
+) -> Option<Value<C>> {
     let t = op.typ();
     if !(t.is_fin() || t.is_unit()) {
         return None;
@@ -34,7 +37,7 @@ fn const_eval_int<C: ArkConfig>(op: &HOp<C>, loop_vals: &[Option<Value<C>>]) -> 
 /// The value of `op` if it is built only from constants and loop indices bound
 /// in `loop_vals`; `None` otherwise (a `Ref`, a sample, an unbound index, a
 /// division by zero, ...).
-fn const_fold<C: ArkConfig>(
+fn const_fold<C: AnalysisBackend>(
     op: &GOp<C>,
     loop_vals: &mut Vec<Option<Value<C>>>,
 ) -> Option<Value<C>> {
@@ -77,7 +80,7 @@ fn const_fold<C: ArkConfig>(
 
 /// `body` folded once per element of `domain`, with the element bound as the
 /// innermost loop index.
-fn const_fold_each<C: ArkConfig>(
+fn const_fold_each<C: AnalysisBackend>(
     domain: &HOp<C>,
     body: &HOp<C>,
     loop_vals: &mut Vec<Option<Value<C>>>,
@@ -95,7 +98,7 @@ fn const_fold_each<C: ArkConfig>(
 
 /// Materialize an inline Map/ReduceMap body op-tree into registered
 /// sentinel Vars and return the Var bound to its ideal.
-fn body_to_poly<C: ArkConfig + HasOpFactory>(
+fn body_to_poly<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     body: &HOp<C>,
     loops: &[Var],
@@ -146,7 +149,7 @@ fn body_to_poly<C: ArkConfig + HasOpFactory>(
 
 /// Materialize a body child to an add_op-ready operand: `Op::Value` and
 /// `Op::Ref` stay verbatim; everything else is bound to a fresh sentinel.
-fn body_child<C: ArkConfig + HasOpFactory>(
+fn body_child<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     child: &HOp<C>,
     loops: &[Var],
@@ -166,7 +169,7 @@ fn body_child<C: ArkConfig + HasOpFactory>(
 
 /// Rebuild a compound body op with each child replaced by an add_op-ready
 /// operand (see `body_child`). Returns `None` for an unsupported variant.
-fn rebuild_body_op<C: ArkConfig + HasOpFactory>(
+fn rebuild_body_op<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     body: &HOp<C>,
     loops: &[Var],
@@ -226,7 +229,7 @@ fn rebuild_body_op<C: ArkConfig + HasOpFactory>(
 }
 
 /// Explode a domain `v: [F; n]` into `n` registered element Vars.
-fn explode_domain<C: ArkConfig + HasOpFactory>(
+fn explode_domain<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     domain: &HOp<C>,
     loops: &[Var],
@@ -267,7 +270,7 @@ fn explode_domain<C: ArkConfig + HasOpFactory>(
 
 /// `Op::Map`: explode the domain, apply the body to each element, and
 /// link ideal slot `i` to the body's output for element `i`.
-pub(crate) fn map_op<C: ArkConfig + HasOpFactory>(
+pub(crate) fn map_op<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     var: Var,
     domain: &HOp<C>,
@@ -294,7 +297,7 @@ pub(crate) fn map_op<C: ArkConfig + HasOpFactory>(
 /// `Op::ReduceMap`: explode the domain, map the body per element, and fold
 /// the ideals with `reduce_op_inner`.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn reduce_map_op<C: ArkConfig + HasOpFactory>(
+pub(crate) fn reduce_map_op<C: AnalysisBackend>(
     ctx: &mut EncodeCtx<'_, C>,
     var: Var,
     rop: BinOp,

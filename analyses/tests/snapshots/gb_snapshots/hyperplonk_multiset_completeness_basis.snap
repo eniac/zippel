@@ -1,9 +1,9 @@
 ---
 source: analyses/tests/gb_snapshots/common.rs
-assertion_line: 102
+assertion_line: 141
 expression: value
 ---
-__zippel::node::149 - 1
+__zippel::node::150 - 1
 g_shift_inv[0]*r + g_evs[0]*g_shift_inv[0] - 1
 g_shift_inv[1]*r + g_evs[1]*g_shift_inv[1] - 1
 g_shift_inv[2]*r + g_evs[2]*g_shift_inv[2] - 1

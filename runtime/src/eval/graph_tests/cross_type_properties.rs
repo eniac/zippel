@@ -228,13 +228,13 @@ mod scalar_g1_properties {
 #[cfg(test)]
 mod mle_differential_tests {
     use crate::eval::graph_tests::helpers::*;
-    use ark_poly::DenseMultilinearExtension;
-    use backend::{ATyp, Value, poly_variant::PolyVariant, virtual_polynomial::VirtualPolynomial};
+    use backend::poly::variant::DenseMle;
+    use backend::{ATyp, PolyVariant, Value, VirtualPolynomial};
     use lang::id::Vid;
     use share::Ctx;
 
     type C = TestConfig;
-    type Fr = <C as backend::ArkConfig>::F;
+    type Fr = <C as backend::Backend>::F;
 
     #[test]
     fn test_mle_app_evaluation_differential() {
@@ -253,10 +253,7 @@ mod mle_differential_tests {
         let v2 = Fr::from(30);
         let v3 = Fr::from(40);
 
-        let mle_poly = PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(
-            2,
-            vec![v0, v1, v2, v3],
-        ));
+        let mle_poly = PolyVariant::DenseMle(DenseMle::new(2, vec![v0, v1, v2, v3]));
         let p_val = Value::poly(VirtualPolynomial::from_poly(mle_poly));
 
         let x_val = Value::<C>::random(&mut rng, &ATyp::scalar());
@@ -289,7 +286,7 @@ mod mle_differential_tests {
     /// The MLE with evaluations `[10, 20, 30, 40]`, as a value.
     fn mle_10_to_40() -> Value<C> {
         let evals = [10, 20, 30, 40].map(Fr::from).to_vec();
-        let mle = PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(2, evals));
+        let mle = PolyVariant::DenseMle(DenseMle::new(2, evals));
         Value::poly(VirtualPolynomial::from_poly(mle))
     }
 
@@ -337,14 +334,13 @@ mod mle_differential_tests {
 #[cfg(test)]
 mod multivariate_app_tests {
     use crate::eval::graph_tests::helpers::*;
-    use ark_poly::DenseMVPolynomial;
-    use ark_poly::multivariate::{SparsePolynomial, SparseTerm, Term};
-    use backend::{ATyp, Value, poly_variant::PolyVariant, virtual_polynomial::VirtualPolynomial};
+    use backend::poly::variant::{Multivariate, Term};
+    use backend::{ATyp, PolyVariant, Value, VirtualPolynomial};
     use lang::id::Vid;
     use share::Ctx;
 
     type C = TestConfig;
-    type Fr = <C as backend::ArkConfig>::F;
+    type Fr = <C as backend::Backend>::F;
 
     /// Applying a general polynomial (two variables, degree 2) is `eval`, at a whole point or
     /// one coordinate at a time; fixing a leading variable used to panic at run time ("MLE
@@ -352,8 +348,8 @@ mod multivariate_app_tests {
     #[test]
     fn test_poly_app_is_eval() {
         // p(x0, x1) = 3 + 2·x0 + 5·x0·x1 + 7·x1^2
-        let term = |vars: Vec<(usize, usize)>| SparseTerm::new(vars);
-        let p = SparsePolynomial::from_coefficients_vec(
+        let term = |vars: Vec<(usize, usize)>| Term::new(vars);
+        let p = Multivariate::new(
             2,
             vec![
                 (Fr::from(3), term(vec![])),

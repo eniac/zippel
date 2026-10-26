@@ -1,9 +1,7 @@
 //! `Op::Fft`, `Op::Ifft`, and DFT `Op::Evaluate` encoders.
 
+use crate::AnalysisBackend;
 use ark_ff::{FftField, Field};
-
-use backend::ArkConfig;
-use backend::op::HasOpFactory;
 
 use crate::Var;
 use crate::frontend::Polynomial;
@@ -16,17 +14,13 @@ use super::link_to_polys;
 /// `Op::Ifft(v)`: p = ifft(v) — inverse DFT. The coefficient form `var`
 /// is the IDFT of the evaluation form `a`. Each coefficient is:
 ///   p[j] = (1/N) · Σ_i ω^{-i·j} · v[i]
-/// where ω is a primitive N-th root of unity. The type checker
-/// guarantees N is a 2-adic divisor of |F|-1, so ω always exists.
-pub fn ifft_op<C: ArkConfig + HasOpFactory>(
-    ctx: &mut EncodeCtx<'_, C>,
-    var: &Var,
-    a: &graph::GOp<C>,
-) {
+/// where ω is a primitive N-th root of unity. N is a power of two (the type
+/// checker) within the field's 2-adicity (`Dag::check_backend`), so ω exists.
+pub fn ifft_op<C: AnalysisBackend>(ctx: &mut EncodeCtx<'_, C>, var: &Var, a: &graph::GOp<C>) {
     let v_polys = PolySource::ref_vars(a, &ctx.ideal.vars);
     let n = v_polys.len();
     let omega = C::F::get_root_of_unity(n as u64)
-        .expect("IFFT size must have a root of unity; type checker guarantees this");
+        .expect("compilation rejects FFTs larger than the field's domain");
     let omega_inv = omega.inverse().unwrap();
     let n_inv = C::F::from(n as u64).inverse().unwrap();
     let polys: Vec<Polynomial<C::F>> = (0..n)
@@ -37,16 +31,12 @@ pub fn ifft_op<C: ArkConfig + HasOpFactory>(
 
 /// `Op::Fft(p)`: v = fft(p) — forward DFT. Each evaluation is:
 ///   v[i] = Σ_j ω^{i·j} · p[j]
-/// The type checker guarantees N is a 2-adic divisor of |F|-1.
-pub fn fft_op<C: ArkConfig + HasOpFactory>(
-    ctx: &mut EncodeCtx<'_, C>,
-    var: &Var,
-    a: &graph::GOp<C>,
-) {
+/// N is a power of two within the field's 2-adicity, as for `ifft_op`.
+pub fn fft_op<C: AnalysisBackend>(ctx: &mut EncodeCtx<'_, C>, var: &Var, a: &graph::GOp<C>) {
     let coeff_polys = PolySource::ref_vars(a, &ctx.ideal.vars);
     let n = coeff_polys.len();
     let omega = C::F::get_root_of_unity(n as u64)
-        .expect("FFT size must have a root of unity; type checker guarantees this");
+        .expect("compilation rejects FFTs larger than the field's domain");
     let polys: Vec<Polynomial<C::F>> = (0..n)
         .map(|i| dft_row::<C>(&coeff_polys, omega, i))
         .collect();

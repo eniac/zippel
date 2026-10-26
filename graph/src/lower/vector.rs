@@ -3,7 +3,7 @@
 use super::*;
 use lang::ast::CExps;
 
-impl<C: HasOpFactory> UDag<C> {
+impl<C: Backend> UDag<C> {
     pub(super) fn lower_vec(
         &mut self,
         scope: &mut Scope<'_, C>,

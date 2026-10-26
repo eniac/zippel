@@ -1,7 +1,8 @@
 //! Check op encoder: `assert_op`, `verify_op`, and `check_polys`.
 
-use backend::op::HasOpFactory;
-use backend::{ABase, ATyp, ArkConfig, ArkScalarOps};
+use crate::AnalysisBackend;
+use ark_ff::One;
+use backend::{ABase, ATyp};
 use graph::HOp;
 
 use crate::Var;
@@ -15,7 +16,7 @@ use super::PolySource;
 /// individually, avoiding a high-degree product polynomial in the GB
 /// generating set. What the relation asserts is one of its
 /// [`conditions`](crate::ideal::Ideal::conditions), not a generator.
-pub fn assert_op<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, _pr: &Var, exp: &HOp<C>) {
+pub fn assert_op<C: AnalysisBackend>(ctx: &mut EncodeCtx<'_, C>, _pr: &Var, exp: &HOp<C>) {
     let leaves = ctx.builder.collect_and_leaves(exp);
     for leaf in leaves {
         let polys = check_polys(ctx, &leaf);
@@ -26,7 +27,7 @@ pub fn assert_op<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, _pr: &
 /// Verifier-side check encoder. Like `assert`, its polynomials go to
 /// [`Ideal::conditions`](crate::ideal::Ideal::conditions), not the
 /// generators.
-pub fn verify_op<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, _pr: &Var, exp: &HOp<C>) {
+pub fn verify_op<C: AnalysisBackend>(ctx: &mut EncodeCtx<'_, C>, _pr: &Var, exp: &HOp<C>) {
     let leaves = ctx.builder.collect_and_leaves(exp);
     for leaf in leaves {
         let polys = check_polys(ctx, &leaf);
@@ -36,14 +37,11 @@ pub fn verify_op<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, _pr: &
 
 /// Shared core for `assert_op` / `verify_op`: the Bool operand's polys, each
 /// minus 1, which vanish exactly when the check holds.
-fn check_polys<C: ArkConfig + HasOpFactory>(
-    ctx: &EncodeCtx<'_, C>,
-    exp: &HOp<C>,
-) -> Vec<Polynomial<C::F>> {
+fn check_polys<C: AnalysisBackend>(ctx: &EncodeCtx<'_, C>, exp: &HOp<C>) -> Vec<Polynomial<C::F>> {
     let src = PolySource::from_ref_vars(&ctx.ideal.vars, exp);
     match src.typ() {
         ATyp::Base(ABase::Bool) => {
-            let one = Polynomial::lit(&C::FOps::one());
+            let one = Polynomial::lit(&C::F::one());
             src.polys.iter().map(|p| p - &one).collect()
         }
         _ => {

@@ -1,14 +1,11 @@
 /// `EvalError`, the failure type raised while interpreting a DAG node.
 pub mod error;
 
-use ark_ff::{One, Zero};
-use backend::op::{GOp, HOp, Op, Ref};
-use backend::{ATyp, ArkConfig, SelectedEvalShape, Value};
+use backend::ir::op::{GOp, HOp, Op, Ref};
+use backend::{ATyp, Backend, Field, SelectedEvalShape, Value};
 use error::EvalError;
 use lang::ast::{BinOp, Exclusion};
 use rand::RngCore;
-use rand::SeedableRng;
-use rand::rngs::StdRng;
 use rayon::prelude::*;
 use share::Ctx;
 use std::collections::HashMap;
@@ -34,7 +31,7 @@ use std::collections::HashMap;
 /// `runtime::graph::run_graph` sync-channel handling); the bare
 /// `Op::Challenge` arm here preserves the runtime's existing `ThreadRng`
 /// fallback behavior.
-fn selected_eval_shape<C: ArkConfig>(p: &HOp<C>, range: &lang::ast::CRange) -> SelectedEvalShape {
+fn selected_eval_shape<C: Backend>(p: &HOp<C>, range: &lang::ast::CRange) -> SelectedEvalShape {
     let (input_num_vars, max_degree) = match p.typ() {
         ATyp::Uni(d) => (1, d),
         ATyp::Mle(n) => (n, 1),
@@ -52,7 +49,7 @@ fn selected_eval_shape<C: ArkConfig>(p: &HOp<C>, range: &lang::ast::CRange) -> S
 /// depends on the element currently being iterated. Leaves that can never
 /// mention a loop parameter (`Value`, `Ref`, `Random`, `Challenge`) are
 /// `false`.
-pub fn op_has_loop_param<C: ArkConfig>(op: &GOp<C>, target_level: usize) -> bool {
+pub fn op_has_loop_param<C: Backend>(op: &GOp<C>, target_level: usize) -> bool {
     match op {
         Op::LoopParam(level, _) => *level == target_level,
         Op::Bin(_, a, b, _) => {
@@ -102,7 +99,7 @@ pub fn op_has_loop_param<C: ArkConfig>(op: &GOp<C>, target_level: usize) -> bool
 }
 
 /// Check whether an `Op` represents a constant literal value of 2 (either as an index or a scalar field element).
-fn is_const_two<C: ArkConfig>(op: &GOp<C>) -> bool {
+fn is_const_two<C: Backend>(op: &GOp<C>) -> bool {
     match op {
         Op::Value(val) => match val {
             Value::Index(2) => true,
@@ -113,7 +110,7 @@ fn is_const_two<C: ArkConfig>(op: &GOp<C>) -> bool {
     }
 }
 
-fn match_bit_extraction_ast<C: ArkConfig>(
+fn match_bit_extraction_ast<C: Backend>(
     op: &GOp<C>,
     outer_level: usize,
     inner_level: usize,
@@ -145,7 +142,7 @@ fn match_bit_extraction_ast<C: ArkConfig>(
     *l_inner == inner_level
 }
 
-fn is_value_one<C: ArkConfig>(v: &Value<C>) -> bool {
+fn is_value_one<C: Backend>(v: &Value<C>) -> bool {
     match v {
         Value::Scalar(f) => *f == C::F::one(),
         Value::Index(1) => true,
@@ -153,7 +150,7 @@ fn is_value_one<C: ArkConfig>(v: &Value<C>) -> bool {
     }
 }
 
-fn is_value_zero<C: ArkConfig>(v: &Value<C>) -> bool {
+fn is_value_zero<C: Backend>(v: &Value<C>) -> bool {
     match v {
         Value::Scalar(f) => f.is_zero(),
         Value::Index(0) => true,
@@ -161,7 +158,7 @@ fn is_value_zero<C: ArkConfig>(v: &Value<C>) -> bool {
     }
 }
 
-fn has_zero_one_at_start<C: ArkConfig>(v: &Value<C>) -> bool {
+fn has_zero_one_at_start<C: Backend>(v: &Value<C>) -> bool {
     match v {
         Value::Vec(elements) => {
             elements.len() >= 2 && is_value_zero(&elements[0]) && is_value_one(&elements[1])
@@ -174,7 +171,7 @@ fn has_zero_one_at_start<C: ArkConfig>(v: &Value<C>) -> bool {
     }
 }
 
-fn verify_domain_is_canonical_indices<C: ArkConfig>(dom_val: &Value<C>, n: usize) -> bool {
+fn verify_domain_is_canonical_indices<C: Backend>(dom_val: &Value<C>, n: usize) -> bool {
     match dom_val {
         Value::VecIndex(v) => {
             if v.len() != n {
@@ -212,7 +209,7 @@ fn verify_domain_is_canonical_indices<C: ArkConfig>(dom_val: &Value<C>, n: usize
 ///
 /// Handles all runtime value representations: `VecScalar`, `VecIndex`,
 /// `VecBool`, and heterogeneous `Vec`.
-fn is_canonical_hypercube_vector<C: ArkConfig>(val: &Value<C>, i: usize, k: usize) -> bool {
+fn is_canonical_hypercube_vector<C: Backend>(val: &Value<C>, i: usize, k: usize) -> bool {
     match val {
         Value::VecScalar(v) => {
             v.len() == k
@@ -247,7 +244,7 @@ fn is_canonical_hypercube_vector<C: ArkConfig>(val: &Value<C>, i: usize, k: usiz
     }
 }
 
-fn verify_domain_is_canonical_coordinates<C: ArkConfig>(
+fn verify_domain_is_canonical_coordinates<C: Backend>(
     dom_val: &Value<C>,
     n: usize,
     k: usize,
@@ -264,10 +261,10 @@ fn verify_domain_is_canonical_coordinates<C: ArkConfig>(
     }
 }
 
-fn try_match_canonical_hypercube_ast<C: ArkConfig>(
+fn try_match_canonical_hypercube_ast<C: Backend>(
     fixed: &HOp<C>,
     env: &HashMap<Ref, Value<C>>,
-    rng: &mut impl rand::RngCore,
+    rng: &mut impl Sampler<C>,
     loop_params: &[Value<C>],
     check_sink: &mut Vec<bool>,
 ) -> Result<bool, EvalError> {
@@ -313,7 +310,7 @@ fn try_match_canonical_hypercube_ast<C: ArkConfig>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn verify_hypercube_coordinates<C: ArkConfig, R: RngCore>(
+fn verify_hypercube_coordinates<C: Backend, R: Sampler<C>>(
     fixed: &HOp<C>,
     env: &HashMap<Ref, Value<C>>,
     rng: &mut R,
@@ -348,14 +345,14 @@ fn verify_hypercube_coordinates<C: ArkConfig, R: RngCore>(
     Ok(true)
 }
 
-/// Sumcheck fast path: detect `reduce(+, [eval<0>(poly, loop_param) for _ in hypercube])`
+/// Sumcheck fast path: detect `reduce(+, [eval<k>(poly, loop_param) for _ in hypercube])`
 /// and route to the fused hypercube reduction kernel.
 ///
 /// Pattern requirements (all checked structurally on the Op tree, not on values):
 ///   1. op == BinOp::Add
 ///   2. body == Op::Evaluate(poly, Some(range), Some(fixed))
 ///   3. fixed must reference this ReduceMap's own loop parameter
-///   4. range.len() == 1 && range.start == 0  (canonical eval<0>)
+///   4. range.len() == 1 (one free variable)
 ///   5. domain type is Vec(_, n) where n == 2^k for some k  (complete hypercube)
 ///
 /// Returns `Ok(None)` if the structural pattern is not matched (the caller
@@ -374,8 +371,8 @@ fn try_eval_reduce_map_fused_hypercube<C, R>(
     check_sink: &mut Vec<bool>,
 ) -> Result<Option<Value<C>>, EvalError>
 where
-    C: ArkConfig,
-    R: RngCore,
+    C: Backend,
+    R: Sampler<C>,
 {
     // (1) Must be additive reduction
     if op != BinOp::Add {
@@ -406,8 +403,8 @@ where
         return Ok(None);
     }
 
-    // (4) Canonical eval<0>: single free variable at position 0
-    if range.len() != 1 || range.start() != 0 {
+    // (4) Single free variable
+    if range.len() != 1 {
         return Ok(None);
     }
 
@@ -482,7 +479,7 @@ where
     }
 }
 
-fn is_vector_value<C: ArkConfig>(v: &Value<C>) -> bool {
+fn is_vector_value<C: Backend>(v: &Value<C>) -> bool {
     matches!(
         v,
         Value::VecIndex(_)
@@ -494,6 +491,49 @@ fn is_vector_value<C: ArkConfig>(v: &Value<C>) -> bool {
             | Value::VecG2Affine(_)
             | Value::Vec(_)
     )
+}
+
+/// Where `Op::Random` (and, outside a run, `Op::Challenge`) draws from: any RNG,
+/// or [`PureBody`] where nothing may sample.
+pub trait Sampler<C: Backend> {
+    /// A uniformly random value of type `typ`, resampled while `exclusion`
+    /// excludes it.
+    ///
+    /// # Errors
+    /// None for an RNG; the result leaves room for a sampler that can fail.
+    fn sample(
+        &mut self,
+        typ: &ATyp,
+        exclusion: Option<&Exclusion<Value<C>, usize>>,
+    ) -> Result<Value<C>, EvalError>;
+}
+
+impl<C: Backend, R: RngCore> Sampler<C> for R {
+    fn sample(
+        &mut self,
+        typ: &ATyp,
+        exclusion: Option<&Exclusion<Value<C>, usize>>,
+    ) -> Result<Value<C>, EvalError> {
+        let mut value = Value::random(self, typ);
+        while exclusion.is_some_and(|x| value.is_excluded_by(x)) {
+            value = Value::random(self, typ);
+        }
+        Ok(value)
+    }
+}
+
+/// The sampler of what never samples (a loop body, which lowering keeps pure;
+/// a challenge's exclusion, a lookup): drawing is a bug.
+pub(crate) struct PureBody;
+
+impl<C: Backend> Sampler<C> for PureBody {
+    fn sample(
+        &mut self,
+        _: &ATyp,
+        _: Option<&Exclusion<Value<C>, usize>>,
+    ) -> Result<Value<C>, EvalError> {
+        unreachable!("a loop body or an exclusion samples")
+    }
 }
 
 /// Evaluate a closed `GOp` in `env`, drawing randomness from `rng`.
@@ -519,8 +559,8 @@ pub fn eval_op<C, R>(
     check_sink: &mut Vec<bool>,
 ) -> Result<Value<C>, EvalError>
 where
-    C: ArkConfig,
-    R: RngCore,
+    C: Backend,
+    R: Sampler<C>,
 {
     eval_op_with_loop_params(op, env, rng, &[], check_sink)
 }
@@ -536,8 +576,8 @@ pub fn eval_op_with_loop_params<C, R>(
     check_sink: &mut Vec<bool>,
 ) -> Result<Value<C>, EvalError>
 where
-    C: ArkConfig,
-    R: RngCore,
+    C: Backend,
+    R: Sampler<C>,
 {
     match op {
         Op::Value(v) => Ok(v.clone()),
@@ -601,15 +641,11 @@ where
                     })
                 })
                 .transpose()?;
-            let mut value = Value::random(rng, typ);
-            while exclusion.as_ref().is_some_and(|x| value.is_excluded_by(x)) {
-                value = Value::random(rng, typ);
-            }
-            Ok(value)
+            rng.sample(typ, exclusion.as_ref())
         }
         Op::Evaluate(p, None, None) => {
             let p_val = eval_op_with_loop_params(p, env, rng, loop_params, check_sink)?;
-            Ok(p_val.value_fft())
+            Ok(p_val.value_fft(&p.typ()))
         }
         Op::Evaluate(p, None, Some(x)) => {
             let p_val = eval_op_with_loop_params(p, env, rng, loop_params, check_sink)?;
@@ -636,6 +672,11 @@ where
                     expected: "vector".to_string(),
                     got: format!("{}", dom),
                 });
+            }
+            if let Some(gathered) =
+                try_eval_affine_gather(body, &dom, env, rng, loop_params, check_sink)?
+            {
+                return Ok(gathered);
             }
             let results = eval_loop_body_each(body, env, dom.into_elements(), loop_params)?;
             Ok(Value::value_vec(results))
@@ -682,8 +723,9 @@ where
             eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?
                 .value_interpolate_owned(None)?,
         ),
+        // At the operand's declared type, like `Op::Coef`.
         Op::Fft(a) => {
-            Ok(eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?.value_fft())
+            Ok(eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?.value_fft(&a.typ()))
         }
         Op::Mle(a) => {
             // Consume the input via `value_mle_owned` to avoid a 500 MB
@@ -723,10 +765,95 @@ where
     }
 }
 
+/// `[a[f(x)] for x in dom]`, `a` loop-invariant and `f(x) = s·x + t` built from `+` and
+/// `*` over the loop parameter and loop-invariant indices: one gather of `a` at natively
+/// computed indices (a contiguous run is a view of `a`), instead of an interpreted read
+/// per element. `None` for any other body or domain, or on index overflow.
+fn try_eval_affine_gather<C: Backend, R: Sampler<C>>(
+    body: &HOp<C>,
+    dom: &Value<C>,
+    env: &HashMap<Ref, Value<C>>,
+    rng: &mut R,
+    loop_params: &[Value<C>],
+    check_sink: &mut Vec<bool>,
+) -> Result<Option<Value<C>>, EvalError> {
+    let level = loop_params.len();
+    let Op::Ram(array, index) = body.get() else {
+        return Ok(None);
+    };
+    let Value::VecIndex(xs) = dom else {
+        return Ok(None);
+    };
+    if xs.is_empty() || op_has_loop_param(array.get(), level) {
+        return Ok(None);
+    }
+    let Some((s, t)) = affine_index(index, level, &mut |op| match eval_op_with_loop_params(
+        op,
+        env,
+        rng,
+        loop_params,
+        check_sink,
+    )? {
+        Value::Index(i) => Ok(Some(i)),
+        _ => Ok(None),
+    })?
+    else {
+        return Ok(None);
+    };
+    let Some(indices) = xs
+        .iter()
+        .map(|&x| s.checked_mul(x)?.checked_add(t))
+        .collect::<Option<Vec<usize>>>()
+    else {
+        return Ok(None);
+    };
+    let array = eval_op_with_loop_params(array, env, rng, loop_params, check_sink)?;
+    Ok(Some(array.ram_ref(&Value::VecIndex(indices.into()))))
+}
+
+/// `op` as `(s, t)` with `op = s·x + t` in the loop parameter `x` at `level`, reading each
+/// loop-invariant operand with `invariant`; `None` unless `op` is built from that
+/// parameter and invariant indices by `+` and `*` (one factor invariant).
+fn affine_index<C: Backend>(
+    op: &HOp<C>,
+    level: usize,
+    invariant: &mut impl FnMut(&HOp<C>) -> Result<Option<usize>, EvalError>,
+) -> Result<Option<(usize, usize)>, EvalError> {
+    if !op_has_loop_param(op.get(), level) {
+        return Ok(invariant(op)?.map(|t| (0, t)));
+    }
+    Ok(match op.get() {
+        Op::LoopParam(l, _) if *l == level => Some((1, 0)),
+        Op::Bin(BinOp::Add, a, b, _) => {
+            let (Some((s1, t1)), Some((s2, t2))) = (
+                affine_index(a, level, invariant)?,
+                affine_index(b, level, invariant)?,
+            ) else {
+                return Ok(None);
+            };
+            s1.checked_add(s2).zip(t1.checked_add(t2))
+        }
+        Op::Bin(BinOp::Mul, a, b, _) => {
+            let (Some((s1, t1)), Some((s2, t2))) = (
+                affine_index(a, level, invariant)?,
+                affine_index(b, level, invariant)?,
+            ) else {
+                return Ok(None);
+            };
+            match (s1, s2) {
+                (_, 0) => s1.checked_mul(t2).zip(t1.checked_mul(t2)),
+                (0, _) => s2.checked_mul(t1).zip(t2.checked_mul(t1)),
+                _ => None,
+            }
+        }
+        _ => None,
+    })
+}
+
 /// Evaluate a pure loop body once per element, pushing the element onto the
 /// loop-parameter stack. Bodies are pure templates (no Random/Challenge), so
 /// the per-task rng is a throwaway; rayon parallelizes across elements.
-fn eval_loop_body_each<C: ArkConfig>(
+fn eval_loop_body_each<C: Backend>(
     body: &HOp<C>,
     env: &HashMap<Ref, Value<C>>,
     elems: Vec<Value<C>>,
@@ -737,11 +864,10 @@ fn eval_loop_body_each<C: ArkConfig>(
         .map(|elem| {
             let mut params: Vec<Value<C>> = loop_params.to_vec();
             params.push(elem);
-            let mut rng = StdRng::seed_from_u64(0);
-            // Loop bodies are pure templates — no Check nodes — so the
-            // check_sink is a throwaway.
+            // Loop bodies are pure templates — no samples, no Check nodes —
+            // so neither draws nor checks have anywhere to go.
             let mut check_sink = Vec::new();
-            eval_op_with_loop_params(body, env, &mut rng, &params, &mut check_sink)
+            eval_op_with_loop_params(body, env, &mut PureBody, &params, &mut check_sink)
         })
         .collect()
 }
@@ -749,13 +875,13 @@ fn eval_loop_body_each<C: ArkConfig>(
 /// Collect every `Op::Ref` leaf reachable from `op`, in DFS order with
 /// duplicates retained. Used by the runtime to snapshot referenced node
 /// values into the `eval_op` env before dispatch.
-pub fn collect_refs<C: ArkConfig>(op: &GOp<C>) -> Vec<Ref> {
+pub fn collect_refs<C: Backend>(op: &GOp<C>) -> Vec<Ref> {
     let mut acc = Vec::new();
     collect_refs_into(op, &mut acc);
     acc
 }
 
-fn collect_refs_into<C: ArkConfig>(op: &GOp<C>, acc: &mut Vec<Ref>) {
+fn collect_refs_into<C: Backend>(op: &GOp<C>, acc: &mut Vec<Ref>) {
     match op {
         Op::Random(_, x) | Op::Challenge(_, x) => {
             if let Some(v) = x.as_ref().and_then(Exclusion::values) {
@@ -811,10 +937,10 @@ mod graph_tests;
 mod tests {
     use super::*;
     use backend::ArkBn254;
-    use backend::op::mk;
+    use backend::ir::op::mk;
     use rand::rngs::ThreadRng;
 
-    type Fr = <ArkBn254 as ArkConfig>::F;
+    type Fr = <ArkBn254 as Backend>::F;
     type TestValue = Value<ArkBn254>;
 
     #[test]
@@ -903,7 +1029,9 @@ mod tests {
             )
             .unwrap()
         };
-        let zero = mk::<ArkBn254>(Op::Value(Value::VecScalar(vec![Zero::zero()].into())));
+        let zero = mk::<ArkBn254>(Op::Value(Value::VecScalar(
+            vec![<ArkBn254 as Backend>::F::zero()].into(),
+        )));
         for exclusion in [None, Some(Exclusion::Values(zero))] {
             for op in [
                 Op::Random(ATyp::scalar(), exclusion.clone()),

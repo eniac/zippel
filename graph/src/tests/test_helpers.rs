@@ -5,8 +5,7 @@ use crate::node::ArgKind;
 /// This module provides utilities for building graphs to test their
 /// structure; `runtime` executes lowered graphs in its own tests.
 use crate::{GOp, Node, Ref, UDag, mk};
-use backend::op::HasOpFactory;
-use backend::{ATyp, ArkBls12_381, ArkConfig, ArkScalarOps, Value};
+use backend::{ATyp, ArkBls12_381, Backend, Field, Value};
 use lang::id::Vid;
 use lang::typ::{Distribution, Nothing, Qualifier};
 use petgraph::graph::NodeIndex;
@@ -17,12 +16,12 @@ pub type TestConfig = ArkBls12_381;
 pub use crate::testing::{lowered, parse_and_check};
 
 /// Helper to create a simple DAG for testing operations
-pub struct GraphBuilder<C: ArkConfig> {
+pub struct GraphBuilder<C: Backend> {
     dag: UDag<C>,
     input_node: NodeIndex,
 }
 
-impl<C: HasOpFactory> GraphBuilder<C> {
+impl<C: Backend> GraphBuilder<C> {
     /// Create a new graph builder with an input node
     pub fn new() -> Self {
         let mut dag = UDag::new();
@@ -64,22 +63,22 @@ impl<C: HasOpFactory> GraphBuilder<C> {
 }
 
 /// Create a scalar field value for testing
-pub fn scalar<C: ArkConfig>(n: u64) -> Value<C> {
-    Value::Scalar(C::FOps::from_usize(n as usize))
+pub fn scalar<C: Backend>(n: u64) -> Value<C> {
+    Value::Scalar(C::F::from_usize(n as usize))
 }
 
 /// Create a zero scalar
-pub fn zero_scalar<C: ArkConfig>() -> Value<C> {
-    Value::Scalar(C::FOps::zero())
+pub fn zero_scalar<C: Backend>() -> Value<C> {
+    Value::Scalar(C::F::zero())
 }
 
 /// Create a one scalar
-pub fn one_scalar<C: ArkConfig>() -> Value<C> {
-    Value::Scalar(C::FOps::one())
+pub fn one_scalar<C: Backend>() -> Value<C> {
+    Value::Scalar(C::F::one())
 }
 
 /// Compare two values for equality (within epsilon for floating point)
-pub fn values_equal<C: ArkConfig>(a: &Value<C>, b: &Value<C>) -> bool {
+pub fn values_equal<C: Backend>(a: &Value<C>, b: &Value<C>) -> bool {
     match (a, b) {
         (Value::Scalar(a), Value::Scalar(b)) => a == b,
         (Value::G1(a), Value::G1(b)) => a == b,

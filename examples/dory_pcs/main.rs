@@ -1,18 +1,17 @@
-use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_ff::Zero;
 use ark_std::UniformRand;
-use backend::{ArkBls12_381, ArkConfig, Value};
+use backend::{ArkBls12_381, Backend, Pairing, Value};
 use lang::id::Vid;
 use share::Ctx;
 
 use crate::common;
 use crate::common::size;
 
-type F = <ArkBls12_381 as ArkConfig>::F;
-type G1 = <ArkBls12_381 as ArkConfig>::G1;
-type G2 = <ArkBls12_381 as ArkConfig>::G2;
-type P = <ArkBls12_381 as ArkConfig>::P;
-type GT = PairingOutput<P>;
+type F = <ArkBls12_381 as Backend>::F;
+type G1 = <ArkBls12_381 as Backend>::G1;
+type G2 = <ArkBls12_381 as Backend>::G2;
+type P = <ArkBls12_381 as Backend>::P;
+type GT = backend::GT<ArkBls12_381>;
 
 /// eq(x, r) over x ∈ {0,1}^n with r[0] the low bit.
 fn eq_weights(r: &[F]) -> Vec<F> {
@@ -28,7 +27,7 @@ fn eq_weights(r: &[F]) -> Vec<F> {
 }
 
 fn multi_pair(g1: &[G1], g2: &[G2]) -> GT {
-    P::multi_pairing(g1.iter().copied(), g2.iter().copied())
+    P::multi_pairing(g1, g2)
 }
 
 fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
@@ -42,8 +41,8 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381
     let g2_vec: Vec<G2> = (0..nv).map(|_| G2::rand(&mut rng)).collect();
     let h1 = G1::rand(&mut rng);
     let h2 = G2::rand(&mut rng);
-    let ht = P::pairing(h1, h2);
-    let mut chi = vec![P::pairing(g1_vec[0], g2_vec[0])];
+    let ht = P::pairing(&h1, &h2);
+    let mut chi = vec![P::pairing(&g1_vec[0], &g2_vec[0])];
     let (mut delta_1r, mut delta_2r) = (vec![GT::zero()], vec![GT::zero()]);
     for k in 1..=k {
         let (half, full) = (1 << (k - 1), 1 << k);

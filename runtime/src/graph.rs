@@ -3,13 +3,13 @@
 //! scheduler reads on every step, computed once here: each node's distinct
 //! successors, the nodes ready at the start, the input marker and the checks.
 
+use crate::eval::Sampler;
 use crate::eval::error::EvalError;
-use backend::{ArkConfig, Value};
+use backend::{Backend, Value};
 use graph::{Dag, GOp, Node, Op, UDag};
 use lang::ast::Exclusion;
 use petgraph::Direction;
 use petgraph::graph::NodeIndex;
-use rand::rngs::ThreadRng;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -21,7 +21,7 @@ use crate::inbox::Inbox;
 /// A node never stores its own value: when it finishes, it delivers the
 /// value into the [`Inbox`] of each successor that reads it, and the value
 /// is freed once the last of them has run.
-pub(crate) struct NodeState<C: ArkConfig> {
+pub(crate) struct NodeState<C: Backend> {
     /// Operands delivered by the nodes this one reads; taken when it runs.
     pub(crate) inbox: Inbox<Value<C>>,
     /// Set when the node runs, to catch a scheduler running it twice.
@@ -31,7 +31,7 @@ pub(crate) struct NodeState<C: ArkConfig> {
     remaining_deps: AtomicUsize,
 }
 
-impl<C: ArkConfig> NodeState<C> {
+impl<C: Backend> NodeState<C> {
     /// Records that the predecessor `from` has finished, taking its value if
     /// it produced one, and returns whether this node is now ready to run.
     pub(crate) fn receive(&self, from: NodeIndex, value: Option<&Value<C>>) -> bool {
@@ -48,7 +48,7 @@ impl<C: ArkConfig> NodeState<C> {
 /// The jobs of one `rayon::scope` drive it concurrently (see
 /// [`MutexGraph::run_graph`]). A node refuses to run twice, so a
 /// `MutexGraph` runs once; build a new one per run.
-pub struct MutexGraph<C: ArkConfig> {
+pub struct MutexGraph<C: Backend> {
     pub(crate) dag: Dag<C, NodeState<C>>,
     /// Each node's distinct successors, sorted, by node index: a run spawns
     /// ready nodes in the same order every time (the order changes which
@@ -62,7 +62,7 @@ pub struct MutexGraph<C: ArkConfig> {
     checks: Vec<NodeIndex>,
 }
 
-impl<C: ArkConfig> MutexGraph<C> {
+impl<C: Backend> MutexGraph<C> {
     /// Wrap a scheduled DAG for execution: give every compute node a fresh
     /// [`NodeState`] and compute the scheduling tables.
     ///
@@ -185,13 +185,14 @@ impl<C: ArkConfig> MutexGraph<C> {
     pub(crate) fn evaluate(
         &self,
         node: NodeIndex,
+        sampler: &mut impl Sampler<C>,
     ) -> Result<(Value<C>, Option<bool>), RuntimeError> {
         let (Node::Op(op, state) | Node::Transcr(op, state)) = &self.dag[node] else {
             unreachable!("node {node:?} has nothing to compute")
         };
         let env = state.inbox.take_all();
         let mut checks = Vec::new();
-        let value = match crate::eval::eval_op(op, &env, &mut ThreadRng::default(), &mut checks) {
+        let value = match crate::eval::eval_op(op, &env, sampler, &mut checks) {
             Err(EvalError::DivisionByZero) => return Err(RuntimeError::DivisionByZero),
             value => {
                 value.expect("runtime invariant violation: eval_op failed on a scheduled node")
@@ -219,7 +220,7 @@ impl<C: ArkConfig> MutexGraph<C> {
         let env = state.inbox.take_all();
         exclusion.clone().map(|x| {
             x.map_order(|n| n.node).map_values(|v| {
-                crate::eval::eval_op(&v, &env, &mut ThreadRng::default(), &mut Vec::new())
+                crate::eval::eval_op(&v, &env, &mut crate::eval::PureBody, &mut Vec::new())
                     .expect("runtime invariant violation: an exclusion failed to evaluate")
             })
         })

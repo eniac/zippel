@@ -66,60 +66,56 @@ too.
 
 ## Folder layout
 
-```
+```text
 experiments/
-├── Cargo.toml             excluded from the workspace — see Cargo.toml notes
-├── run_all.sh             orchestrator: sweeps threads × systems → one CSV
-├── run_sweep.sh           older orchestrator (mostly superseded by run_all.sh)
-├── run_sweep_safe.sh      older orchestrator with crash-recovery
-├── README.md              this file
+├── Cargo.toml             workspace member; select with -p experiments
+├── build.rs               locate external baseline sources for NCLOC
+├── run_all.sh             thread/system sweep using bench_all
+├── dhat_top.py            heap-profile summaries
+├── README.md
 ├── src/
-│   ├── lib.rs             public surface: re-exports each system + Timing + SAMPLES
-│   ├── cache.rs           on-disk SRS cache (artifacts/*.bin); skips long keygens on re-run
-│   │
-│   ├── schnorr.rs         each *.rs file holds two pub mods:
-│   ├── sumcheck.rs           - zippel_side::Setup     compiles .zippel, holds inputs
-│   ├── ipa.rs                - native_side::Setup     calls the upstream crate / vendored copy
-│   ├── kzg.rs              both expose `Setup::new(...)` + `Setup::time_protocol(...) -> Timing`
-│   ├── pari.rs
-│   ├── groth16.rs
-│   ├── pst13.rs
-│   ├── hyrax.rs
-│   ├── spartan.rs
-│   ├── dekart.rs
-│   ├── kzh.rs
-│   ├── dory.rs
-│   ├── hyperplonk.rs
-│   │
-│   ├── pari_upstream/     vendored garuda-pari (was outside arkworks-0.6 / fixes for fair compare)
-│   ├── pst13_upstream/    vendored ark-poly-commit::multilinear_pc with two open() fixes
-│   ├── hyrax_upstream/    vendored ark-poly-commit::hyrax with flat-matrix row_mul rewrite
-│   ├── sumcheck_upstream/ vendored hyperplonk sumcheck (ported to ark 0.6)
-│   ├── dekart_upstream/   vendored aptos-dkg dekart_univariate_v2 (ported to ark 0.6)
-│   ├── kzh_upstream/      vendored irondict KZH-k, dense non-zk path (ported to ark 0.6)
-│   ├── dory_upstream/     vendored a16z dory-pcs, transparent path, concrete BLS12-381
-│   ├── hyperplonk_upstream/ vendored Espresso HyperPlonk SNARK over multilinear KZG (ported to ark 0.6)
-│   │
+│   ├── lib.rs             timing, heap measurement and module exports
+│   ├── cache.rs           on-disk SRS cache
+│   ├── cross.rs           fixed-challenge cross-verification helpers (test-only)
+│   ├── ncloc.rs           protocol and native baseline source counts
+│   ├── spartan.rs         protocol harness + inline cross_tests
+│   ├── sumcheck.rs
+│   ├── …                  other protocol harnesses
+│   ├── upstream/
+│   │   ├── mod.rs
+│   │   ├── ark_spartan/
+│   │   ├── dekart/
+│   │   ├── dory/
+│   │   ├── hyperplonk/
+│   │   ├── hyrax/
+│   │   ├── kzh/
+│   │   ├── libspartan/    test-only conformance/cross-verification copy
+│   │   ├── pari/
+│   │   ├── pst13/
+│   │   └── sumcheck/
 │   └── bin/
-│       ├── bench_all.rs           main entry point used by run_all.sh
-│       ├── schnorr.rs, sumcheck.rs, …   single-system one-shot runners (legacy / debug)
-│       ├── groth16_profile.rs     groth16 profiling harness
-│       ├── spartan_bench.rs       libspartan-only timing
-│       ├── dekart.rs              dekart zippel vs native side-by-side (--sweep, --ell)
-│       ├── dekart_profile.rs      dekart prover-only timing of truncated protos
-│       └── spartan_compare.rs     spartan zippel vs native side-by-side
-│
-├── benches/               criterion benches for a couple of systems (rarely used now)
-├── artifacts/             auto-created at runtime — on-disk SRS cache (see cache.rs)
-└── results/               saved CSV outputs from previous benchmark runs
+│       ├── bench_all.rs           canonical comparison and CSV driver
+│       ├── dalek_msm.rs           dalek 4/5 backend comparison
+│       ├── msm_micro.rs           native/backend/runtime MSM comparison
+│       ├── *_profile.rs          protocol-stage diagnostics
+│       ├── spartan_bench.rs       native NIZK/SNARK diagnostic
+│       └── …                     per-protocol CLIs with additional controls
+├── tests/mem.rs            transient-heap counter regression
+└── artifacts/              generated SRS cache (ignored by Git)
 ```
 
-`*_upstream/` modules exist where the original upstream code had a bug,
-performance issue, or used an older arkworks version. The vendored copy is
-the actual baseline the bench measures against (so the comparison is "zippel
-vs a well-implemented native PST13", not "zippel vs ark-poly-commit-0.6's
-known-buggy MSM scheduler"). Each `*_upstream/mod.rs` documents what was
-changed and why at the top of the file.
+Protocol files own their Zippel/native harnesses and inline cross-tests. Native
+implementations are imported through `experiments::upstream::<name>`. Each
+`upstream/<name>/mod.rs` records provenance and local changes. The libspartan
+copy is test-only; production libspartan measurements use the pinned dependency.
+
+Historical CSVs and analysis outputs live in
+[`../artifact/results/`](../artifact/results/). The paper's pinned measurements
+retain their original contents and filenames.
+Use `bench_all --systems schnorr` for the former Schnorr one-shot command and
+`bench_all --systems spartan --sizes 18` for the former Spartan comparison.
+The legacy sweep scripts and four duplicate Criterion wrappers are removed;
+`run_all.sh` owns thread sweeps. The workspace-root `benches/` remains separate.
 
 ## Driver: `run_all.sh`
 
