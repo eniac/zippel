@@ -1,8 +1,8 @@
-// Sample a univariate polynomial one point at a time via single-scalar
+// Evaluate a univariate polynomial one point at a time via single-scalar
 // application `p(t)`. Binary `eval(p, vector)` on a univariate poly is a type
 // error: a one-variable residual would misread the vector as one multivariate
 // coordinate point instead of a batch of scalar sample points.
-fn sample_univariate<F: Field, MAX_DEGREE_CONST: Size>(
+fn eval_univariate<F: Field, MAX_DEGREE_CONST: Size>(
     instance p: Uni<F, MAX_DEGREE_CONST>,
     instance points: [F; MAX_DEGREE_CONST + 1],
 ) -> [F; MAX_DEGREE_CONST + 1] {
@@ -39,7 +39,7 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, V: 3..NUM_VARS_CONST + 1, MAX_
         ],
     );
     let eval_points = points;
-    let evs = sample_univariate(round_poly, eval_points);
+    let evs = eval_univariate(round_poly, eval_points);
 
     evs_msg <- evs;
     verify(prev_eval == evs_msg[0] + evs_msg[1]);
@@ -61,7 +61,7 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
 ) -> Unit {
     let residual_poly = eval(curr_poly, [ch]);
     let eval_points = points;
-    let evs = sample_univariate(residual_poly, eval_points);
+    let evs = eval_univariate(residual_poly, eval_points);
     evs_msg <- evs;
     verify(prev_eval == evs_msg[0] + evs_msg[1]);
 
@@ -78,19 +78,12 @@ proto sumcheck<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
     instance claimed_sum: F,
     witness p: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>,
 ) where
-    let points = 0..MAX_DEGREE_CONST + 1;
-    let round_poly0 = reduce(
-        +,
-        [
-            eval<0>(p, tail)
-            for tail in [
-                [i / 2 ^ j % 2 for j in 0..NUM_VARS_CONST - 1]
-                for i in 0..2 ^ (NUM_VARS_CONST - 1)
-            ]
-        ],
-    );
-    let evs0 = sample_univariate(round_poly0, points);
-    claimed_sum == evs0[0] + evs0[1]
+    // The sum of p over the Boolean hypercube {0,1}^NUM_VARS_CONST.
+    claimed_sum
+        == reduce(
+            +,
+            [eval(p, [i / 2 ^ j % 2 for j in 0..NUM_VARS_CONST]) for i in 0..2 ^ NUM_VARS_CONST],
+        )
 {
     let points = 0..MAX_DEGREE_CONST + 1;
     let round_poly0 = reduce(
@@ -103,7 +96,7 @@ proto sumcheck<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
             ]
         ],
     );
-    let evs0 = sample_univariate(round_poly0, points);
+    let evs0 = eval_univariate(round_poly0, points);
     evs0_msg <- evs0;
     verify(claimed_sum == evs0_msg[0] + evs0_msg[1]);
 

@@ -1866,7 +1866,7 @@ fn eq_weights<G: Group, F: Scalar<G>, EK: 2..21>(instance x: [F; EK]) -> [F; 2^E
 
     #[test]
     fn parse_sc_recurse_d3_prefix() {
-        let src = r#"fn sc_recurse_d3<G: Group, F: Scalar<G>, M: Size, V: 3..M + 1>(
+        let src = r#"fn sumcheck_deg3<G: Group, F: Scalar<G>, M: Size, V: 3..M + 1>(
     instance curr_poly:       Poly<F, V, 3>,
     instance points:          [F; 4],
     instance prev_challenges: [F; M - V + 1],
@@ -1908,7 +1908,7 @@ fn eq_weights<G: Group, F: Scalar<G>, EK: 2..21>(instance x: [F; EK]) -> [F; 2^E
     z_beta_sc <- c_sc * r_eval_sc + r_beta_sc;
     verify(dot(g_evs_d3, z_vec_sc) + h_evs * z_delta_sc == comm_evs * c_sc + delta_sc);
 
-    sc_recurse_d3(residual_poly, points, new_challenges, next_prev, r_next, curr_round + 1, g_evs_d3, h_evs)
+    sumcheck_deg3(residual_poly, points, new_challenges, next_prev, r_next, curr_round + 1, g_evs_d3, h_evs)
 }"#;
         let (decls, errors) = parse_decls(src);
         assert!(errors.is_empty(), "errors: {:?}", errors);

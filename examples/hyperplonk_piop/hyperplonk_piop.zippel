@@ -305,7 +305,7 @@ fn gate_identity<F: Field, S: Size, N: 2 ^ S>(
 // f_shift[i] / g_shift[i], v[1 + 2y] = v[y]·v[y + N], and v[2N - 1] = 0,
 // with every g_shift[i] nonzero, witnessed by its inverse. Then
 // v[N - 1] · Π g_shift == Π f_shift.
-fn product_tree<F: Field, S: Size, N: 2 ^ S>(
+fn is_product_tree<F: Field, S: Size, N: 2 ^ S>(
     instance f_shift: [F; N],
     instance g_shift: [F; N],
     instance g_shift_inv: [F; N],
@@ -352,7 +352,7 @@ proto hyperplonk_piop<F: Field, S: Size, N: 2 ^ S>(
     //         Π (r + s_id + r2·w) == Π (r + s_sigma + r2·w),
     //       which is the form of the relation the proto attests to.
     // The grand-product identity is stated through the roots of the
-    // per-column product trees: product_tree gives
+    // per-column product trees: is_product_tree gives
     // v_x[N - 1] · Π g_shift_x == Π f_shift_x for each column x, and makes
     // every g_shift_x nonzero, so
     //   v_a[N - 1] · v_b[N - 1] · v_c[N - 1] == 1
@@ -369,9 +369,9 @@ proto hyperplonk_piop<F: Field, S: Size, N: 2 ^ S>(
         == [0 for _ in 0..N]
         // (2) Copy constraint, at the roots of the product trees.
         && v_a_evs[N - 1] * v_b_evs[N - 1] * v_c_evs[N - 1] == 1
-        && product_tree(f_shift_a, g_shift_a, g_shift_a_inv, v_a_evs)
-        && product_tree(f_shift_b, g_shift_b, g_shift_b_inv, v_b_evs)
-        && product_tree(f_shift_c, g_shift_c, g_shift_c_inv, v_c_evs)
+        && is_product_tree(f_shift_a, g_shift_a, g_shift_a_inv, v_a_evs)
+        && is_product_tree(f_shift_b, g_shift_b, g_shift_b_inv, v_b_evs)
+        && is_product_tree(f_shift_c, g_shift_c, g_shift_c_inv, v_c_evs)
 {
     // =============================================================
     // PHASE 1 — Gate identity ZeroCheck

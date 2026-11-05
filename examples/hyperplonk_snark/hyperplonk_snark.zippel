@@ -11,7 +11,7 @@
 // Polynomials are multilinear over their evaluation tables, variable 0 the
 // least significant bit, as in arkworks.
 
-// The eq/draw ranges also cover the fixed five-challenge opening batch at S = 2.
+// The eq/draw_challenges ranges also cover the fixed five-challenge opening batch at S = 2.
 // Lagrange (eq) basis at x: 2^J evaluations of eq(x, ·), LSB-first.
 fn eq_weights<F: Field>(instance x: [F; 1]) -> [F; 2] {
     [1 - x[0], x[0]]
@@ -30,13 +30,13 @@ fn eq_eval<F: Field, S: Size>(instance x: [F; S], instance y: [F; S]) -> F {
 }
 
 // Draw one challenge per entry of the placeholder.
-fn draw<F: Field>(instance _placeholder: [F; 1]) -> [F; 1] {
+fn draw_challenges<F: Field>(instance _placeholder: [F; 1]) -> [F; 1] {
     c <- challenge<F>;
     [c]
 }
 
-fn draw<F: Field, S: Size, DK: 2..S + 4>(instance placeholder: [F; DK]) -> [F; DK] {
-    let prev = draw(placeholder[0..DK - 1]);
+fn draw_challenges<F: Field, S: Size, DK: 2..S + 4>(instance placeholder: [F; DK]) -> [F; DK] {
+    let prev = draw_challenges(placeholder[0..DK - 1]);
     c <- challenge<F>;
     prev ++ [c]
 }
@@ -57,13 +57,13 @@ fn iota<F: Field, S: Size, IK: 2..S + 1>(
 
 // Product tree of the product check: layer by layer, each entry the product
 // of two adjacent entries of the layer below, 2^PK - 1 entries in all.
-fn prod_tree<F: Field>(witness v: [F; 2]) -> [F; 1] {
+fn product_tree<F: Field>(witness v: [F; 2]) -> [F; 1] {
     [v[0] * v[1]]
 }
 
-fn prod_tree<F: Field, S: Size, PK: 2..S + 1>(witness v: [F; 2 ^ PK]) -> [F; 2 ^ PK - 1] {
+fn product_tree<F: Field, S: Size, PK: 2..S + 1>(witness v: [F; 2 ^ PK]) -> [F; 2 ^ PK - 1] {
     let layer = v[0, 2..2 ^ PK] * v[1, 2..2 ^ PK + 1];
-    layer ++ prod_tree(layer)
+    layer ++ product_tree(layer)
 }
 
 // ===== Sumcheck, one family per round degree =====
@@ -71,7 +71,7 @@ fn prod_tree<F: Field, S: Size, PK: 2..S + 1>(witness v: [F; 2 ^ PK]) -> [F; 2 ^
 // to the previous challenge, sends the round polynomial's evaluations at
 // 0..D, and draws the next challenge.
 
-fn sc_d4<F: Field, S: Size, V: 3..S + 1>(
+fn sumcheck_deg4<F: Field, S: Size, V: 3..S + 1>(
     witness p: Poly<F, V, 4>,
     instance points: [F; 5],
     instance prev_challenges: [F; S - V + 1],
@@ -91,10 +91,10 @@ fn sc_d4<F: Field, S: Size, V: 3..S + 1>(
     verify(prev_eval == evs[0] + evs[1]);
     let g = interpolate(points, evs);
     r_next <- challenge<F>;
-    sc_d4(residual, points, prev_challenges ++ [r_next], g(r_next), r_next)
+    sumcheck_deg4(residual, points, prev_challenges ++ [r_next], g(r_next), r_next)
 }
 
-fn sc_d4<F: Field, S: Size>(
+fn sumcheck_deg4<F: Field, S: Size>(
     witness p: Poly<F, 2, 4>,
     instance points: [F; 5],
     instance prev_challenges: [F; S - 1],
@@ -110,7 +110,7 @@ fn sc_d4<F: Field, S: Size>(
     {|final_eval: g(r_final), challenges: prev_challenges ++ [r_final]|}
 }
 
-fn sc_d5<F: Field, S: Size, V: 3..S + 1>(
+fn sumcheck_deg5<F: Field, S: Size, V: 3..S + 1>(
     witness p: Poly<F, V, 5>,
     instance points: [F; 6],
     instance prev_challenges: [F; S - V + 1],
@@ -130,10 +130,10 @@ fn sc_d5<F: Field, S: Size, V: 3..S + 1>(
     verify(prev_eval == evs[0] + evs[1]);
     let g = interpolate(points, evs);
     r_next <- challenge<F>;
-    sc_d5(residual, points, prev_challenges ++ [r_next], g(r_next), r_next)
+    sumcheck_deg5(residual, points, prev_challenges ++ [r_next], g(r_next), r_next)
 }
 
-fn sc_d5<F: Field, S: Size>(
+fn sumcheck_deg5<F: Field, S: Size>(
     witness p: Poly<F, 2, 5>,
     instance points: [F; 6],
     instance prev_challenges: [F; S - 1],
@@ -149,7 +149,7 @@ fn sc_d5<F: Field, S: Size>(
     {|final_eval: g(r_final), challenges: prev_challenges ++ [r_final]|}
 }
 
-fn sc_d2<F: Field, S: Size, V: 3..S + 1>(
+fn sumcheck_deg2<F: Field, S: Size, V: 3..S + 1>(
     witness p: Poly<F, V, 2>,
     instance points: [F; 3],
     instance prev_challenges: [F; S - V + 1],
@@ -169,10 +169,10 @@ fn sc_d2<F: Field, S: Size, V: 3..S + 1>(
     verify(prev_eval == evs[0] + evs[1]);
     let g = interpolate(points, evs);
     r_next <- challenge<F>;
-    sc_d2(residual, points, prev_challenges ++ [r_next], g(r_next), r_next)
+    sumcheck_deg2(residual, points, prev_challenges ++ [r_next], g(r_next), r_next)
 }
 
-fn sc_d2<F: Field, S: Size>(
+fn sumcheck_deg2<F: Field, S: Size>(
     witness p: Poly<F, 2, 2>,
     instance points: [F; 3],
     instance prev_challenges: [F; S - 1],
@@ -291,7 +291,7 @@ proto hyperplonk_snark<
     // 2. Gate identity: zerocheck of f = q0 w0 + q1 w1 + q2 w2 + q3 w0 w1 + q4,
     //    a sumcheck of f(x)·eq(x, r_g) with degree-4 rounds.
     // ---------------------------------------------------------------
-    let r_g = draw(placeholder);
+    let r_g = draw_challenges(placeholder);
     let f_gate = mle(q0) * w0_m + mle(q1) * w1_m + mle(q2) * w2_m + mle(q3) * w0_m * w1_m + mle(q4);
     let f_hat = f_gate * mle(eq_weights(r_g));
 
@@ -308,7 +308,7 @@ proto hyperplonk_snark<
     verify(0 == g_evs0[0] + g_evs0[1]);
     let g_poly0 = interpolate(pts5, g_evs0);
     rg0 <- challenge<F>;
-    let gate_sc = sc_d4(f_hat, pts5, [rg0], g_poly0(rg0), rg0);
+    let gate_sc = sumcheck_deg4(f_hat, pts5, [rg0], g_poly0(rg0), rg0);
     let zg = gate_sc.challenges;
 
     // ---------------------------------------------------------------
@@ -328,7 +328,7 @@ proto hyperplonk_snark<
     let d1 = w1 + (s1 * beta + ones * gamma);
     let d2 = w2 + (s2 * beta + ones * gamma);
     let frac = n0 * n1 * n2 / (d0 * d1 * d2);
-    let prod = prod_tree(frac) ++ [0];
+    let prod = product_tree(frac) ++ [0];
 
     c_frac <- dot(frac, ck0);
     c_prod <- dot(prod, ck0);
@@ -343,7 +343,7 @@ proto hyperplonk_snark<
         + mle(d0) * alpha * mle(d1) * mle(d2) * frac_m
         + mle(n0) * -alpha * mle(n1) * mle(n2);
 
-    let r_p = draw(placeholder);
+    let r_p = draw_challenges(placeholder);
     let q_hat = q_perm * mle(eq_weights(r_p));
 
     let pts6 = 0..6;
@@ -359,7 +359,7 @@ proto hyperplonk_snark<
     verify(0 == p_evs0[0] + p_evs0[1]);
     let p_poly0 = interpolate(pts6, p_evs0);
     rp0 <- challenge<F>;
-    let perm_sc = sc_d5(q_hat, pts6, [rp0], p_poly0(rp0), rp0);
+    let perm_sc = sumcheck_deg5(q_hat, pts6, [rp0], p_poly0(rp0), rp0);
     let zp = perm_sc.challenges;
 
     // ---------------------------------------------------------------
@@ -368,7 +368,7 @@ proto hyperplonk_snark<
     let pc0 = [0] ++ zp[0..S - 1];
     let pc1 = [1] ++ zp[0..S - 1];
     let fin = [0] ++ [1 for _ in 0..S - 1];
-    let r_pi = draw([0, 0]);
+    let r_pi = draw_challenges([0, 0]);
     let rpi_ext = r_pi ++ placeholder;
     let rpi = rpi_ext[0..S];
 
@@ -436,7 +436,7 @@ proto hyperplonk_snark<
     //    sumcheck sum_j g_j(b)·eq(b, z_j) down to one point a2, and open
     //    g' = sum_j eq(a2, z_j)·g_j there.
     // ---------------------------------------------------------------
-    let et = eq_weights(draw([0, 0, 0, 0, 0]));
+    let et = eq_weights(draw_challenges([0, 0, 0, 0, 0]));
     let g_zp = prod * et[0]
         + frac * et[4]
         + s0 * et[7]
@@ -478,7 +478,7 @@ proto hyperplonk_snark<
     verify(b_claim == b_evs0[0] + b_evs0[1]);
     let b_poly0 = interpolate(pts3, b_evs0);
     rb0 <- challenge<F>;
-    let batch_sc = sc_d2(b_poly, pts3, [rb0], b_poly0(rb0), rb0);
+    let batch_sc = sumcheck_deg2(b_poly, pts3, [rb0], b_poly0(rb0), rb0);
     let a2 = batch_sc.challenges;
 
     let a_zp = eq_eval(a2, zp);

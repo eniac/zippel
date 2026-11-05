@@ -6,7 +6,7 @@
 // w ∈ F^(N-n), z ∈ F^N, A/B/C are m×N (stored flat as [F; m*N]).
 
 // Matrix-vector product for an m×N matrix (flat, row-major) times an N-vector.
-fn matvec<G: Group, F: Scalar<G>, N: Size, m: Size>(
+fn mat_vec<G: Group, F: Scalar<G>, N: Size, m: Size>(
     instance mat: [F; m * N],
     instance v: [F; N],
 ) -> [F; m] {
@@ -24,7 +24,7 @@ proto r1cs_sigma<G: Group, F: Scalar<G>, N: Size, n: Size, m: Size>(
 
     // Witness inputs
     witness w: [F; N - n], // Witness portion of z
-) where matvec(mat_A, x ++ w) * matvec(mat_B, x ++ w) == matvec(mat_C, x ++ w) {
+) where mat_vec(mat_A, x ++ w) * mat_vec(mat_B, x ++ w) == mat_vec(mat_C, x ++ w) {
     // ======== Prover Phase 1: Compute and commit ========
 
     // Build full vector z = (x, w)
@@ -34,9 +34,9 @@ proto r1cs_sigma<G: Group, F: Scalar<G>, N: Size, n: Size, m: Size>(
     let r = random<F>;
 
     // Compute matrix-vector products: z_X = X·z
-    let z_A = matvec(mat_A, z);
-    let z_B = matvec(mat_B, z);
-    let z_C = matvec(mat_C, z);
+    let z_A = mat_vec(mat_A, z);
+    let z_B = mat_vec(mat_B, z);
+    let z_C = mat_vec(mat_C, z);
 
     // Commit to z_A, z_B, z_C with fresh blinding
     let omega_A = random<F>;
@@ -47,9 +47,9 @@ proto r1cs_sigma<G: Group, F: Scalar<G>, N: Size, n: Size, m: Size>(
     let padded_r = [0 for _ in 0..n] ++ [r for _ in 0..N - n];
 
     // Compute r_X = X·(0^n, r)
-    let r_A = matvec(mat_A, padded_r);
-    let r_B = matvec(mat_B, padded_r);
-    let r_C = matvec(mat_C, padded_r);
+    let r_A = mat_vec(mat_A, padded_r);
+    let r_B = mat_vec(mat_B, padded_r);
+    let r_C = mat_vec(mat_C, padded_r);
 
     // Commit to r_A, r_B, r_C with fresh blinding
     let omega_A' = random<F>;
@@ -85,9 +85,9 @@ proto r1cs_sigma<G: Group, F: Scalar<G>, N: Size, n: Size, m: Size>(
     // ======== Verifier checks ========
 
     // Compute s_X = X·(x, s)
-    let s_A = matvec(mat_A, x ++ t_s);
-    let s_B = matvec(mat_B, x ++ t_s);
-    let s_C = matvec(mat_C, x ++ t_s);
+    let s_A = mat_vec(mat_A, x ++ t_s);
+    let s_B = mat_vec(mat_B, x ++ t_s);
+    let s_C = mat_vec(mat_C, x ++ t_s);
 
     // Check 1–3: C_X + γ·C'_X == Commit(ck, s_X; σ_X)
     verify(t_C_A + gamma * t_C_A' == dot(ck, s_A) + h_base * t_sigma_A);

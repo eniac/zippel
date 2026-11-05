@@ -33,7 +33,7 @@ fn draw_taus<G: Group, F: Scalar<G>, M: Size, DK: 2..M + 1>(
     prev ++ [t]
 }
 
-fn sc_recurse_d3<G: Group, F: Scalar<G>, M: Size, V: 3..M + 1>(
+fn sumcheck_deg3<G: Group, F: Scalar<G>, M: Size, V: 3..M + 1>(
     instance curr_poly: Poly<F, V, 3>,
     instance points: [F; 4],
     instance prev_challenges: [F; M - V + 1],
@@ -68,10 +68,10 @@ fn sc_recurse_d3<G: Group, F: Scalar<G>, M: Size, V: 3..M + 1>(
     // ZK for round polys, do a full port of `prove_quad` — do NOT
     // resurrect this half-form.
 
-    sc_recurse_d3(residual_poly, points, new_challenges, next_prev, r_next)
+    sumcheck_deg3(residual_poly, points, new_challenges, next_prev, r_next)
 }
 
-fn sc_recurse_d3<G: Group, F: Scalar<G>, M: Size>(
+fn sumcheck_deg3<G: Group, F: Scalar<G>, M: Size>(
     instance curr_poly: Poly<F, 2, 3>,
     instance points: [F; 4],
     instance prev_challenges: [F; M - 1],
@@ -93,7 +93,7 @@ fn sc_recurse_d3<G: Group, F: Scalar<G>, M: Size>(
     {|final_eval: final_eval, challenges: prev_challenges ++ [r_final]|}
 }
 
-fn sc_recurse_d2<G: Group, F: Scalar<G>, M: Size, V: 3..M + 1>(
+fn sumcheck_deg2<G: Group, F: Scalar<G>, M: Size, V: 3..M + 1>(
     instance curr_poly: Poly<F, V, 2>,
     instance points: [F; 3],
     instance prev_challenges: [F; M - V + 1],
@@ -117,13 +117,13 @@ fn sc_recurse_d2<G: Group, F: Scalar<G>, M: Size, V: 3..M + 1>(
     let new_challenges = prev_challenges ++ [r_next];
 
     // NOTE (2026-08-30): removed the redundant per-round Pedersen
-    // commit + Schnorr PoK block (see sc_recurse_d3 V-generic for
+    // commit + Schnorr PoK block (see sumcheck_deg3 V-generic for
     // the full rationale).
 
-    sc_recurse_d2(residual_poly, points, new_challenges, next_prev, r_next)
+    sumcheck_deg2(residual_poly, points, new_challenges, next_prev, r_next)
 }
 
-fn sc_recurse_d2<G: Group, F: Scalar<G>, M: Size>(
+fn sumcheck_deg2<G: Group, F: Scalar<G>, M: Size>(
     instance curr_poly: Poly<F, 2, 2>,
     instance points: [F; 3],
     instance prev_challenges: [F; M - 1],
@@ -139,7 +139,7 @@ fn sc_recurse_d2<G: Group, F: Scalar<G>, M: Size>(
     let final_eval = g(r_final);
 
     // NOTE (2026-08-30): removed the redundant per-round Pedersen
-    // commit + Schnorr PoK block (see sc_recurse_d3 V-generic for
+    // commit + Schnorr PoK block (see sumcheck_deg3 V-generic for
     // the full rationale).
 
     {|final_eval: final_eval, challenges: prev_challenges ++ [r_final]|}
@@ -333,10 +333,10 @@ proto spartan<G: Group, F: Scalar<G>, M: Size>(
     let prev1 = g1_r1(rx0);
 
     // NOTE (2026-08-30): removed the phase-1 round-0 per-round
-    // Pedersen commit + Schnorr PoK block (see sc_recurse_d3
+    // Pedersen commit + Schnorr PoK block (see sumcheck_deg3
     // V-generic for the full rationale).
 
-    let sc1 = sc_recurse_d3(g_poly, pts3, [rx0], prev1, rx0);
+    let sc1 = sumcheck_deg3(g_poly, pts3, [rx0], prev1, rx0);
     let rx = sc1.challenges;
     let e_x = sc1.final_eval;
 
@@ -423,10 +423,10 @@ proto spartan<G: Group, F: Scalar<G>, M: Size>(
     let prev2 = g2_r1(ry0);
 
     // NOTE (2026-08-30): removed the phase-2 round-0 per-round
-    // Pedersen commit + Schnorr PoK block (see sc_recurse_d3
+    // Pedersen commit + Schnorr PoK block (see sumcheck_deg3
     // V-generic for the full rationale).
 
-    let sc2 = sc_recurse_d2(m_poly, pts2, [ry0], prev2, ry0);
+    let sc2 = sumcheck_deg2(m_poly, pts2, [ry0], prev2, ry0);
     let ry = sc2.challenges;
     let e_y = sc2.final_eval;
 
