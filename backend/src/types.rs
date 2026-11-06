@@ -5,29 +5,6 @@ use lang::typ::{CKind, CTyp, Nothing};
 use share::Ctx;
 use std::fmt;
 
-/// Binomial coefficient `C(n, k)`.
-///
-/// Used by `ATyp::physical_len` to count coefficients of `VPoly(n, m)` — the
-/// number of multi-indices `(i₁, …, iₙ) ∈ ℕⁿ` with `i₁ + ⋯ + iₙ ≤ m`
-/// equals `C(m + n, n)`.
-///
-/// Panics on overflow — this indicates a type whose physical layout
-/// exceeds `usize`, which is a genuine error, not a silent clamp.
-pub fn binomial(n: usize, k: usize) -> usize {
-    if k > n {
-        return 0;
-    }
-    let k = k.min(n - k);
-    let mut result: usize = 1;
-    for i in 0..k {
-        result = result
-            .checked_mul(n - i)
-            .expect("binomial: intermediate overflow")
-            / (i + 1);
-    }
-    result
-}
-
 /// Atomic (non-aggregate) arkworks-level type.
 ///
 /// `ABase` is the leaf of [`ATyp`]: it names a concrete runtime element kind
@@ -61,12 +38,11 @@ pub enum ABase {
 ///
 /// `ATyp` is the second of Zippel's two type levels: source types
 /// (`lang::typ::Typ`) are converted here by [`ATyp::from_ctyp`] once sizes are
-/// concrete and kinds are known. The essential difference from the source
-/// level is that the single source constructor `Typ::Poly(_, num_vars,
-/// max_degree)` is split into the three distinct polynomial encodings
-/// [`ATyp::Uni`], [`ATyp::Mle`] and [`ATyp::VPoly`], each with its own
-/// coefficient layout (see [`ATyp::physical_len`]). Every `Op<C, R>` in the
-/// graph IR reports its result as an `ATyp`.
+/// concrete and kinds are known. The source polynomial types `Typ::Uni`,
+/// `Typ::Mle` and `Typ::Poly` become the polynomial encodings [`ATyp::Uni`],
+/// [`ATyp::Mle`] and [`ATyp::VPoly`], each with its own coefficient layout
+/// (see [`ATyp::physical_len`]). Every `Op<C, R>` in the graph IR reports its
+/// result as an `ATyp`.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Hash)]
 pub enum ATyp {
     /// Base type
@@ -82,8 +58,10 @@ pub enum ATyp {
     /// Multilinear extension over `n` boolean variables. Coefficient /
     /// evaluation count is `2^n`.
     Mle(usize),
-    /// Virtual (multivariate) polynomial `VPoly(n, m)`: `n` variables and
-    /// **max total degree** `m`. Coefficient count is `C(m + n, n)`.
+    /// Virtual (multivariate) polynomial `VPoly(n, d)`: `n` variables and
+    /// degree at most `d` **in each variable**. Coefficient count is
+    /// `(d + 1)^n`, one per multi-index `k` with every `k_i ≤ d` (`Mle(n)`'s
+    /// count at `d = 1`).
     VPoly(usize, usize),
 }
 
@@ -148,14 +126,14 @@ impl ATyp {
     pub fn mle(n: usize) -> Self {
         ATyp::Mle(n)
     }
-    /// A virtual polynomial in `num_vars` variables of max total degree
-    /// `max_degree`.
-    pub fn vpoly(num_vars: usize, max_degree: usize) -> Self {
-        ATyp::VPoly(num_vars, max_degree)
+    /// A virtual polynomial in `num_vars` variables of degree at most
+    /// `degree` in each variable.
+    pub fn vpoly(num_vars: usize, degree: usize) -> Self {
+        ATyp::VPoly(num_vars, degree)
     }
     /// View this type as `(element, length)`. For `Uni(m)`, the length
     /// is the coefficient count `m + 1` (not the degree). This matches
-    /// `size()` and makes `Vec<F, m + 1>` consistent with `Poly<F, 1, m>`.
+    /// `size()` and makes `Vec<F, m + 1>` consistent with `Uni<F, m>`.
     ///
     /// # Panics
     /// Panics if `self` is neither a `Vec` nor a `Uni`, or if the `Uni`
@@ -250,8 +228,8 @@ impl ATyp {
     ///
     /// - `Uni(m)` has `m + 1` coefficients.
     /// - `Mle(n)` has `2^n` evaluations over the boolean hypercube.
-    /// - `VPoly(n, m)` has `C(m + n, n)` multi-indices with total
-    ///   degree `≤ m`.
+    /// - `VPoly(n, d)` has `(d + 1)^n` multi-indices with every entry
+    ///   `≤ d`.
     ///
     /// # Panics
     /// Panics if the slot count is not representable: a `Vec` whose
@@ -271,11 +249,10 @@ impl ATyp {
             ATyp::Mle(n) => 1usize
                 .checked_shl((*n).try_into().expect("physical_len: Mle n exceeds u32"))
                 .expect("physical_len: Mle 1 << n overflow"),
-            ATyp::VPoly(n, m) => binomial(
-                m.checked_add(*n)
-                    .expect("physical_len: VPoly m + n overflow"),
-                *n,
-            ),
+            ATyp::VPoly(n, d) => d
+                .checked_add(1)
+                .and_then(|base| base.checked_pow((*n).try_into().ok()?))
+                .expect("physical_len: VPoly (d + 1)^n overflow"),
         }
     }
 
@@ -286,15 +263,13 @@ impl ATyp {
     /// `Scalar` kind becomes [`ABase::Scalar`], a `Pairing` kind becomes
     /// [`ABase::GT`], and a `Group` kind is routed to `G1` or `G2` by looking
     /// for a `Pairing` kind in `kctx` that mentions it (defaulting to `G1`
-    /// when the config declares no pairing). `CTyp::Poly` is split into the
-    /// three arkworks polynomial encodings by convention: `Poly(_, 1, m)` is
-    /// `Uni(m)`, `Poly(_, n, 1)` with `n >= 2` is `Mle(n)`, and anything else
-    /// is `VPoly(m, m * n)`. Arm order matters — `Poly(_, 1, 1)` is a
-    /// degree-1 univariate, not a one-variable multilinear.
+    /// when the config declares no pairing). Each polynomial encoding maps to
+    /// its own: `Uni(_, d)` to `Uni(d)`, `Mle(_, n)` to `Mle(n)` (also for
+    /// `n = 1`), and the general `Poly(_, m, n)` to `VPoly(m, n)`: both bound
+    /// the degree in each variable.
     ///
-    /// Returns `None` if a base type is absent from `kctx`, if a nested field
-    /// or element type fails to convert, or if the `VPoly` total-degree bound
-    /// `m * n` overflows.
+    /// Returns `None` if a base type is absent from `kctx`, or if a nested
+    /// field or element type fails to convert.
     ///
     /// # Panics
     /// Panics on a `Range` or `SizeVar` kind: those are eliminated by
@@ -326,15 +301,10 @@ impl ATyp {
                 }
             }
             CTyp::Vec(deref!(t), n) => Some(ATyp::Vec(Box::new(ATyp::from_ctyp(t, kctx)?), n.node)),
-            // CTyp::Poly(F, num_vars, max_degree) maps by convention:
-            //   (1, m)  → Uni(m)   — univariate, m = max degree
-            //   (n, 1)  → Mle(n)   — multilinear, n = num variables (n≥2)
-            //   (m, n)  → VPoly(m, m*n) — general, total degree bound m*n
-            // Order matters: Poly(F,1,1) hits the Uni arm (degree-1 univariate
-            // = linear), not the Mle arm (which requires n≥2).
-            CTyp::Poly(_, m_vars, m) if m_vars.node == 1 => Some(ATyp::Uni(m.node)),
-            CTyp::Poly(_, n, d) if d.node == 1 && n.node >= 2 => Some(ATyp::Mle(n.node)),
-            CTyp::Poly(_, m, n) => Some(ATyp::VPoly(m.node, m.node.checked_mul(n.node)?)),
+            // Each source encoding has its arkworks counterpart.
+            CTyp::Uni(_, d) => Some(ATyp::Uni(d.node)),
+            CTyp::Mle(_, n) => Some(ATyp::Mle(n.node)),
+            CTyp::Poly(_, m, n) => Some(ATyp::VPoly(m.node, n.node)),
             CTyp::Fin(r) => Some(ATyp::fin(r.clone())),
             // A field-only integer is a field element of the configured field, not an index.
             CTyp::FieldLiteral => Some(ATyp::scalar()),
@@ -539,21 +509,21 @@ impl Lub for ATyp {
             }
 
             (ATyp::Uni(n1), ATyp::Uni(n2)) => Ok(ATyp::uni(*n1.max(n2))),
+            // `Mle(n)` is `VPoly(n, 1)` and `Uni(d)` is `VPoly(1, d)`.
             (ATyp::Mle(n1), ATyp::Mle(n2)) => Ok(if n1 == n2 {
                 ATyp::mle(*n1)
             } else {
-                let v = *n1.max(n2);
-                ATyp::vpoly(v, v)
+                ATyp::vpoly(*n1.max(n2), 1)
             }),
             (ATyp::Uni(n), ATyp::Mle(m)) | (ATyp::Mle(m), ATyp::Uni(n)) => {
-                Ok(ATyp::vpoly(*m, (*n).max(*m)))
+                Ok(ATyp::vpoly(*m, (*n).max(1)))
             }
             (ATyp::VPoly(m1, n1), ATyp::VPoly(m2, n2)) => Ok(ATyp::vpoly(*m1.max(m2), *n1.max(n2))),
             (ATyp::VPoly(m, n), ATyp::Uni(d)) | (ATyp::Uni(d), ATyp::VPoly(m, n)) => {
                 Ok(ATyp::vpoly(*m, *n.max(d)))
             }
             (ATyp::VPoly(m, n), ATyp::Mle(v)) | (ATyp::Mle(v), ATyp::VPoly(m, n)) => {
-                Ok(ATyp::vpoly(*m.max(v), (*n).max(*v)))
+                Ok(ATyp::vpoly(*m.max(v), (*n).max(1)))
             }
             (ATyp::Uni(n1), ATyp::Base(ABase::Scalar))
             | (ATyp::Base(ABase::Scalar), ATyp::Uni(n1)) => Ok(ATyp::uni(*n1)),
@@ -588,21 +558,21 @@ impl Lub for ATyp {
                 Ok(ATyp::vec(&t, *n))
             }
             (ATyp::Uni(n1), ATyp::Uni(n2)) => Ok(ATyp::uni(*n1.max(n2))),
+            // `Mle(n)` is `VPoly(n, 1)` and `Uni(d)` is `VPoly(1, d)`.
             (ATyp::Mle(n1), ATyp::Mle(n2)) => Ok(if n1 == n2 {
                 ATyp::mle(*n1)
             } else {
-                let v = *n1.max(n2);
-                ATyp::vpoly(v, v)
+                ATyp::vpoly(*n1.max(n2), 1)
             }),
             (ATyp::Uni(n), ATyp::Mle(m)) | (ATyp::Mle(m), ATyp::Uni(n)) => {
-                Ok(ATyp::vpoly(*m, (*n).max(*m)))
+                Ok(ATyp::vpoly(*m, (*n).max(1)))
             }
             (ATyp::VPoly(m1, n1), ATyp::VPoly(m2, n2)) => Ok(ATyp::vpoly(*m1.max(m2), *n1.max(n2))),
             (ATyp::VPoly(m, n), ATyp::Uni(d)) | (ATyp::Uni(d), ATyp::VPoly(m, n)) => {
                 Ok(ATyp::vpoly(*m, *n.max(d)))
             }
             (ATyp::VPoly(m, n), ATyp::Mle(v)) | (ATyp::Mle(v), ATyp::VPoly(m, n)) => {
-                Ok(ATyp::vpoly(*m.max(v), (*n).max(*v)))
+                Ok(ATyp::vpoly(*m.max(v), (*n).max(1)))
             }
             (ATyp::Uni(n1), ATyp::Base(ABase::Scalar))
             | (ATyp::Base(ABase::Scalar), ATyp::Uni(n1)) => Ok(ATyp::uni(*n1)),
@@ -622,15 +592,14 @@ impl Lub for ATyp {
             (ATyp::Uni(n1), ATyp::Uni(n2)) => Ok(ATyp::uni(
                 n1.checked_add(*n2).ok_or_else(|| LubError::mul(&a, &b))?,
             )),
-            // Mle * Mle -> VPoly (total degrees add: Mle(n) has total degree n)
-            (ATyp::Mle(m1), ATyp::Mle(m2)) => Ok(ATyp::vpoly(
-                *m1.max(m2),
-                m1.checked_add(*m2).ok_or_else(|| LubError::mul(&a, &b))?,
-            )),
-            // Uni * Mle -> VPoly (Uni(n) has total degree n, Mle(m) has total degree m)
+            // Polynomial products add the degree in each variable; `Mle(n)` has
+            // degree 1 in each of its variables, `Uni(d)` degree d in its one.
+            // Mle * Mle -> VPoly of degree 2
+            (ATyp::Mle(m1), ATyp::Mle(m2)) => Ok(ATyp::vpoly(*m1.max(m2), 2)),
+            // Uni * Mle -> VPoly of degree n + 1
             (ATyp::Uni(n), ATyp::Mle(m)) | (ATyp::Mle(m), ATyp::Uni(n)) => Ok(ATyp::vpoly(
                 *m,
-                n.checked_add(*m).ok_or_else(|| LubError::mul(&a, &b))?,
+                n.checked_add(1).ok_or_else(|| LubError::mul(&a, &b))?,
             )),
             // VPoly * anything -> VPoly with summed degrees
             (ATyp::VPoly(m1, n1), ATyp::VPoly(m2, n2)) => Ok(ATyp::vpoly(
@@ -643,7 +612,7 @@ impl Lub for ATyp {
             (ATyp::VPoly(m1, n), ATyp::Mle(m2)) | (ATyp::Mle(m2), ATyp::VPoly(m1, n)) => {
                 Ok(ATyp::vpoly(
                     *m1.max(m2),
-                    n.checked_add(*m2).ok_or_else(|| LubError::mul(&a, &b))?,
+                    n.checked_add(1).ok_or_else(|| LubError::mul(&a, &b))?,
                 ))
             }
             // Scalar * polynomial -> same polynomial type
@@ -884,7 +853,7 @@ mod tests {
     #[test]
     fn vpoly_sub_mle() {
         let result = ATyp::lub_sub(&ATyp::vpoly(2, 3), &ATyp::mle(5), &Nothing).unwrap();
-        assert_eq!(result, ATyp::vpoly(5, 5));
+        assert_eq!(result, ATyp::vpoly(5, 3));
     }
 
     #[test]
@@ -927,13 +896,11 @@ mod tests {
 
         let ctyp = CTyp::Poly(Tid::from("F"), Spanned::dummy(3), Spanned::dummy(5));
         let atyp = ATyp::from_ctyp(&ctyp, &kctx).unwrap();
-        assert_eq!(atyp, ATyp::VPoly(3, 15));
+        assert_eq!(atyp, ATyp::VPoly(3, 5));
     }
 
     /// Phase 7 regression: `lub_mul` on `CTyp::Poly` and on the lowered
-    /// `ATyp::VPoly` must produce compatible ATyps. The CTyp path is always
-    /// at least as conservative (VPoly degree ≥ ATyp path) because CTyp's
-    /// per-variable degree → total degree via `n*d` is a worst-case bound.
+    /// `ATyp::VPoly` must agree: both bound the degree in each variable.
     #[test]
     fn pbt_lub_mul_ctyp_atyp_cross_consistency() {
         use lang::id::Tid;
@@ -959,21 +926,7 @@ mod tests {
             let a2 = ATyp::from_ctyp(&c2, &kctx).unwrap();
             let a_mul = ATyp::lub_mul(&a1, &a2, &Nothing).unwrap();
 
-            if matches!(c_mul_lowered, ATyp::Uni(_) | ATyp::Mle(_)) {
-                assert_eq!(
-                    c_mul_lowered, a_mul,
-                    "CTyp and ATyp lub_mul disagree on Uni/Mle path"
-                );
-            } else {
-                let (ATyp::VPoly(cn, cd), ATyp::VPoly(an, ad)) = (&c_mul_lowered, &a_mul) else {
-                    panic!("expected VPoly for general case, got {c_mul_lowered} vs {a_mul}");
-                };
-                assert_eq!(cn, an, "VPoly num_vars mismatch");
-                assert!(
-                    cd >= ad,
-                    "CTyp-lowered degree should be >= ATyp-lubbed: {cd} < {ad}"
-                );
-            }
+            assert_eq!(c_mul_lowered, a_mul, "CTyp and ATyp lub_mul disagree");
             Ok(())
         });
     }
@@ -1085,7 +1038,7 @@ mod tests {
     // by regressions. `Uni(m)` holds a polynomial of max degree `m`
     // (so `m+1` coefficients), `Mle(n)` is the multilinear extension over `n`
     // variables (so `2^n` evaluations), and `VPoly(n, m)` is multivariate with
-    // `n` variables and max total degree `m`.
+    // `n` variables and degree at most `m` in each variable.
     // ========================================================================
 
     // ---------- lub_mul ----------
@@ -1107,7 +1060,7 @@ mod tests {
         });
     }
 
-    /// `Uni(d) * Mle(n) == VPoly(n, d+n)` (and reverse).
+    /// `Uni(d) * Mle(n) == VPoly(n, d+1)` (and reverse).
     #[test]
     fn pbt_lub_mul_uni_mle_pins_vpoly() {
         arbtest::arbtest(|u| {
@@ -1115,7 +1068,7 @@ mod tests {
             let n: usize = u.int_in_range(1..=8)?;
             let left = ATyp::lub_mul(&ATyp::uni(d), &ATyp::mle(n), &Nothing).unwrap();
             let right = ATyp::lub_mul(&ATyp::mle(n), &ATyp::uni(d), &Nothing).unwrap();
-            let expected = ATyp::vpoly(n, d + n);
+            let expected = ATyp::vpoly(n, d + 1);
             assert_eq!(
                 left, expected,
                 "Uni({d}) * Mle({n}) should equal {expected}"
@@ -1128,18 +1081,18 @@ mod tests {
         });
     }
 
-    /// `Mle(n1) * Mle(n2)` always pins to `VPoly(max(n1,n2), n1+n2)` — total
-    /// degrees add (Mle(n) has total degree n).
+    /// `Mle(n1) * Mle(n2)` always pins to `VPoly(max(n1,n2), 2)` — the degree
+    /// in each variable adds (Mle(n) has degree 1 in each).
     #[test]
-    fn pbt_lub_mul_mle_mle_pins_max_and_sum_total_degree() {
+    fn pbt_lub_mul_mle_mle_pins_max_and_degree_two() {
         arbtest::arbtest(|u| {
             let n1: usize = u.int_in_range(1..=8)?;
             let n2: usize = u.int_in_range(1..=8)?;
             let result = ATyp::lub_mul(&ATyp::mle(n1), &ATyp::mle(n2), &Nothing).unwrap();
             assert_eq!(
                 result,
-                ATyp::vpoly(n1.max(n2), n1 + n2),
-                "Mle({n1}) * Mle({n2}) should equal VPoly(max, n1+n2)",
+                ATyp::vpoly(n1.max(n2), 2),
+                "Mle({n1}) * Mle({n2}) should equal VPoly(max, 2)",
             );
             Ok(())
         });
@@ -1186,17 +1139,17 @@ mod tests {
         });
     }
 
-    /// `VPoly(n,m) * Mle(n')` pins to `VPoly(max(n,n'), m+n')` — the
-    /// multilinear has total degree n', which adds to the VPoly degree.
+    /// `VPoly(n,m) * Mle(n')` pins to `VPoly(max(n,n'), m+1)` — the
+    /// multilinear has degree 1 in each variable, which adds to the VPoly's.
     #[test]
-    fn pbt_lub_mul_vpoly_mle_pins_degree_plus_mle_total() {
+    fn pbt_lub_mul_vpoly_mle_pins_degree_plus_one() {
         arbtest::arbtest(|u| {
             let n: usize = u.int_in_range(1..=8)?;
             let m: usize = u.int_in_range(0..=8)?;
             let n_mle: usize = u.int_in_range(1..=8)?;
             let left = ATyp::lub_mul(&ATyp::vpoly(n, m), &ATyp::mle(n_mle), &Nothing).unwrap();
             let right = ATyp::lub_mul(&ATyp::mle(n_mle), &ATyp::vpoly(n, m), &Nothing).unwrap();
-            let expected = ATyp::vpoly(n.max(n_mle), m + n_mle);
+            let expected = ATyp::vpoly(n.max(n_mle), m + 1);
             assert_eq!(
                 left, expected,
                 "VPoly({n},{m}) * Mle({n_mle}) should equal {expected}"
@@ -1314,7 +1267,7 @@ mod tests {
     }
 
     /// `Mle(n1) + Mle(n2)` pins to `Mle(n)` if `n1 == n2`, else to
-    /// `VPoly(max(n1,n2), max(n1,n2))` — Mle(n) has total degree n.
+    /// `VPoly(max(n1,n2), 1)` — Mle(n) has degree 1 in each variable.
     #[test]
     fn pbt_lub_add_mle_mle_pins() {
         arbtest::arbtest(|u| {
@@ -1324,8 +1277,7 @@ mod tests {
             let expected = if n1 == n2 {
                 ATyp::mle(n1)
             } else {
-                let v = n1.max(n2);
-                ATyp::vpoly(v, v)
+                ATyp::vpoly(n1.max(n2), 1)
             };
             assert_eq!(
                 result, expected,
@@ -1674,12 +1626,10 @@ mod tests {
     }
 
     #[test]
-    fn atyp_from_ctyp_poly_degree_overflow() {
-        let f = Tid::from("F");
-        let kctx: Ctx<Tid, CKind> = Ctx::from([(f.clone(), CKind::Field)]);
-        // Poly(F, m, n) where m * n overflows
-        let ctyp = CTyp::Poly(f, Spanned::dummy(usize::MAX), Spanned::dummy(2));
-        assert_eq!(ATyp::from_ctyp(&ctyp, &kctx), None);
+    #[should_panic(expected = "physical_len: VPoly (d + 1)^n overflow")]
+    fn atyp_physical_len_vpoly_overflow() {
+        // Poly(F, 64, 1) lowers without overflow, but its 2^64 slots do not fit.
+        ATyp::vpoly(64, 1).physical_len();
     }
 
     #[test]

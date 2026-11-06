@@ -147,7 +147,7 @@ fn slot_wise_mul<C: ArkConfig + HasOpFactory>(
     link_to_polys(ctx.ideal, target, prods);
 }
 
-/// `Mle(n) × Mle(n) → VPoly(n, 2n)`: basis-change convolution.
+/// `Mle(n) × Mle(n) → VPoly(n, 2)`: basis-change convolution.
 ///
 /// Each evaluation slot of the result is a linear combination of
 /// `a_eval[i] · b_eval[j]` weighted by the Lagrange-to-monomial
@@ -207,7 +207,7 @@ fn mul_mle_mle<C: ArkConfig + HasOpFactory>(
     link_to_polys(ctx.ideal, target, out);
 }
 
-/// `Mle(n) × VPoly(n, m) → VPoly(n, m+n)`: basis-change convolution.
+/// `Mle(n) × VPoly(n, m) → VPoly(n, m+1)`: basis-change convolution.
 ///
 /// The Mle operand is expanded via Lagrange basis polynomials, then
 /// convolved with the VPoly coefficient slots.
@@ -227,12 +227,12 @@ fn mul_mle_vpoly<C: ArkConfig + HasOpFactory>(
         panic!("Mul Mle×VPoly ideal must be VPoly");
     };
     assert!(
-        *nr == *na && *mr == *mb + *na,
+        *nr == *na && *mr == *mb + 1,
         "Mul Mle({})×VPoly(_, {}) ideal must be VPoly({}, {}), got VPoly({}, {})",
         na,
         mb,
         na,
-        *mb + *na,
+        *mb + 1,
         nr,
         mr
     );
@@ -403,9 +403,9 @@ mod tests {
     fn test_add_op_vpoly_mul_multivariate_spotcheck() {
         // VPoly(2,1) × VPoly(2,1) → VPoly(2,2). We spot-check one slot.
         // VPoly(2,1) multi-indices (graded-lex by total deg then lex):
-        //   [0,0], [0,1], [1,0]   (sizes 3)
+        //   [0,0], [0,1], [1,0], [1,1]   (size 4)
         // VPoly(2,2) multi-indices:
-        //   [0,0], [0,1], [1,0], [0,2], [1,1], [2,0]   (size 6)
+        //   [0,0], [0,1], [1,0], [0,2], [1,1], [2,0], [1,2], [2,1], [2,2]   (size 9)
         use crate::Var;
         use backend::op::mk;
         use graph::Ref;
@@ -449,8 +449,8 @@ mod tests {
             "VPoly(2,2) constant term mismatch"
         );
 
-        // Ensure all 6 slots were populated.
-        for i in 0..6 {
+        // Ensure all 9 slots were populated.
+        for i in 0..9 {
             assert!(
                 ideal.pl.contains(&var.clone().with_index(i).unwrap()),
                 "VPoly(2,2) slot {} missing",
@@ -603,11 +603,11 @@ mod tests {
 
     #[test]
     fn test_add_op_vpoly_mle_mul_bivariate() {
-        // VPoly(2, 1) × Mle(2) → VPoly(2, 3). Commutative variant.
-        // VPoly(2,1) has 3 slots: [0,0], [1,0], [0,1] (graded-lex).
+        // VPoly(2, 1) × Mle(2) → VPoly(2, 2). Commutative variant.
+        // VPoly(2,1) has 4 slots: [0,0], [0,1], [1,0], [1,1] (graded-lex).
         // Mle(2) has 4 slots: evals at (0,0), (1,0), (0,1), (1,1).
-        // Result VPoly(2,3) has 10 slots.
-        // Just verify all 10 ideal slots are populated.
+        // Result VPoly(2,2) has 9 slots.
+        // Just verify all 9 ideal slots are populated.
         use crate::Var;
         use backend::op::mk;
         use graph::Ref;
@@ -622,18 +622,18 @@ mod tests {
         let var_u = Var::from_node(NodeIndex::new(1), ATyp::Mle(2), Qualifier::Witness);
         ideal.register(&var_u);
 
-        let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(2, 3), Qualifier::Witness);
+        let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(2, 2), Qualifier::Witness);
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Mul,
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 1))),
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::Mle(2))),
-            ATyp::VPoly(2, 3),
+            ATyp::VPoly(2, 2),
         );
         builder.add_op(var.clone(), op, &mut ideal);
 
-        let r_idx = multi_indices(2, 3);
-        assert_eq!(r_idx.len(), 10, "VPoly(2,3) should have 10 multi-indices");
-        for i in 0..10 {
+        let r_idx = multi_indices(2, 2);
+        assert_eq!(r_idx.len(), 9, "VPoly(2,2) should have 9 multi-indices");
+        for i in 0..9 {
             assert!(
                 ideal.pl.contains(&var.clone().with_index(i).unwrap()),
                 "VPoly×Mle slot {} missing",
@@ -644,7 +644,7 @@ mod tests {
 
     #[test]
     fn test_add_op_mle_vpoly_mul_bivariate_coefficients() {
-        // Mle(2) × VPoly(2, 1) → VPoly(2, 3).
+        // Mle(2) × VPoly(2, 1) → VPoly(2, 2).
         // Verify the constant-term slot (multi-index [0,0]) and a cross-term.
         use crate::Var;
         use backend::op::mk;
@@ -660,16 +660,16 @@ mod tests {
         let var_b = Var::from_node(NodeIndex::new(1), ATyp::VPoly(2, 1), Qualifier::Witness);
         ideal.register(&var_b);
 
-        let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(2, 3), Qualifier::Witness);
+        let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(2, 2), Qualifier::Witness);
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Mul,
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(2))),
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::VPoly(2, 1))),
-            ATyp::VPoly(2, 3),
+            ATyp::VPoly(2, 2),
         );
         builder.add_op(var.clone(), op, &mut ideal);
 
-        let r_idx = multi_indices(2, 3);
+        let r_idx = multi_indices(2, 2);
         let v_idx = multi_indices(2, 1);
         let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
 
@@ -696,9 +696,9 @@ mod tests {
             "bivariate [1,0] slot missing"
         );
 
-        // All 10 slots populated
-        assert_eq!(r_idx.len(), 10);
-        for i in 0..10 {
+        // All 9 slots populated
+        assert_eq!(r_idx.len(), 9);
+        for i in 0..9 {
             assert!(
                 ideal.pl.contains(&var.clone().with_index(i).unwrap()),
                 "Mle×VPoly bivariate slot {} missing",

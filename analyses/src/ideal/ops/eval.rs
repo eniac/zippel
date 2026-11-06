@@ -496,7 +496,7 @@ mod tests {
 
     #[test]
     fn test_add_op_eval_vpoly_partial_multivariate() {
-        // VPoly(3, 1) evaluated at Uni(1) => VPoly(2, 1) (2-var linear poly w/ 3 slots).
+        // VPoly(3, 1) evaluated at Uni(1) => VPoly(2, 1) (2-var multilinear poly w/ 4 slots).
         use crate::Var;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
@@ -528,10 +528,10 @@ mod tests {
         );
         builder.add_op(var.clone(), op, &mut ideal);
 
-        // VPoly(2, 1) has physical_len = C(2+1, 1) = 3 slots (one for constant,
-        // two for each linear variable).
-        assert_eq!(ATyp::VPoly(2, 1).physical_len(), 3);
-        for i in 0..3 {
+        // VPoly(2, 1) has physical_len = (1+1)^2 = 4 slots (constant, one per
+        // variable, and the cross term).
+        assert_eq!(ATyp::VPoly(2, 1).physical_len(), 4);
+        for i in 0..4 {
             assert!(
                 ideal.pl.contains(&var.clone().with_index(i).unwrap()),
                 "partial vpoly eval slot {} missing",

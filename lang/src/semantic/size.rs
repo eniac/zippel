@@ -2,7 +2,7 @@
 //! declared in the typevar list.
 //!
 //! Size variables are `Size::Var(Tid)` values that appear in:
-//! - `Typ::Poly(_, _, N)` — polynomial degree
+//! - `Typ::Uni(_, N)`, `Typ::Mle(_, N)`, `Typ::Poly(_, M, N)` — polynomial sizes
 //! - `Typ::Vec(_, N)` — vector length
 //! - `Typ::Fin(Range<N>)` — finite range
 //! - `Range<N>` — range bounds in typevar kinds
@@ -116,7 +116,11 @@ fn collect_size_vars_in_typ(
     unbound: &mut Vec<(Tid, Range<usize>)>,
 ) {
     match typ {
-        Typ::Poly(_, _, n) => {
+        Typ::Uni(_, n) | Typ::Mle(_, n) => {
+            collect_size_vars_in_size(n, declared, unbound);
+        }
+        Typ::Poly(_, m, n) => {
+            collect_size_vars_in_size(m, declared, unbound);
             collect_size_vars_in_size(n, declared, unbound);
         }
         Typ::Vec(inner, n) => {

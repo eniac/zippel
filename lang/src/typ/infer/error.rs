@@ -587,7 +587,7 @@ fn type_vars(t: &CTyp, out: &mut Vec<Tid>) {
         }
     };
     match t {
-        CTyp::Base(v) | CTyp::Poly(v, _, _) => push(v),
+        CTyp::Base(v) | CTyp::Uni(v, _) | CTyp::Mle(v, _) | CTyp::Poly(v, _, _) => push(v),
         CTyp::Vec(t, _) => type_vars(t, out),
         CTyp::Record(fields) => {
             for (_, t) in fields.iter() {

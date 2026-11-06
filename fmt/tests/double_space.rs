@@ -798,7 +798,7 @@ fn comments_around_poly_uni_mle_types() {
         (
             "fn f<F: Field>(instance a: Poly /* c */ <F, 1, 2>) -> F { a }",
             "\
-fn f<F: Field>(instance a: Uni /* c */ <F, 2>) -> F {
+fn f<F: Field>(instance a: Poly /* c */ <F, 1, 2>) -> F {
     a
 }
 ",
@@ -806,7 +806,7 @@ fn f<F: Field>(instance a: Uni /* c */ <F, 2>) -> F {
         (
             "fn f<F: Field>(instance a: Poly< /* c */ F, 1, 2>) -> F { a }",
             "\
-fn f<F: Field>(instance a: Uni</* c */ F, 2>) -> F {
+fn f<F: Field>(instance a: Poly</* c */ F, 1, 2>) -> F {
     a
 }
 ",
@@ -814,7 +814,7 @@ fn f<F: Field>(instance a: Uni</* c */ F, 2>) -> F {
         (
             "fn f<F: Field>(instance a: Poly<F /* c */ , 1, 2>) -> F { a }",
             "\
-fn f<F: Field>(instance a: Uni<F /* c */, 2>) -> F {
+fn f<F: Field>(instance a: Poly<F /* c */, 1, 2>) -> F {
     a
 }
 ",
@@ -830,13 +830,12 @@ fn f<F: Field>(instance a: Poly<F, /* c */ 1, 2>) -> F {
         (
             "fn f<F: Field>(instance a: Poly<F, 1, 2 /* c */ >) -> F { a }",
             "\
-fn f<F: Field>(instance a: Uni<F, 2 /* c */>) -> F {
+fn f<F: Field>(instance a: Poly<F, 1, 2 /* c */>) -> F {
     a
 }
 ",
         ),
-        // Uni<F, /*A*/ N> must stay Uni, not become Poly<F, /*A*/ 1, N>.
-        // The comment belongs to N, not to the implicit M=1.
+        // Uni<F, /*A*/ N> stays Uni with its comment.
         (
             "fn f<F: Field>(instance a: Uni<F, /*A*/ 2>) -> F { a }",
             "\
@@ -845,7 +844,7 @@ fn f<F: Field>(instance a: Uni<F, /*A*/ 2>) -> F {
 }
 ",
         ),
-        // Mle<F, /*A*/ N> must stay Mle, not become Poly<F, N, /*A*/ 1>.
+        // Mle<F, /*A*/ N> stays Mle with its comment.
         (
             "fn f<F: Field>(instance a: Mle<F, /*A*/ 2>) -> F { a }",
             "\

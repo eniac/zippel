@@ -3,7 +3,7 @@ use graph::{Dag, Node};
 use lang::typ::Qualifier;
 use petgraph::graph::NodeIndex;
 
-use backend::{ABase, ATyp, ArkConfig, binomial};
+use backend::{ABase, ATyp, ArkConfig};
 use std::fmt;
 
 /// A reference to a node in the graph, with all associated metadata.
@@ -132,12 +132,8 @@ impl Var {
                 }
                 ATyp::scalar()
             }
-            ATyp::VPoly(n, m) => {
-                let count = binomial(
-                    m.checked_add(*n).expect("with_index: VPoly m + n overflow"),
-                    *n,
-                );
-                if i >= count {
+            ATyp::VPoly(_, _) => {
+                if i >= self.typ.physical_len() {
                     return None;
                 }
                 ATyp::scalar()
@@ -175,14 +171,9 @@ impl Var {
                     .expect("collect_slots: Mle 1 << n overflow");
                 (0..len).filter_map(|i| self.with_index(i)).collect()
             }
-            ATyp::VPoly(n, m) => {
-                let count = binomial(
-                    m.checked_add(*n)
-                        .expect("collect_slots: VPoly m + n overflow"),
-                    *n,
-                );
-                (0..count).filter_map(|i| self.with_index(i)).collect()
-            }
+            ATyp::VPoly(_, _) => (0..self.typ.physical_len())
+                .filter_map(|i| self.with_index(i))
+                .collect(),
             ATyp::Vec(t, n) => {
                 let mut out = Vec::with_capacity(self.typ.physical_len());
                 for i in 0..*n {

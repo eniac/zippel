@@ -192,8 +192,9 @@ impl Instantiation {
 
     /// Matches a parameter type (callee names) against an argument type (caller names),
     /// binding the parameters it meets. Three widenings are allowed: a polynomial where one with
-    /// at least as many variables and as high a degree is expected, an integer where a wider
-    /// integer range is expected, and an integer where a scalar is expected.
+    /// at least as many variables and as high a degree is expected (of its encoding, or a general
+    /// one), an integer where a wider integer range is expected, and an integer where a scalar is
+    /// expected.
     ///
     /// # Errors
     /// The shapes differ, a kind class differs, or a parameter would stand for two different
@@ -211,9 +212,16 @@ impl Instantiation {
             (CTyp::Unit, CTyp::Unit) | (CTyp::Bool, CTyp::Bool) => Ok(()),
             // An integer fits an integer parameter whose range contains its range.
             (CTyp::Fin(p), CTyp::Fin(a)) => a.is_subset_of(p).then_some(()).ok_or_else(mismatch),
-            // A polynomial fits a parameter with at least as many variables and as high a degree.
-            (CTyp::Poly(p, pn, pd), CTyp::Poly(a, an, ad)) => {
-                if pn.node < an.node || pd.node < ad.node {
+            // A polynomial fits a parameter of its encoding with at least as many variables
+            // (`Mle`) or as high a degree (`Uni`), and a general one with both.
+            (CTyp::Uni(p, pd), CTyp::Uni(a, ad)) | (CTyp::Mle(p, pd), CTyp::Mle(a, ad)) => {
+                if pd.node < ad.node {
+                    return Err(mismatch());
+                }
+                self.bind(p, a, caller).map_err(within)
+            }
+            (CTyp::Poly(p, pn, pd), arg) if let Some((a, an, ad)) = arg.poly_shape() => {
+                if pn.node < an || pd.node < ad {
                     return Err(mismatch());
                 }
                 self.bind(p, a, caller).map_err(within)

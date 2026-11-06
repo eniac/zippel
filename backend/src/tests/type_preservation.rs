@@ -935,10 +935,9 @@ mod cross_layer {
         });
     }
 
-    /// Full MLE eval for `n=1` (single point): runtime returns `VecScalar([s])`
-    /// instead of `Scalar`. Gap pinned with `#[should_panic]`.
+    /// Full MLE eval for `n=1` (single point): runtime returns `Scalar`, as
+    /// for any full point.
     #[test]
-    #[should_panic(expected = "value_eval(Mle(1), Vec(F,1))")]
     fn pbt_eval_mle_full_single_var() {
         let n = 1usize;
         let mut rng = test_rng();

@@ -114,16 +114,14 @@ impl<C: ArkConfig> PolySource<C> {
     ///   `multi_indices(1, n)` is a prefix of `multi_indices(1, n')`,
     ///   so zero-padding is correct.
     ///
-    /// **VPoly(n, m) → VPoly(n, m')** where `m ≤ m'` (same arity, wider degree):
-    ///   `multi_indices(n, m)` is a prefix of `multi_indices(n, m')` because
-    ///   graded-lex enumerates by total degree first; all indices with `|k| ≤ m`
-    ///   appear before any with `|k| = m+1`. Zero-padding is correct.
-    ///
-    /// **VPoly(n1, m1) → VPoly(n2, m2)** where `n1 < n2` and `m1 ≤ m2`:
-    ///   NOT a simple prefix. Each source multi-index `(k1,…,kn1)` embeds as
-    ///   `(k1,…,kn1,0,…,0)` in `n2`-variable space. We look up each embedded
-    ///   index's position in `multi_indices(n2, m2)` and place the source poly
-    ///   there; all other ideal slots are zero.
+    /// **VPoly(n1, m1) → VPoly(n2, m2)** where `n1 ≤ n2` and `m1 ≤ m2`:
+    ///   NOT a simple prefix, even at equal arity: the slots bound the degree
+    ///   in each variable, so `multi_indices(n, m')` interleaves indices such
+    ///   as `(0, m+1)` between those of `multi_indices(n, m)`. Each source
+    ///   multi-index `(k1,…,kn1)` embeds as `(k1,…,kn1,0,…,0)` in
+    ///   `n2`-variable space. We look up each embedded index's position in
+    ///   `multi_indices(n2, m2)` and place the source poly there; all other
+    ///   ideal slots are zero.
     ///
     /// **Mle(n1) → Mle(n2)** where `n1 ≤ n2`:
     ///   The hypercube `{0,1}^n1` embeds as `{(b1,…,bn1,0,…,0)} ⊂ {0,1}^n2`.
@@ -212,21 +210,12 @@ impl<C: ArkConfig> PolySource<C> {
             }
 
             (ATyp::VPoly(n1, m1), ATyp::VPoly(n2, m2)) if n1 <= n2 && m1 <= m2 => {
-                if n1 == n2 {
-                    let mut out = self.polys.clone();
-                    out.resize(dst_len, Polynomial::zero());
-                    PolySource {
-                        polys: out,
-                        typ: target.clone(),
-                    }
-                } else {
-                    let dst_idx = multi_indices(*n2, *m2);
-                    let src_idx = multi_indices(*n1, *m1);
-                    let out = Self::embed_multi_indexed_polys(&self.polys, &src_idx, &dst_idx, *n2);
-                    PolySource {
-                        polys: out,
-                        typ: target.clone(),
-                    }
+                let dst_idx = multi_indices(*n2, *m2);
+                let src_idx = multi_indices(*n1, *m1);
+                let out = Self::embed_multi_indexed_polys(&self.polys, &src_idx, &dst_idx, *n2);
+                PolySource {
+                    polys: out,
+                    typ: target.clone(),
                 }
             }
 
@@ -502,7 +491,7 @@ mod tests {
 
         let op: GOp<ArkBls12_381> = Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 2));
         let polys = PolySource::<ArkBls12_381>::ref_vars(&op, &ideal.vars);
-        assert_eq!(polys.len(), 6);
+        assert_eq!(polys.len(), 9);
         for (i, _) in polys.iter().enumerate() {
             let expected = var_p.clone().with_index(i).unwrap();
             assert!(
@@ -625,34 +614,37 @@ mod tests {
     }
 
     #[test]
-    fn test_lift_vpoly_same_arity_prefix() {
+    fn test_lift_vpoly_same_arity_embedding() {
         use crate::Var;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var = Var::from_node(NodeIndex::new(0), ATyp::VPoly(2, 2), Qualifier::Witness);
+        let var = Var::from_node(NodeIndex::new(0), ATyp::VPoly(2, 1), Qualifier::Witness);
         ideal.register(&var);
         let src = PolySource::<ArkBls12_381>::from_ref_vars(
             &ideal.vars,
-            &Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 2)),
+            &Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 1)),
         );
 
-        let lifted = src.lift_to(&ATyp::VPoly(2, 3));
-        assert_eq!(lifted.polys.len(), 10);
-        assert_eq!(*lifted.typ(), ATyp::VPoly(2, 3));
-        for i in 0..6 {
-            assert_eq!(
-                lifted.polys[i],
-                Polynomial::var(&var.clone().with_index(i).unwrap())
-            );
-        }
-        for i in 6..10 {
-            assert!(
-                lifted.polys[i].is_zero(),
-                "padded slot {} should be zero",
-                i
-            );
+        // Not a prefix: [1,1] sits after [0,2] in VPoly(2, 2)'s order.
+        let lifted = src.lift_to(&ATyp::VPoly(2, 2));
+        assert_eq!(lifted.polys.len(), 9);
+        assert_eq!(*lifted.typ(), ATyp::VPoly(2, 2));
+        let dst = multi_indices(2, 2);
+        let src_idx = multi_indices(2, 1);
+        for (pos, dk) in dst.iter().enumerate() {
+            match src_idx.iter().position(|sk| sk == dk) {
+                Some(j) => assert_eq!(
+                    lifted.polys[pos],
+                    Polynomial::var(&var.clone().with_index(j).unwrap()),
+                    "multi-index {dk:?} should hold src slot {j}"
+                ),
+                None => assert!(
+                    lifted.polys[pos].is_zero(),
+                    "multi-index {dk:?} should be zero"
+                ),
+            }
         }
     }
 
@@ -708,7 +700,7 @@ mod tests {
 
         let lifted = src.lift_to(&ATyp::VPoly(2, 2));
         assert_eq!(*lifted.typ(), ATyp::VPoly(2, 2));
-        assert_eq!(lifted.polys.len(), 6);
+        assert_eq!(lifted.polys.len(), 9);
 
         let dst = multi_indices(2, 2);
         let c: [[i64; 2]; 2] = [[1, -1], [0, 1]];

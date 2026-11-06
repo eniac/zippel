@@ -69,15 +69,21 @@ impl CRef<'_> {
                 // Multiplying a vector of polynomials multiplies all factors, so
                 // the resulting degree is the element degree times vector length.
                 if op == BinOp::Mul
-                    && let CTyp::Poly(_, _, d) = &elem.node
+                    && let Some((_, _, d)) = elem.poly_shape()
                 {
                     // Validate the pairwise multiplication under the kind context first.
                     let res_t = CTyp::lub_op(op, &elem, &elem, kctx).map_err(TypeError::from)?;
-                    if let CTyp::Poly(res_a, num_vars, _) = res_t {
-                        let degree = d.checked_mul(n.node).ok_or_else(|| {
-                            TypeError::from(LubError::DegreeOverflow(d.node, n.node))
-                        })?;
-                        return Ok(CTyp::Poly(res_a, num_vars, Spanned::dummy(degree)));
+                    let degree = d
+                        .checked_mul(n.node)
+                        .ok_or_else(|| TypeError::from(LubError::DegreeOverflow(d, n.node)))?;
+                    // A product of univariate polynomials is univariate; of any others, a
+                    // general polynomial.
+                    match res_t {
+                        CTyp::Uni(res_a, _) => return Ok(CTyp::uni(&res_a, degree)),
+                        CTyp::Poly(res_a, num_vars, _) => {
+                            return Ok(CTyp::poly(&res_a, num_vars.node, degree));
+                        }
+                        _ => {}
                     }
                 }
 

@@ -134,20 +134,22 @@ impl<F: Field> PolyVariant<F> {
         }
     }
 
-    /// An upper bound on the total degree, read from the representation
-    /// rather than its bookkeeping (a dense univariate's coefficient count, a
-    /// sparse one's largest index): unlike [`Self::degree`], an MLE counts
-    /// as its variable count, and a malformed sparse univariate cannot
-    /// understate it.
-    pub fn total_degree_bound(&self) -> usize {
-        use ark_poly::multivariate::Term;
+    /// An upper bound on the degree in each variable, read from the
+    /// representation rather than its bookkeeping (a dense univariate's
+    /// coefficient count, a sparse one's largest index, a sparse
+    /// multivariate's largest exponent), so a malformed sparse univariate
+    /// cannot understate it. An MLE has degree at most 1 in each variable.
+    pub fn individual_degree_bound(&self) -> usize {
         match self {
             PolyVariant::DenseUni(p) => p.coeffs.len().saturating_sub(1),
             PolyVariant::SparseUni(p) => p.iter().map(|(i, _)| *i).max().unwrap_or(0),
-            PolyVariant::DenseMle(_) | PolyVariant::SparseMle { .. } => self.num_vars(),
-            PolyVariant::SparseMultivariate(p) => {
-                p.terms.iter().map(|(_, t)| t.degree()).max().unwrap_or(0)
-            }
+            PolyVariant::DenseMle(_) | PolyVariant::SparseMle { .. } => 1,
+            PolyVariant::SparseMultivariate(p) => p
+                .terms
+                .iter()
+                .flat_map(|(_, t)| t.iter().map(|(_, power)| *power))
+                .max()
+                .unwrap_or(0),
         }
     }
 

@@ -278,11 +278,11 @@ impl CRef<'_> {
                 self.infer_interpolate(points_opt.as_ref().map(at), at(evals), env)
             }
 
-            // `poly(v: [F; k])` with `k >= 1` yields `Poly<F, 1, k - 1>`
+            // `poly(v: [F; k])` with `k >= 1` yields `Uni<F, k - 1>`
             // (degree convention: `m = k - 1`).
             CExp::Poly(v) => self.infer_poly(at(v), env),
 
-            // `coef(p: Poly<F, 1, m>)` yields `[F; m + 1]` (coefficient count
+            // `coef(p: Uni<F, m>)` yields `[F; m + 1]` (coefficient count
             // is degree + 1 under the Phase 14 degree convention).
             CExp::Coef(p) => self.infer_coef(at(p), env),
 

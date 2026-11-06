@@ -109,16 +109,16 @@ fn coef_typ_of_mle_n_is_vec_2_to_n() {
 }
 
 #[test]
-fn coef_typ_of_vpoly_is_binomial_sized_vec() {
-    // VPoly(n=2, m=2) has C(4, 2) = 6 coefficients.
+fn coef_typ_of_vpoly_is_box_sized_vec() {
+    // VPoly(n=2, d=2) has (2 + 1)^2 = 9 coefficients.
     let inner = ref_typ(ATyp::vpoly(2, 2));
     let coef: GOp<C> = Op::Coef(h(inner));
-    assert_eq!(coef.typ(), ATyp::vec(&ATyp::scalar(), 6));
+    assert_eq!(coef.typ(), ATyp::vec(&ATyp::scalar(), 9));
 
-    // VPoly(n=3, m=1) has C(4, 3) = 4 (scalar + 3 linear).
+    // VPoly(n=3, d=1) has 2^3 = 8 (every multilinear monomial).
     let inner = ref_typ(ATyp::vpoly(3, 1));
     let coef: GOp<C> = Op::Coef(h(inner));
-    assert_eq!(coef.typ(), ATyp::vec(&ATyp::scalar(), 4));
+    assert_eq!(coef.typ(), ATyp::vec(&ATyp::scalar(), 8));
 }
 
 // ───────── Op::Ifft / Op::Fft ─────────

@@ -766,45 +766,22 @@ proto p<G1: Group, G2: Group, GT: Pairing<G1, G2>>(instance a: G1) where a == a 
 }
 
 #[test]
-fn poly_type_sugar() {
-    // Poly<F, 1, N> → Uni<F, N>; Poly<F, N, 1> → Mle<F, N>;
-    // Poly<F, M, N> with M != 1 and N != 1 stays as Poly.
-    for (src, expected) in [
-        (
-            "\
-fn f<F: Field, N: Size>(instance a: Poly<F, 1, N>) -> F { a }",
-            "\
-fn f<F: Field, N: Size>(instance a: Uni<F, N>) -> F {
-    a
-}
-",
-        ),
-        (
-            "\
-fn f<F: Field, N: Size>(instance a: Poly<F, N, 1>) -> F { a }",
-            "\
-fn f<F: Field, N: Size>(instance a: Mle<F, N>) -> F {
-    a
-}
-",
-        ),
-        (
-            "\
-fn f<F: Field, M: Size, N: Size>(instance a: Poly<F, M, N>) -> F { a }",
-            "\
-fn f<F: Field, M: Size, N: Size>(instance a: Poly<F, M, N>) -> F {
-    a
-}
-",
-        ),
+fn poly_types_keep_their_source_form() {
+    // `Uni`, `Mle` and `Poly` are distinct types, so each keeps its keyword, even
+    // `Poly<F, 1, N>` and `Poly<F, N, 1>`.
+    for src in [
+        "fn f<F: Field, N: Size>(instance a: Poly<F, 1, N>) -> F {\n    a\n}\n",
+        "fn f<F: Field, N: Size>(instance a: Poly<F, N, 1>) -> F {\n    a\n}\n",
+        "fn f<F: Field, M: Size, N: Size>(instance a: Poly<F, M, N>) -> F {\n    a\n}\n",
+        "fn f<F: Field, N: Size>(instance a: Uni<F, N>) -> F {\n    a\n}\n",
+        "fn f<F: Field, N: Size>(instance a: Mle<F, N>) -> F {\n    a\n}\n",
     ] {
-        assert_ok(src, expected);
+        assert_ok(src, src);
     }
 }
 
 #[test]
-fn poly_with_comments_not_sugared() {
-    // Comments on the skipped arg → fall back to Poly to preserve them
+fn poly_with_comments_keeps_them() {
     assert_ok(
         "type T = Poly<F /* base */, 1 /* m */, 2 /* n */>;",
         "\

@@ -23,9 +23,9 @@ impl CRef<'_> {
 
         // Is it a polynomial, another variable, or a function?
         match vctx.get(&id.node) {
-            // Applying a polynomial is `eval` at one point; a scalar for a polynomial in
-            // several variables is the point `[x]`, fixing its variable 0.
-            Some(p_typ @ CTyp::Poly(_, vars, _)) => {
+            // Applying a polynomial is `eval` at one point; a scalar for a multilinear or
+            // general polynomial is the point `[x]`, fixing its variable 0.
+            Some(p_typ @ (CTyp::Uni(..) | CTyp::Mle(..) | CTyp::Poly(..))) => {
                 let [point] = &param_types.0[..] else {
                     return Err(TypeError::PolyApp(
                         kctx.clone(),
@@ -35,7 +35,7 @@ impl CRef<'_> {
                 };
                 let point = match &point.node {
                     x @ CTyp::Vec(..) => x.clone(),
-                    x if vars.node > 1 => CTyp::vec(x, 1),
+                    x if !matches!(p_typ, CTyp::Uni(..)) => CTyp::vec(x, 1),
                     x => x.clone(),
                 };
                 super::poly::evaluated_typ(p_typ.clone(), point, kctx)

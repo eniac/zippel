@@ -183,7 +183,7 @@ fn poly_typ_from_vec(t: ATyp) -> ATyp {
 
 /// Shape helper: an op that consumes a polynomial and produces its
 /// coefficient vector. Length = `t.size()` — the canonical slot count
-/// (m+1 for Uni, 2^n for Mle, C(n+m, n) for VPoly).
+/// (m+1 for Uni, 2^n for Mle, (m+1)^n for VPoly).
 ///
 /// Used by `Op::Coef::typ()` and `Op::Fft::typ()`.
 fn coef_typ_from_poly(t: ATyp) -> ATyp {
@@ -345,6 +345,8 @@ impl<C: ArkConfig, R> Op<C, R> {
                     match p.typ() {
                         ATyp::VPoly(n, _) if k == n => ATyp::scalar(),
                         ATyp::Mle(n) if k == n => ATyp::scalar(),
+                        // A one-variable polynomial held in univariate form, at a full point.
+                        ATyp::Uni(_) if k == 1 => ATyp::scalar(),
                         ATyp::VPoly(n, m) if k < n => ATyp::VPoly(n - k, m),
                         ATyp::Mle(n) if k < n => ATyp::Mle(n - k),
                         _ => x_typ,

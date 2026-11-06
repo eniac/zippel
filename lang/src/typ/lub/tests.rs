@@ -236,7 +236,7 @@ fn lub_typ() {
     assert!(CTyp::lub_pow(&CTyp::mle(&f, 10), &tr, &ctx).is_err());
 
     // Regression (phase 7): Poly * Poly degree math.
-    // Poly(F, n, m) = n variables, max total degree m. Product degrees add.
+    // Poly(F, n, m) = n variables, degree at most m in each. Product degrees add.
     // Uni<F, 3> * Uni<F, 4> = Uni<F, 7>
     assert_eq!(
         CTyp::lub_mul(&CTyp::uni(&f, 3), &CTyp::uni(&f, 4), &ctx),
@@ -300,18 +300,18 @@ fn lub_typ() {
     // nonzero divisor is still bounded by degree 5.
     assert_eq!(
         CTyp::lub_div(&CTyp::uni(&f, 5), &CTyp::uni(&f, 5), &ctx),
-        Ok(CTyp::Poly(f.clone(), Spanned::dummy(1), Spanned::dummy(5)))
+        Ok(CTyp::Uni(f.clone(), Spanned::dummy(5)))
     );
     assert_eq!(
         CTyp::lub_div(&CTyp::uni(&f, 7), &CTyp::uni(&f, 3), &ctx),
-        Ok(CTyp::Poly(f.clone(), Spanned::dummy(1), Spanned::dummy(7)))
+        Ok(CTyp::Uni(f.clone(), Spanned::dummy(7)))
     );
 
     // Phase 14.C: poly-encoding unification (m = max degree).
     // lub_rem Poly×Poly: Poly<F,1,5> % Poly<F,1,3> = Poly<F,1,2> (deg = 3 - 1).
     assert_eq!(
         CTyp::lub_rem(&CTyp::uni(&f, 5), &CTyp::uni(&f, 3), &ctx),
-        Ok(CTyp::Poly(f.clone(), Spanned::dummy(1), Spanned::dummy(2)))
+        Ok(CTyp::Uni(f.clone(), Spanned::dummy(2)))
     );
     // lub_rem requires m2 >= 1; Poly<F,1,n> % Poly<F,1,0> is an error.
     assert!(CTyp::lub_rem(&CTyp::uni(&f, 5), &CTyp::uni(&f, 0), &ctx).is_err());
@@ -384,13 +384,13 @@ fn test_ctyp_poly_degree_offbyone() {
     // Equal bounds: the quotient keeps the dividend's bound, not zero.
     assert_eq!(
         CTyp::lub_div(&CTyp::uni(&f, 3), &CTyp::uni(&f, 3), &ctx),
-        Ok(CTyp::Poly(f.clone(), Spanned::dummy(1), Spanned::dummy(3)))
+        Ok(CTyp::Uni(f.clone(), Spanned::dummy(3)))
     );
     // Divisor bound one greater than the dividend's is accepted: declared
     // bounds do not compare actual degrees.
     assert_eq!(
         CTyp::lub_div(&CTyp::uni(&f, 2), &CTyp::uni(&f, 3), &ctx),
-        Ok(CTyp::Poly(f.clone(), Spanned::dummy(1), Spanned::dummy(2)))
+        Ok(CTyp::Uni(f.clone(), Spanned::dummy(2)))
     );
     // General Poly/Poly: multivariate division is still rejected outright.
     assert!(
@@ -404,7 +404,7 @@ fn test_ctyp_poly_degree_offbyone() {
     // Far off: a much larger divisor bound still yields the dividend's bound.
     assert_eq!(
         CTyp::lub_div(&CTyp::uni(&f, 0), &CTyp::uni(&f, 5), &ctx),
-        Ok(CTyp::Poly(f.clone(), Spanned::dummy(1), Spanned::dummy(0)))
+        Ok(CTyp::Uni(f.clone(), Spanned::dummy(0)))
     );
 
     // ---- lub_rem: Poly<F,n1,m1> % Poly<F,n2,m2> requires m2 ≥ 1 ----
@@ -415,12 +415,12 @@ fn test_ctyp_poly_degree_offbyone() {
     // m1 < m2 is still allowed: remainder degree = m2 - 1 (full dividend fits).
     assert_eq!(
         CTyp::lub_rem(&CTyp::uni(&f, 3), &CTyp::uni(&f, 4), &ctx),
-        Ok(CTyp::Poly(f.clone(), Spanned::dummy(1), Spanned::dummy(3)))
+        Ok(CTyp::Uni(f.clone(), Spanned::dummy(3)))
     );
     // Boundary m2 = 1: remainder has degree 0.
     assert_eq!(
         CTyp::lub_rem(&CTyp::uni(&f, 5), &CTyp::uni(&f, 1), &ctx),
-        Ok(CTyp::Poly(f.clone(), Spanned::dummy(1), Spanned::dummy(0)))
+        Ok(CTyp::Uni(f.clone(), Spanned::dummy(0)))
     );
 
     // ---- lub_dot: Vec · Poly is a type error (Phase B) ----
@@ -972,21 +972,19 @@ mod ctyp_lub_poly_tests {
         });
     }
 
-    /// Phase B: `Mle(F, 1) == Uni(F, 1) == Poly(F, 1, 1)` concat'd with a
-    /// Vec is a type error now that all polynomial ↔ Vec arms are gone.
-    /// The pre-Phase-B routing (Uni-Vec arm wins textually for n == 1)
-    /// is no longer observable.
+    /// Phase B: `Mle(F, 1)` and `Uni(F, 1)` concat'd with a Vec are type
+    /// errors now that all polynomial ↔ Vec arms are gone.
     #[test]
     fn lub_concat_mle1_vec_errors() {
         let ctx = kind_ctx();
         for m in [1usize, 2, 3] {
-            let mle1 = CTyp::Poly(f(), Spanned::dummy(1), Spanned::dummy(1));
-            let vec_t = CTyp::vec(&tf(), m);
-            assert!(
-                CTyp::lub_concat(&mle1, &vec_t, &ctx).is_err(),
-                "lub_concat(Mle(F,1)==Uni(F,1), Vec(F,{})) should error",
-                m
-            );
+            for p in [CTyp::mle(&f(), 1), CTyp::uni(&f(), 1)] {
+                let vec_t = CTyp::vec(&tf(), m);
+                assert!(
+                    CTyp::lub_concat(&p, &vec_t, &ctx).is_err(),
+                    "lub_concat({p}, Vec(F,{m})) should error"
+                );
+            }
         }
     }
 
@@ -1066,7 +1064,7 @@ mod ctyp_lub_poly_tests {
         let ctx = kind_ctx();
         for (na, nb) in [(2, 2), (1, 2), (2, 1)] {
             let a = CTyp::Poly(f(), Spanned::dummy(na), Spanned::dummy(3));
-            let b = CTyp::Poly(f(), Spanned::dummy(nb), Spanned::dummy(1));
+            let b = CTyp::Mle(f(), Spanned::dummy(nb));
             assert!(
                 CTyp::lub_div(&a, &b, &ctx).is_err(),
                 "lub_div should reject Poly arities ({na}, {nb})"
@@ -1079,7 +1077,7 @@ mod ctyp_lub_poly_tests {
         let ctx = kind_ctx();
         for (na, nb) in [(2, 2), (1, 2), (2, 1)] {
             let a = CTyp::Poly(f(), Spanned::dummy(na), Spanned::dummy(3));
-            let b = CTyp::Poly(f(), Spanned::dummy(nb), Spanned::dummy(1));
+            let b = CTyp::Mle(f(), Spanned::dummy(nb));
             assert!(
                 CTyp::lub_rem(&a, &b, &ctx).is_err(),
                 "lub_rem should reject Poly arities ({na}, {nb})"
@@ -1277,7 +1275,7 @@ mod ctyp_lub_poly_tests {
         fields_b.insert(&Spanned::dummy("x".to_string()), &Spanned::dummy(tf()));
         fields_b.insert(
             &Spanned::dummy("y".to_string()),
-            &Spanned::dummy(CTyp::Poly(f(), Spanned::dummy(1), Spanned::dummy(3))),
+            &Spanned::dummy(CTyp::Uni(f(), Spanned::dummy(3))),
         );
 
         let a = CTyp::Record(fields_a);
@@ -1321,13 +1319,13 @@ mod ctyp_lub_poly_tests {
         fields_a.insert(&Spanned::dummy("x".to_string()), &Spanned::dummy(tf()));
         fields_a.insert(
             &Spanned::dummy("y".to_string()),
-            &Spanned::dummy(CTyp::Poly(f(), Spanned::dummy(1), Spanned::dummy(3))),
+            &Spanned::dummy(CTyp::Uni(f(), Spanned::dummy(3))),
         );
 
         let mut fields_b = share::Ctx::new();
         fields_b.insert(
             &Spanned::dummy("y".to_string()),
-            &Spanned::dummy(CTyp::Poly(f(), Spanned::dummy(1), Spanned::dummy(3))),
+            &Spanned::dummy(CTyp::Uni(f(), Spanned::dummy(3))),
         );
         fields_b.insert(&Spanned::dummy("x".to_string()), &Spanned::dummy(tf()));
 
@@ -1402,8 +1400,8 @@ mod ctyp_lub_overflow_tests {
     #[test]
     fn lub_mul_poly_degree_overflow() {
         let ctx = kind_ctx();
-        let a = CTyp::Poly(f(), Spanned::dummy(1), Spanned::dummy(usize::MAX));
-        let b = CTyp::Poly(f(), Spanned::dummy(1), Spanned::dummy(1));
+        let a = CTyp::Uni(f(), Spanned::dummy(usize::MAX));
+        let b = CTyp::Uni(f(), Spanned::dummy(1));
         // degree = MAX + 1 overflows
         assert!(CTyp::lub_mul(&a, &b, &ctx).is_err());
     }
@@ -1442,11 +1440,11 @@ mod ctyp_lub_overflow_tests {
         // No degree subtraction happens any more: the quotient keeps the
         // dividend's declared bound whatever the divisor's bound is.
         let ctx = kind_ctx();
-        let a = CTyp::Poly(f(), Spanned::dummy(1), Spanned::dummy(5));
-        let b = CTyp::Poly(f(), Spanned::dummy(1), Spanned::dummy(3));
+        let a = CTyp::Uni(f(), Spanned::dummy(5));
+        let b = CTyp::Uni(f(), Spanned::dummy(3));
         assert_eq!(
             CTyp::lub_div(&a, &b, &ctx),
-            Ok(CTyp::Poly(f(), Spanned::dummy(1), Spanned::dummy(5)))
+            Ok(CTyp::Uni(f(), Spanned::dummy(5)))
         );
     }
 
@@ -1454,12 +1452,12 @@ mod ctyp_lub_overflow_tests {
     fn lub_rem_poly_degree_safe() {
         // Guarded by mb >= 1, so checked_sub(1) should always succeed.
         let ctx = kind_ctx();
-        let a = CTyp::Poly(f(), Spanned::dummy(1), Spanned::dummy(5));
-        let b = CTyp::Poly(f(), Spanned::dummy(1), Spanned::dummy(3));
+        let a = CTyp::Uni(f(), Spanned::dummy(5));
+        let b = CTyp::Uni(f(), Spanned::dummy(3));
         // remainder degree = mb - 1 = 2
         assert_eq!(
             CTyp::lub_rem(&a, &b, &ctx),
-            Ok(CTyp::Poly(f(), Spanned::dummy(1), Spanned::dummy(2)))
+            Ok(CTyp::Uni(f(), Spanned::dummy(2)))
         );
     }
 }

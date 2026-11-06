@@ -89,7 +89,7 @@ impl CRef<'_> {
         let typ = env.typ(p);
 
         match typ {
-            CTyp::Poly(tid, m_vars, m) if m_vars.node == 1 => {
+            CTyp::Uni(tid, m) => {
                 let k = kctx
                     .get(&tid)
                     .ok_or(TypeError::from(LubError::kind_not_found(&tid)))?;
@@ -101,7 +101,7 @@ impl CRef<'_> {
                     Err(TypeError::Coef)
                 }
             }
-            CTyp::Poly(tid, n, d) if n.node > 1 && d.node == 1 => {
+            CTyp::Mle(tid, n) => {
                 let k = kctx
                     .get(&tid)
                     .ok_or(TypeError::from(LubError::kind_not_found(&tid)))?;
@@ -134,14 +134,14 @@ impl CRef<'_> {
             (None, None) => {
                 let t = p_typ;
                 match t.clone() {
-                    CTyp::Poly(tid, m_vars, n) if m_vars.node == 1 => {
+                    CTyp::Uni(tid, n) => {
                         let k = kctx
                             .get(&tid)
                             .ok_or(TypeError::from(LubError::kind_not_found(&tid)))?;
                         if !k.is_scalar() {
                             return Err(TypeError::EvaluateGrid(kctx.clone(), t.clone()));
                         }
-                        // Phase 14 m+1 convention: Poly<F, 1, n> has n+1
+                        // Phase 14 m+1 convention: Uni<F, n> has n+1
                         // coefficients. The runtime FFT requires the
                         // coefficient count to be a power of two
                         // (`GeneralEvaluationDomain::new(n+1)` else pads).
@@ -168,19 +168,24 @@ impl CRef<'_> {
                     return Err(fail());
                 }
 
-                match (p_typ, fixed_typ) {
-                    (CTyp::Poly(poly_tid, n, d), CTyp::Vec(fixed_elem, fixed_len)) => {
-                        let range_len = range.len();
-                        if !fixed_elem.node.fits(&CTyp::Base(poly_tid.clone()), kctx)
-                            || range.end() > n.node
-                            || fixed_len.node != n.node - range_len
-                        {
-                            return Err(fail());
-                        }
-                        Ok(CTyp::Poly(poly_tid, Spanned::dummy(range_len), d))
-                    }
-                    _ => Err(fail()),
+                let (Some((poly_tid, n, _)), CTyp::Vec(fixed_elem, fixed_len)) =
+                    (p_typ.poly_shape(), &fixed_typ)
+                else {
+                    return Err(fail());
+                };
+                let range_len = range.len();
+                if !fixed_elem.node.fits(&CTyp::Base(poly_tid.clone()), kctx)
+                    || range.end() > n
+                    || fixed_len.node != n - range_len
+                {
+                    return Err(fail());
                 }
+                // The free variables keep the polynomial's encoding.
+                Ok(match &p_typ {
+                    CTyp::Mle(..) => CTyp::mle(poly_tid, range_len),
+                    CTyp::Poly(_, _, d) => CTyp::poly(poly_tid, range_len, d.node),
+                    _ => p_typ.clone(),
+                })
             }
             // Parser conversion rejects this mode for source programs.
             // Keep inference defensive in case an internal caller builds
@@ -238,7 +243,7 @@ impl CRef<'_> {
         let body_type = env.typ(body);
         if vars.len() == 1 {
             match body_type {
-                CTyp::Poly(tid, m, degree) if m.node == 1 => Ok(CTyp::Poly(tid, m, degree)),
+                t @ CTyp::Uni(..) => Ok(t),
                 CTyp::Base(tid) => Ok(CTyp::uni(&tid, 0)), // Constant polynomial
                 // An integer constant is a constant polynomial over the unique field.
                 t @ (CTyp::Fin(_) | CTyp::FieldLiteral) => match t.to_scalar(kctx) {
@@ -276,7 +281,7 @@ pub(super) fn evaluated_typ(
 ) -> Result<CTyp, TypeError> {
     match (p_typ, x_typ) {
         // Univariate polynomial evaluated at a single scalar point: a scalar of its field.
-        (CTyp::Poly(i, m, _n), CTyp::Base(b)) if m.node == 1 && i == b => {
+        (CTyp::Uni(i, _n), CTyp::Base(b)) if i == b => {
             let k = kctx.get(&i).ok_or(TypeError::Evaluate)?;
             if !k.is_scalar() {
                 return Err(TypeError::Evaluate);
@@ -284,7 +289,7 @@ pub(super) fn evaluated_typ(
             Ok(CTyp::Base(i))
         }
         // An integer point embeds into the polynomial's own field.
-        (CTyp::Poly(i, m, _n), CTyp::Fin(_) | CTyp::FieldLiteral) if m.node == 1 => {
+        (CTyp::Uni(i, _n), CTyp::Fin(_) | CTyp::FieldLiteral) => {
             let k = kctx.get(&i).ok_or(TypeError::Evaluate)?;
             if !k.is_scalar() {
                 return Err(TypeError::Evaluate);
@@ -294,23 +299,26 @@ pub(super) fn evaluated_typ(
         // Univariate polynomial evaluated at a vector of points is a
         // hard type error: evaluate at a single scalar via `p(x)`, or
         // write `[p(x) for x in points]` to evaluate at many points.
-        (CTyp::Poly(_i, m, _n), CTyp::Vec(_b, _len)) if m.node == 1 => {
-            Err(TypeError::EvaluateUnivariateVector)
-        }
-        // Multivariate polynomial (MLE, virtual, etc.): n > 1.
-        (CTyp::Poly(i_poly, n, d), CTyp::Vec(b, len_vec)) if n.node > 1 => {
+        (CTyp::Uni(..), CTyp::Vec(_b, _len)) => Err(TypeError::EvaluateUnivariateVector),
+        // Multivariate polynomial (MLE or general): the point fixes its leading variables, and
+        // the rest keep the polynomial's encoding.
+        (p @ (CTyp::Mle(..) | CTyp::Poly(..)), CTyp::Vec(b, len_vec)) => {
+            let (i_poly, n, _) = p.poly_shape().expect("a polynomial");
             // Points must fit the polynomial's field (integers embed).
             if !b.node.fits(&CTyp::Base(i_poly.clone()), kctx) {
                 return Err(TypeError::Evaluate);
             }
-            if len_vec == n {
-                return Ok(CTyp::Base(i_poly.clone()));
+            match len_vec.node.cmp(&n) {
+                std::cmp::Ordering::Equal => Ok(CTyp::Base(i_poly.clone())),
+                std::cmp::Ordering::Less => {
+                    let rem = n - len_vec.node;
+                    Ok(match &p {
+                        CTyp::Poly(_, _, d) => CTyp::poly(i_poly, rem, d.node),
+                        _ => CTyp::mle(i_poly, rem),
+                    })
+                }
+                std::cmp::Ordering::Greater => Err(TypeError::EvaluateMleTooManyArguments),
             }
-            if len_vec < n {
-                let rem = n.node - len_vec.node;
-                return Ok(CTyp::Poly(i_poly.clone(), Spanned::dummy(rem), d));
-            }
-            Err(TypeError::EvaluateMleTooManyArguments)
         }
         _ => Err(TypeError::Evaluate),
     }

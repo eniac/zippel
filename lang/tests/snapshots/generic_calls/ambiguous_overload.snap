@@ -2,18 +2,18 @@
 source: lang/tests/generic_calls.rs
 assertion_line: 137
 ---
-error: Call to `mix` is ambiguous: several definitions accept arguments of type Poly<F, 1, 2> (F: Field), Poly<F, 1, 2> (F: Field)
+error: Call to `mix` is ambiguous: several definitions accept arguments of type Uni<F, 2> (F: Field), Uni<F, 2> (F: Field)
     ╭─[ test.zippel:12:12 ]
     │
  12 │     verify(mix(p, p) == x)
     │            ────┬──┬─  
     │                ╰────── several definitions take these argument types
     │                │  │   
-    │                ╰────── has type Poly<F, 1, 2> (F: Field)
+    │                ╰────── has type Uni<F, 2> (F: Field)
     │                │  │   
-    │                │  ╰─── has type Poly<F, 1, 2> (F: Field)
+    │                │  ╰─── has type Uni<F, 2> (F: Field)
     │                │      
-    │                ╰────── note: `mix` takes Poly<F, 1, 3> (F: Field), Poly<F, 1, 5> (F: Field)
+    │                ╰────── note: `mix` takes Uni<F, 3> (F: Field), Uni<F, 5> (F: Field)
     │                │      
-    │                ╰────── note: `mix` takes Poly<F, 1, 5> (F: Field), Poly<F, 1, 3> (F: Field)
+    │                ╰────── note: `mix` takes Uni<F, 5> (F: Field), Uni<F, 3> (F: Field)
 ────╯

@@ -450,10 +450,7 @@ where
                 .then_ignore(just(Token::RAngle).ignored())
                 .map_with(|(b, n), e| {
                     let sp: SimpleSpan = e.span();
-                    Spanned::new(
-                        Typ::Poly(b.node, Spanned::dummy(Size::lit(1)), n),
-                        sp.into_range(),
-                    )
+                    Spanned::new(Typ::Uni(b.node, n), sp.into_range())
                 }),
             // Mle<F, N>
             just(Token::KwMleTy)
@@ -465,7 +462,7 @@ where
                 .then_ignore(just(Token::Comma).ignored().or_not())
                 .then_ignore(just(Token::RAngle).ignored())
                 .map_with(|(b, n), e| {
-                    Spanned::new(Typ::Poly(b.node, n, Spanned::dummy(Size::lit(1))), {
+                    Spanned::new(Typ::Mle(b.node, n), {
                         let sp: SimpleSpan = e.span();
                         sp.into_range()
                     })

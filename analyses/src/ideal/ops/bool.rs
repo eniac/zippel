@@ -210,15 +210,15 @@ mod tests {
     }
 
     #[test]
-    fn test_equ_vpoly_2_1_three_slots() {
-        // VPoly(2,1) == VPoly(2,1): 3 coefficient slots.
+    fn test_equ_vpoly_2_1_four_slots() {
+        // VPoly(2,1) == VPoly(2,1): 4 coefficient slots (1, x2, x1, x1*x2).
         let (var_a, var_c, var_b, ideal) = equ_ideal(ATyp::VPoly(2, 1));
         assert_eq!(
             ideal.generating_set.len(),
-            4,
-            "VPoly(2,1) equ should produce 4 constraints"
+            5,
+            "VPoly(2,1) equ should produce 5 constraints"
         );
-        for i in 0..3 {
+        for i in 0..4 {
             let ai = var_a.clone().with_index(i).unwrap();
             let ci = var_c.clone().with_index(i).unwrap();
             assert_contains(

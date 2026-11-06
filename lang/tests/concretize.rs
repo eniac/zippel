@@ -394,7 +394,7 @@ proto p<F: Field, N: Size>(instance a: [F; N]) where helper(a) == a[0] {
 fn minimal_sizes_distinguishes_polynomial_applications_from_helper_calls() {
     let src = r"
 fn helper<F: Field, N: Size>(instance a: [F; N]) -> F { a[2] }
-proto p<F: Field>(instance a: F, instance helper: Poly<F, 1, 1>) where helper(a) == a {
+proto p<F: Field>(instance a: F, instance helper: Uni<F, 1>) where helper(a) == a {
     verify(helper(a) == a)
 }
 ";
@@ -574,7 +574,7 @@ fn minimal_sizes_preserves_scope_for_polynomial_calls() {
         "let p = fun(helper) => helper(a); verify(p(a) == p(a))",
     ] {
         let src = format!(
-            "fn helper<F: Field, N: Size>(instance x: [F; N]) -> F {{ x[2] }}\nproto p<F: Field>(instance a: F, instance polys: [Poly<F, 1, 1>; 1]) where a == a {{ {body} }}"
+            "fn helper<F: Field, N: Size>(instance x: [F; N]) -> F {{ x[2] }}\nproto p<F: Field>(instance a: F, instance polys: [Uni<F, 1>; 1]) where a == a {{ {body} }}"
         );
         assert_eq!(minimal_sizes(&src, &[]), sizes(&[("N", 3)]), "{src}");
     }

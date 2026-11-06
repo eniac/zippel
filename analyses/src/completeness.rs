@@ -759,8 +759,8 @@ mod tests {
     fn fft_linearity_completeness() {
         let ex = r#"
             proto fft_linearity<F: Field>(
-                instance a: Poly<F, 1, 3>,
-                instance b: Poly<F, 1, 3>
+                instance a: Uni<F, 3>,
+                instance b: Uni<F, 3>
             ) where a == a {
                 let c = a + b;
                 let va = eval(a);
@@ -953,7 +953,7 @@ mod tests {
         // remainder bound then determine the quotient as `p`.
         let ex = r#"
             proto poly_div_exact<F: Field>(
-                instance p: Poly<F, 1, 1>,
+                instance p: Uni<F, 1>,
                 instance d0: F,
                 instance d1: F,
                 witness w: F
@@ -979,8 +979,8 @@ mod tests {
         // 0) but the verifier divides by zero.
         let ex = r#"
             proto poly_div_zero<F: Field>(
-                instance p: Poly<F, 1, 1>,
-                instance d: Poly<F, 1, 1>
+                instance p: Uni<F, 1>,
+                instance d: Uni<F, 1>
             ) where p == p {
                 let prod = p * d;
                 let q = prod / d;
@@ -997,7 +997,7 @@ mod tests {
     fn poly_divmod_identity_completeness() {
         let ex = r#"
             proto poly_divmod<F: Field>(
-                instance p: Poly<F, 1, 2>,
+                instance p: Uni<F, 2>,
                 instance d0: F,
                 instance d1: F,
                 witness w: F
@@ -1027,7 +1027,7 @@ mod tests {
         // any r and adjust q to compensate.
         let ex = r#"
             proto poly_div_zero_lead<F: Field>(
-                instance p: Poly<F, 1, 3>,
+                instance p: Uni<F, 3>,
                 instance d0: F,
                 witness w: F
             ) where d0 * w == 1 {
@@ -1069,7 +1069,7 @@ mod tests {
         // The relation makes the divisor nonzero, isolating the `r[0]` goal.
         let ex = r#"
             proto poly_div_mid_zero<F: Field>(
-                instance p: Poly<F, 1, 3>,
+                instance p: Uni<F, 3>,
                 instance b0: F,
                 instance b2: F,
                 witness w: F

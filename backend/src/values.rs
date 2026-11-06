@@ -2475,7 +2475,8 @@ impl<C: ArkConfig> Value<C> {
                 let points: Vec<C::F> = b.iter().map(|i| C::FOps::from_usize(*i)).collect();
 
                 let original_num_vars = poly.num_vars();
-                let result_poly = if poly.is_full_point(n_points) {
+                let full = poly.is_full_point(n_points);
+                let result_poly = if full {
                     VirtualPolynomial::from_scalar(
                         poly.evaluate_mv(&points).expect("full point evaluates"),
                     )
@@ -2488,7 +2489,8 @@ impl<C: ArkConfig> Value<C> {
                     && result_poly.num_vars().is_some();
                 *other = if !keep_typed_residual {
                     if let Some(scalar) = result_poly.to_scalar() {
-                        if n_points == 1 {
+                        // A full point (of a one-variable polynomial too) gives a scalar.
+                        if n_points == 1 && !full {
                             Value::vec_scalar(vec![scalar])
                         } else {
                             Value::Scalar(scalar)
@@ -2504,7 +2506,8 @@ impl<C: ArkConfig> Value<C> {
                 let n_points = v.len();
 
                 let original_num_vars = poly.num_vars();
-                let result_poly = if poly.is_full_point(n_points) {
+                let full = poly.is_full_point(n_points);
+                let result_poly = if full {
                     VirtualPolynomial::from_scalar(
                         poly.evaluate_mv(v).expect("full point evaluates"),
                     )
@@ -2516,7 +2519,8 @@ impl<C: ArkConfig> Value<C> {
                     && result_poly.num_vars().is_some();
                 *other = if !keep_typed_residual {
                     if let Some(scalar) = result_poly.to_scalar() {
-                        if n_points == 1 {
+                        // A full point (of a one-variable polynomial too) gives a scalar.
+                        if n_points == 1 && !full {
                             Value::vec_scalar(vec![scalar])
                         } else {
                             Value::Scalar(scalar)
@@ -2787,7 +2791,7 @@ impl<C: ArkConfig> Value<C> {
                     DenseMultilinearExtension::from_evaluations_vec(*n, evals),
                 )))
             }
-            // n-variate poly, max total degree m. For n <= 1 produce a
+            // n-variate poly, degree at most m in each variable. For n <= 1 produce a
             // univariate of degree m; otherwise a multilinear extension as
             // a representative inhabitant of the type.
             ATyp::VPoly(n, m) => {

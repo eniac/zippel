@@ -3,7 +3,7 @@
 // error: a one-variable residual would misread the vector as one multivariate
 // coordinate point instead of a batch of scalar sample points.
 fn eval_univariate<F: Field, MAX_DEGREE_CONST: Size>(
-    instance p: Uni<F, MAX_DEGREE_CONST>,
+    instance p: Poly<F, 1, MAX_DEGREE_CONST>,
     instance points: [F; MAX_DEGREE_CONST + 1],
 ) -> [F; MAX_DEGREE_CONST + 1] {
     [p(t) for t in points]

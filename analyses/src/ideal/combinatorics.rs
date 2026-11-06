@@ -5,7 +5,7 @@
 //! orderings — the `GrevLexTerm` and `ElimMono<E>` orderings in
 //! `monomial.rs` are untouched.
 //!
-//!   * VPoly<N, M> → C(N+M, M) slots, one per multi-index k with |k| ≤ M.
+//!   * VPoly<N, D> → (D+1)^N slots, one per multi-index k with every k_i ≤ D.
 //!   * `Mle<N>`    → 2^N slots, one per hypercube point b ∈ {0,1}^N.
 //!   * Uni(n)      → n + 1 slots (coefficient vector for degree bound n).
 //!   * Vec(_, n)   → n slots.
@@ -15,23 +15,24 @@ use ark_ff::{Field, One};
 use crate::frontend::Polynomial;
 use backend::ArkConfig;
 
-/// All multi-indices `(k_1, …, k_n)` with `sum(k_i) ≤ m`, in graded-lex order
-/// (by total degree, then lex within the same degree).
-pub fn multi_indices(n: usize, m: usize) -> Vec<Vec<usize>> {
-    fn go(n: usize, budget: usize, acc: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
+/// All multi-indices `(k_1, …, k_n)` with every `k_i ≤ d` (the slots of
+/// `VPoly(n, d)`), in graded-lex order (by total degree, then lex within the
+/// same degree).
+pub fn multi_indices(n: usize, d: usize) -> Vec<Vec<usize>> {
+    fn go(n: usize, d: usize, acc: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
         if n == 0 {
             out.push(acc.clone());
             return;
         }
-        for k in 0..=budget {
+        for k in 0..=d {
             acc.push(k);
-            go(n - 1, budget - k, acc, out);
+            go(n - 1, d, acc, out);
             acc.pop();
         }
     }
     let mut all = Vec::new();
     let mut scratch = Vec::with_capacity(n);
-    go(n, m, &mut scratch, &mut all);
+    go(n, d, &mut scratch, &mut all);
     // Sort by (total degree, lex) to get a stable graded-lex enumeration.
     all.sort_by(|a, b| {
         let da: usize = a.iter().sum();
@@ -151,14 +152,14 @@ mod tests {
 
     #[test]
     fn test_multi_indices_univariate() {
-        // Uni degree 3 → 1-variable VPoly with total degree ≤ 3.
+        // Uni degree 3 → 1-variable VPoly with degree ≤ 3.
         let got = multi_indices(1, 3);
         assert_eq!(got, vec![vec![0], vec![1], vec![2], vec![3]]);
     }
 
     #[test]
     fn test_multi_indices_two_vars_deg2() {
-        // VPoly<2, 2>: all k with k_1 + k_2 ≤ 2, in graded-lex order.
+        // VPoly<2, 2>: all k with k_1, k_2 ≤ 2, in graded-lex order.
         let got = multi_indices(2, 2);
         assert_eq!(
             got,
@@ -169,8 +170,21 @@ mod tests {
                 vec![0, 2],
                 vec![1, 1],
                 vec![2, 0], // deg 2 (lex)
+                vec![1, 2],
+                vec![2, 1], // deg 3 (lex)
+                vec![2, 2], // deg 4
             ]
         );
+    }
+
+    #[test]
+    fn test_multi_indices_bound_each_variable() {
+        // Sumcheck's `Poly<F, 3, 1>`: degree 1 in each variable admits every
+        // multilinear monomial, x1*x2*x3 included, and no x1^2.
+        let got = multi_indices(3, 1);
+        assert_eq!(got.len(), 8);
+        assert!(got.contains(&vec![1, 1, 1]));
+        assert!(!got.contains(&vec![2, 0, 0]));
     }
 
     #[test]
@@ -183,35 +197,17 @@ mod tests {
         assert_eq!(got[7], vec![1, 1, 1]);
     }
 
-    fn binomial(n: usize, k: usize) -> usize {
-        let k = k.min(n - k);
-        (0..k).fold(1, |acc, i| acc * (n - i) / (i + 1))
-    }
-
     #[test]
-    fn test_binomial_helper_sanity() {
-        // Pin well-known values so a bug in the helper doesn't mask bugs
-        // in physical_len.
-        assert_eq!(binomial(0, 0), 1);
-        assert_eq!(binomial(5, 0), 1);
-        assert_eq!(binomial(5, 5), 1);
-        assert_eq!(binomial(5, 2), 10);
-        assert_eq!(binomial(6, 3), 20);
-        assert_eq!(binomial(10, 4), 210);
-    }
-
-    #[test]
-    fn test_physical_len_vpoly_matches_binomial() {
-        // VPoly(n, m) has C(n + m, n) coefficient slots.
+    fn test_physical_len_vpoly_is_box_size() {
+        // VPoly(n, d) has (d + 1)^n coefficient slots.
         arbtest::arbtest(|u| {
             let n: usize = u.int_in_range(1..=5)?;
-            let m: usize = u.int_in_range(0..=5)?;
-            let sum = n + m;
-            let expected = binomial(sum, n);
+            let d: usize = u.int_in_range(0..=5)?;
+            let expected = (d + 1).pow(u32::try_from(n).unwrap());
             assert_eq!(
-                ATyp::VPoly(n, m).physical_len(),
+                ATyp::VPoly(n, d).physical_len(),
                 expected,
-                "physical_len(VPoly({n}, {m})) should be C({sum}, {n}) = {expected}",
+                "physical_len(VPoly({n}, {d})) should be ({d} + 1)^{n} = {expected}",
             );
             Ok(())
         });

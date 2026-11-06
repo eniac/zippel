@@ -1050,7 +1050,8 @@ impl<F: PrimeField> VirtualPolynomial<F> {
     /// - `Uni(d)`: univariate factors only, each product of degree at most `d`;
     /// - `Mle(n)`: `n`-variable multilinear factors, at most one per product;
     /// - `VPoly(n, d)`: `n`-variable multivariate factors, each product of
-    ///   total degree at most `d` (an `n`-variable MLE counts as `n`).
+    ///   degree at most `d` in each variable (the factors' bounds add; an
+    ///   MLE counts as 1).
     ///
     /// Every factor must be well formed ([`PolyVariant::is_well_formed`]).
     /// Any other type gives `false`.
@@ -1067,7 +1068,7 @@ impl<F: PrimeField> VirtualPolynomial<F> {
                 .map(|(_, indices)| {
                     indices
                         .iter()
-                        .map(|&i| self.flattened_polys[i].total_degree_bound())
+                        .map(|&i| self.flattened_polys[i].individual_degree_bound())
                         .sum::<usize>()
                 })
                 .max()

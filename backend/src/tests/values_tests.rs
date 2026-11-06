@@ -1754,9 +1754,9 @@ fn conforms_to_bounds_a_polynomial_by_its_type() {
         (&m, ATyp::Uni(4), false),
         (&short_mle, ATyp::Mle(2), false),
         (&product, ATyp::Mle(2), false),
-        // Two 2-variable multilinear factors: total degree up to 4.
-        (&product, ATyp::VPoly(2, 4), true),
-        (&product, ATyp::VPoly(2, 3), false),
+        // Two 2-variable multilinear factors: degree up to 2 in each variable.
+        (&product, ATyp::VPoly(2, 2), true),
+        (&product, ATyp::VPoly(2, 1), false),
     ];
     for (poly, typ, expected) in cases {
         let value = V::poly(poly.clone());

@@ -14,14 +14,15 @@ impl<C: HasOpFactory> UDag<C> {
         let span = scope.exprs.span(id).clone();
         // Is it a polynomial, MLE, or a function?
         match scope.vctx.get(&fid.node).cloned() {
-            // Applying a polynomial is `eval`: `p(x)` for a univariate polynomial; for one in
-            // several variables, `p(x)` is `eval(p, [x])`, fixing variable 0 (for an MLE, the
-            // low bit of an evaluation's index), and `p([x0, ...])` is `eval(p, [x0, ...])`.
-            Some(CTyp::Poly(_, vars, _)) => {
+            // Applying a polynomial is `eval`: `p(x)` for a univariate polynomial; for a
+            // multilinear or general one, `p(x)` is `eval(p, [x])`, fixing variable 0 (for an
+            // MLE, the low bit of an evaluation's index), and `p([x0, ...])` is
+            // `eval(p, [x0, ...])`.
+            Some(p_typ @ (CTyp::Uni(..) | CTyp::Mle(..) | CTyp::Poly(..))) => {
                 assert_eq!(params.len(), 1, "a polynomial takes one argument");
                 let point_is_vec = matches!(scope.infer(params[0])?, CTyp::Vec(..));
                 let mut push = |node| scope.exprs.push(node, span.clone());
-                let point = if vars.node > 1 && !point_is_vec {
+                let point = if !matches!(p_typ, CTyp::Uni(..)) && !point_is_vec {
                     push(Exp::Vec(Exps(vec![params[0]])))
                 } else {
                     params[0]

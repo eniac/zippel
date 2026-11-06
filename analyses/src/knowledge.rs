@@ -685,9 +685,9 @@ mod tests {
     fn knowledge_relation_basis_div_witnesses_rebuild_clean() {
         let ex = r#"
         proto clean_rel<F: Field>(
-            witness p: Poly<F, 1, 2>,
-            instance d: Poly<F, 1, 1>,
-            instance q: Poly<F, 1, 1>
+            witness p: Uni<F, 2>,
+            instance d: Uni<F, 1>,
+            instance q: Uni<F, 1>
         ) where q == p / d {
             let z = p / d;
             verify(z == q)

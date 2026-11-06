@@ -1,4 +1,4 @@
-use num::{BigUint, One, ToPrimitive, Zero};
+use num::{BigUint, ToPrimitive, Zero};
 use std::fmt;
 use thiserror::Error;
 
@@ -102,11 +102,6 @@ impl Size {
             }
             _ => false,
         }
-    }
-
-    /// Whether this is the literal `1`, the implicit dimension of `Uni`/`Mle` sugar.
-    pub fn is_lit_one(&self) -> bool {
-        matches!(self, Size::Lit(n) if n.is_one())
     }
 
     /// The size-type variables this expression depends on.

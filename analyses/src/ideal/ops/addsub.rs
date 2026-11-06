@@ -244,8 +244,8 @@ mod tests {
 
     #[test]
     fn test_add_op_vpoly_add_coefficient_wise() {
-        // VPoly(2,1) has 3 coefficient slots.  a + b should bind ideal.slot(i)
-        // to a.slot(i) + b.slot(i) for each of the 3 slots.
+        // VPoly(2,1) has 4 coefficient slots.  a + b should bind ideal.slot(i)
+        // to a.slot(i) + b.slot(i) for each of the 4 slots.
         use crate::Var;
         use backend::op::mk;
         use graph::Ref;
@@ -275,8 +275,8 @@ mod tests {
         );
         builder.add_op(var.clone(), op, &mut ideal);
 
-        // 3 ideal slots bound.
-        for i in 0..3 {
+        // 4 ideal slots bound.
+        for i in 0..4 {
             assert!(
                 ideal.pl.contains(&var.clone().with_index(i).unwrap()),
                 "add ideal slot {} missing",
@@ -284,7 +284,7 @@ mod tests {
             );
         }
         // Each ideal slot contains exactly a.slot(i) + b.slot(i).
-        for i in 0..3 {
+        for i in 0..4 {
             let a_slot = var_a.clone().with_index(i).unwrap();
             let b_slot = var_b.clone().with_index(i).unwrap();
             let stored = ideal.pl.get(&var.clone().with_index(i).unwrap()).unwrap();
@@ -361,9 +361,9 @@ mod tests {
         );
         builder.add_op(var.clone(), op, &mut ideal);
 
-        // VPoly(2,2) has 6 slots.
-        assert_eq!(ATyp::VPoly(2, 2).physical_len(), 6);
-        for i in 0..6 {
+        // VPoly(2,2) has 9 slots.
+        assert_eq!(ATyp::VPoly(2, 2).physical_len(), 9);
+        for i in 0..9 {
             let a_slot = var_a.clone().with_index(i).unwrap();
             let b_slot = var_b.clone().with_index(i).unwrap();
             let stored = ideal.pl.get(&var.clone().with_index(i).unwrap()).unwrap();

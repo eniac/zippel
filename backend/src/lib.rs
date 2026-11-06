@@ -47,7 +47,7 @@ pub use op::{GOp, HasOpFactory, Op, OpExclusion, Ref};
 pub use optimization::{OptimizationStats, optimization_stats_snapshot, reset_optimization_stats};
 pub use poly_variant::{PolyError, PolyVariant};
 pub use shared::Shared;
-pub use types::{ABase, ATyp, binomial};
+pub use types::{ABase, ATyp};
 pub use values::{PreparedG2Vec, Value, value_to_bytes};
 pub use virtual_polynomial::{SelectedEvalShape, VirtualPolynomial};
 
