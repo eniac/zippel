@@ -82,7 +82,7 @@ impl<F: Field> PolyVariant<F> {
                 };
                 PolyVariant::SparseMultivariate(p + &constant)
             }
-            PolyVariant::DenseMle(mle) => mle::dense_mle(
+            PolyVariant::DenseMle(mle) => PolyVariant::dense_mle(
                 mle.num_vars(),
                 mle.iter().map(|&eval| eval + scalar).collect(),
             ),
@@ -105,7 +105,7 @@ impl<F: Field> PolyVariant<F> {
                     p.iter().map(|&(d, c)| (d, f(c))).collect(),
                 ))
             }
-            PolyVariant::DenseMle(mle) => mle::dense_mle(
+            PolyVariant::DenseMle(mle) => PolyVariant::dense_mle(
                 mle.num_vars(),
                 mle.evaluations.par_iter().map(|&e| f(e)).collect(),
             ),

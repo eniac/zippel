@@ -13,10 +13,7 @@ use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::Field;
 use ark_ff::Zero;
-use ark_poly::{
-    DenseMultilinearExtension, DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain,
-    univariate::DensePolynomial,
-};
+use ark_poly::{EvaluationDomain, GeneralEvaluationDomain, univariate::DensePolynomial};
 use ark_serialize::{CanonicalSerialize, SerializationError};
 use ark_std::log2;
 use lang::ast::{BinOp, Exclusion};
@@ -2780,16 +2777,12 @@ impl<C: ArkConfig> Value<C> {
                         coeffs[*m] = C::FOps::rand(rng);
                     }
                 }
-                Value::poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(
-                    DensePolynomial::from_coefficients_vec(coeffs),
-                )))
+                Value::poly(VirtualPolynomial::univariate(coeffs))
             }
             // Multilinear extension on the {0,1}^n hypercube: 2^n evaluations.
             ATyp::Mle(n) => {
                 let evals = C::FOps::vec_rand(rng, 1usize << *n);
-                Value::poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(
-                    DenseMultilinearExtension::from_evaluations_vec(*n, evals),
-                )))
+                Value::poly(VirtualPolynomial::dense_mle(*n, evals))
             }
             // n-variate poly, degree at most m in each variable. For n <= 1 produce a
             // univariate of degree m; otherwise a multilinear extension as
@@ -2802,14 +2795,10 @@ impl<C: ArkConfig> Value<C> {
                             coeffs[*m] = C::FOps::rand(rng);
                         }
                     }
-                    Value::poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(
-                        DensePolynomial::from_coefficients_vec(coeffs),
-                    )))
+                    Value::poly(VirtualPolynomial::univariate(coeffs))
                 } else {
                     let evals = C::FOps::vec_rand(rng, 1usize << *n);
-                    Value::poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(
-                        DenseMultilinearExtension::from_evaluations_vec(*n, evals),
-                    )))
+                    Value::poly(VirtualPolynomial::dense_mle(*n, evals))
                 }
             }
             ATyp::Record(fields) => {
@@ -3491,14 +3480,10 @@ impl<C: ArkConfig> Value<C> {
     /// As [`Self::value_poly`].
     pub fn value_poly_owned(self) -> Self {
         match self {
-            Value::VecScalar(v) => Value::poly(VirtualPolynomial::from_poly(
-                PolyVariant::from_coeffs(v.into_vec()),
-            )),
+            Value::VecScalar(v) => Value::poly(VirtualPolynomial::univariate(v.into_vec())),
             Value::VecIndex(v) => {
                 let coeffs = v.iter().map(|i| C::FOps::from_usize(*i)).collect();
-                Value::poly(VirtualPolynomial::from_poly(PolyVariant::from_coeffs(
-                    coeffs,
-                )))
+                Value::poly(VirtualPolynomial::univariate(coeffs))
             }
             _ => panic!("Expected vec scalar, found {}", self),
         }
@@ -3518,17 +3503,13 @@ impl<C: ArkConfig> Value<C> {
             Value::VecScalar(v) => {
                 let mle = v.to_vec();
                 let size = log2(mle.len()) as usize;
-                Value::poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(
-                    DenseMultilinearExtension::<C::F>::from_evaluations_vec(size, mle),
-                )))
+                Value::poly(VirtualPolynomial::dense_mle(size, mle))
             }
             Value::VecIndex(v) => {
                 let mut mle = Vec::with_capacity(v.len());
                 mle.extend(v.iter().map(|i| C::FOps::from_usize(*i)));
                 let size = log2(mle.len()) as usize;
-                Value::poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(
-                    DenseMultilinearExtension::<C::F>::from_evaluations_vec(size, mle),
-                )))
+                Value::poly(VirtualPolynomial::dense_mle(size, mle))
             }
             _ => panic!("Expected vec scalar or vec index, found {}", self),
         }
@@ -3545,17 +3526,13 @@ impl<C: ArkConfig> Value<C> {
         match self {
             Value::VecScalar(v) => {
                 let size = log2(v.len()) as usize;
-                Value::poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(
-                    DenseMultilinearExtension::<C::F>::from_evaluations_vec(size, v.into_vec()),
-                )))
+                Value::poly(VirtualPolynomial::dense_mle(size, v.into_vec()))
             }
             Value::VecIndex(v) => {
                 let mut mle = Vec::with_capacity(v.len());
                 mle.extend(v.iter().map(|i| C::FOps::from_usize(*i)));
                 let size = log2(mle.len()) as usize;
-                Value::poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(
-                    DenseMultilinearExtension::<C::F>::from_evaluations_vec(size, mle),
-                )))
+                Value::poly(VirtualPolynomial::dense_mle(size, mle))
             }
             other => other.value_mle(),
         }
@@ -5098,8 +5075,8 @@ mod value_tests {
             for _ in 0..=degree {
                 coeffs.push(Fr::from(u.int_in_range(1u64..=100)?));
             }
-            Ok(UniPoly(TestValue::poly(VirtualPolynomial::from_poly(
-                PolyVariant::from_coeffs(coeffs),
+            Ok(UniPoly(TestValue::poly(VirtualPolynomial::univariate(
+                coeffs,
             ))))
         }
     }
@@ -5115,7 +5092,7 @@ mod value_tests {
                 evals.push(Fr::from(u.int_in_range(1u64..=100)?));
             }
             Ok(Mle2Poly(TestValue::poly(VirtualPolynomial::from_poly(
-                PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(2, evals)),
+                PolyVariant::dense_mle(2, evals),
             ))))
         }
     }
@@ -5612,9 +5589,9 @@ mod value_tests {
 
     /// The univariate polynomial with these coefficients, lowest degree first.
     fn uni(coeffs: &[u64]) -> TestValue {
-        TestValue::poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(
-            DensePolynomial::from_coefficients_vec(coeffs.iter().map(|&c| Fr::from(c)).collect()),
-        )))
+        TestValue::poly(VirtualPolynomial::univariate(
+            coeffs.iter().map(|&c| Fr::from(c)).collect(),
+        ))
     }
 
     fn vec_index(xs: &[usize]) -> TestValue {

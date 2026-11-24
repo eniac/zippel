@@ -100,6 +100,41 @@ impl<F: Field> PolyVariant<F> {
         PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(coeffs))
     }
 
+    /// The multilinear extension of `f: {0,1}^num_vars → F` given as its full
+    /// evaluation table: `evals[i]` is `f` at the point whose coordinate `k` is
+    /// bit `k` of `i` (LSB-first).
+    ///
+    /// # Panics
+    /// If `evals.len()` is not `2^num_vars` (asserted by arkworks'
+    /// `DenseMultilinearExtension::from_evaluations_vec`).
+    pub fn dense_mle(num_vars: usize, evals: Vec<F>) -> Self {
+        PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(
+            num_vars, evals,
+        ))
+    }
+
+    /// The multilinear extension of `f: {0,1}^num_vars → F` given by its
+    /// non-zero entries as `(index, value)` pairs, indexed as in
+    /// [`Self::dense_mle`]; unlisted indices are zero and an index listed twice
+    /// takes the sum.
+    ///
+    /// # Panics
+    /// If an index is not below `2^num_vars`, as [`Self::dense_mle`] panics on a
+    /// table of the wrong length.
+    pub fn sparse_mle(num_vars: usize, entries: Vec<(usize, F)>) -> Self {
+        let table_len = u32::try_from(num_vars)
+            .ok()
+            .and_then(|n| 1usize.checked_shl(n))
+            .expect("sparse_mle: 2^num_vars overflows usize");
+        if let Some((index, _)) = entries.iter().find(|(i, _)| *i >= table_len) {
+            panic!("sparse_mle: index {index} outside the table of 2^{num_vars} entries");
+        }
+        PolyVariant::SparseMle {
+            num_vars,
+            evals: entries,
+        }
+    }
+
     /// Create a polynomial from a scalar constant
     pub fn from_scalar(scalar: F) -> Self {
         // Return as degree-0 univariate polynomial
@@ -269,7 +304,7 @@ impl<F: Field> PolyVariant<F> {
                 PolyVariant::DenseUni(self.dense_uni().unwrap().into_owned())
             }
             PolyVariant::SparseMle { num_vars, evals } => {
-                mle::dense_mle(*num_vars, mle::to_dense(*num_vars, evals))
+                Self::dense_mle(*num_vars, mle::to_dense(*num_vars, evals))
             }
             _ => self.clone(),
         }

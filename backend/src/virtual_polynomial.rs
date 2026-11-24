@@ -397,33 +397,25 @@ impl<F: PrimeField> VirtualPolynomial<F> {
         result
     }
 
-    /// The multilinear extension of `f: {0,1}^num_vars → F` given as its full
-    /// evaluation table: `evals[i]` is `f` at the point whose bits are those of
-    /// `i`, LSB-first (variable 0 is the low bit). A value of source type
-    /// `Mle<F, num_vars>`; products and sums of these build a `Poly`.
+    /// [`PolyVariant::dense_mle`]: a value of source type `Mle<F, num_vars>`.
+    /// Products of these build a `Poly`.
     ///
     /// # Panics
-    /// If `evals.len()` is not `2^num_vars` (checked by arkworks'
-    /// `DenseMultilinearExtension::from_evaluations_vec`).
+    /// As [`PolyVariant::dense_mle`].
     #[must_use]
     pub fn dense_mle(num_vars: usize, evals: Vec<F>) -> Self {
-        Self::from_poly(PolyVariant::DenseMle(
-            ark_poly::DenseMultilinearExtension::from_evaluations_vec(num_vars, evals),
-        ))
+        Self::from_poly(PolyVariant::dense_mle(num_vars, evals))
     }
 
-    /// The multilinear extension of `f: {0,1}^num_vars → F` given by its
-    /// non-zero entries as `(index, value)` pairs, indexed as in
-    /// [`Self::dense_mle`]; unlisted indices are zero and an index listed twice
-    /// takes the sum. Use it when few of the `2^num_vars` entries are non-zero
-    /// (R1CS matrices): evaluation costs grow with the entries, not the table.
-    /// An index outside the table makes the value fail its input check.
+    /// [`PolyVariant::sparse_mle`]: a value of source type `Mle<F, num_vars>`
+    /// whose evaluation cost grows with its entries rather than its `2^num_vars`
+    /// table (R1CS matrices).
+    ///
+    /// # Panics
+    /// As [`PolyVariant::sparse_mle`].
     #[must_use]
     pub fn sparse_mle(num_vars: usize, entries: Vec<(usize, F)>) -> Self {
-        Self::from_poly(PolyVariant::SparseMle {
-            num_vars,
-            evals: entries,
-        })
+        Self::from_poly(PolyVariant::sparse_mle(num_vars, entries))
     }
 
     /// Create a virtual polynomial from a scalar constant
@@ -642,9 +634,11 @@ impl<F: PrimeField> VirtualPolynomial<F> {
         ))
     }
 
-    /// The univariate polynomial with coefficients `coeffs`, declared as
-    /// having one variable.
-    fn univariate(coeffs: Vec<F>) -> Self {
+    /// The univariate polynomial with coefficients `coeffs`, constant term
+    /// first, declared as having one variable: a value of source type
+    /// `Uni<F, D>` for `D` at least its degree.
+    #[must_use]
+    pub fn univariate(coeffs: Vec<F>) -> Self {
         let mut result = VirtualPolynomial::from_poly(PolyVariant::DenseUni(
             DensePolynomial::from_coefficients_vec(coeffs),
         ));

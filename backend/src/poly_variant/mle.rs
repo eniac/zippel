@@ -6,7 +6,6 @@
 //! by its density ([`from_entries`]); the rest of the module never builds a table itself.
 
 use ark_ff::Field;
-use ark_poly::DenseMultilinearExtension;
 use lang::typ::CRange;
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -48,7 +47,7 @@ fn from_entries<F: Field>(
             for (i, v) in sums {
                 dense[i] = v;
             }
-            dense_mle(num_vars, dense)
+            PolyVariant::dense_mle(num_vars, dense)
         }
         _ => {
             let mut evals: Vec<(usize, F)> = sums.into_iter().collect();
@@ -56,13 +55,6 @@ fn from_entries<F: Field>(
             PolyVariant::SparseMle { num_vars, evals }
         }
     }
-}
-
-/// The `DenseMle` with table `values` over `num_vars` variables.
-pub(super) fn dense_mle<F: Field>(num_vars: usize, values: Vec<F>) -> PolyVariant<F> {
-    PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(
-        num_vars, values,
-    ))
 }
 
 /// The dense table of the sparse entries `evals` over `num_vars` variables.
@@ -82,14 +74,14 @@ pub(super) fn add<F: Field>(num_vars: usize, a: Table<'_, F>, b: Table<'_, F>) -
     match (a, b) {
         (Table::Sparse(a), Table::Sparse(b)) => from_entries(num_vars, a.iter().chain(b).copied()),
         (Table::Dense(a), Table::Dense(b)) => {
-            dense_mle(num_vars, a.iter().zip(b).map(|(x, y)| *x + y).collect())
+            PolyVariant::dense_mle(num_vars, a.iter().zip(b).map(|(x, y)| *x + y).collect())
         }
         (Table::Dense(d), Table::Sparse(s)) | (Table::Sparse(s), Table::Dense(d)) => {
             let mut sum = d.to_vec();
             for &(i, v) in s {
                 sum[i] += v;
             }
-            dense_mle(num_vars, sum)
+            PolyVariant::dense_mle(num_vars, sum)
         }
     }
 }
@@ -123,7 +115,7 @@ pub(super) fn fix_low<F: Field>(
 ) -> PolyVariant<F> {
     let k = point.len();
     match table {
-        Table::Dense(values) => dense_mle(
+        Table::Dense(values) => PolyVariant::dense_mle(
             num_vars - k,
             values
                 .par_chunks(1 << k)
@@ -156,7 +148,7 @@ pub(super) fn restrict<F: Field>(
     match table {
         Table::Dense(values) => {
             if let Some(bits) = boolean(fixed) {
-                return dense_mle(
+                return PolyVariant::dense_mle(
                     free_len,
                     restrict_to_bits(input_num_vars, values, free_range, &bits),
                 );
@@ -166,7 +158,7 @@ pub(super) fn restrict<F: Field>(
             for (i, v) in restricted_entries(input_num_vars, entries, free_range, fixed) {
                 out[i] += v;
             }
-            dense_mle(free_len, out)
+            PolyVariant::dense_mle(free_len, out)
         }
         Table::Sparse(evals) => from_entries(
             free_len,

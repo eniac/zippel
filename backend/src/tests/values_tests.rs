@@ -1722,22 +1722,13 @@ fn conforms_to_accepts_every_representation_of_a_type() {
 #[test]
 fn conforms_to_bounds_a_polynomial_by_its_type() {
     use crate::virtual_polynomial::VirtualPolynomial;
-    use ark_poly::{DenseMultilinearExtension, DenseUVPolynomial, univariate::DensePolynomial};
+    use ark_poly::DenseMultilinearExtension;
     type V = Value<TestConfig>;
     let fr = |xs: &[u64]| xs.iter().map(|&x| Fr::from(x)).collect::<Vec<_>>();
-    let uni = |cs: &[u64]| {
-        VirtualPolynomial::from_poly(PolyVariant::DenseUni(
-            DensePolynomial::from_coefficients_vec(fr(cs)),
-        ))
-    };
-    let mle = |evals: &[u64]| {
-        VirtualPolynomial::from_poly(PolyVariant::DenseMle(
-            DenseMultilinearExtension::from_evaluations_vec(2, fr(evals)),
-        ))
-    };
-    let cubic = uni(&[1, 2, 3, 4]);
-    let m = mle(&[1, 2, 3, 4]);
-    let product = &m * &mle(&[5, 6, 7, 8]);
+    let cubic = VirtualPolynomial::univariate(fr(&[1, 2, 3, 4]));
+    let m = VirtualPolynomial::dense_mle(2, fr(&[1, 2, 3, 4]));
+    let sparse = VirtualPolynomial::sparse_mle(2, vec![(1, Fr::from(2)), (3, Fr::from(4))]);
+    let product = &m * &sparse;
     // Two variables, three evaluations.
     let short_mle =
         VirtualPolynomial::from_poly(PolyVariant::DenseMle(DenseMultilinearExtension {
@@ -1746,58 +1737,48 @@ fn conforms_to_bounds_a_polynomial_by_its_type() {
         }));
 
     let cases = [
-        (&cubic, ATyp::Uni(3), true),
-        (&cubic, ATyp::Uni(2), false),
-        (&cubic, ATyp::Mle(2), false),
-        (&m, ATyp::Mle(2), true),
-        (&m, ATyp::Mle(3), false),
-        (&m, ATyp::Uni(4), false),
-        (&short_mle, ATyp::Mle(2), false),
-        (&product, ATyp::Mle(2), false),
-        // Two 2-variable multilinear factors: degree up to 2 in each variable.
-        (&product, ATyp::VPoly(2, 2), true),
-        (&product, ATyp::VPoly(2, 1), false),
-    ];
-    for (poly, typ, expected) in cases {
-        let value = V::poly(poly.clone());
-        assert_eq!(value.conforms_to(&typ), expected, "{value} as {typ}");
-    }
-}
-
-#[test]
-fn polynomial_constructors_build_inputs_of_their_source_types() {
-    use crate::virtual_polynomial::VirtualPolynomial;
-    type V = Value<TestConfig>;
-    let fr = |xs: &[u64]| xs.iter().map(|&x| Fr::from(x)).collect::<Vec<_>>();
-    let dense = VirtualPolynomial::dense_mle(2, fr(&[1, 2, 3, 4]));
-    let sparse = VirtualPolynomial::sparse_mle(2, vec![(1, Fr::from(2)), (3, Fr::from(4))]);
-
-    // Index bits are the point's coordinates, variable 0 the low bit.
-    let at = |p: &VirtualPolynomial<Fr>, point: &[u64]| p.evaluate_mv(&fr(point)).unwrap();
-    assert_eq!(at(&dense, &[1, 0]), Fr::from(2));
-    assert_eq!(at(&dense, &[0, 1]), Fr::from(3));
-    assert_eq!(at(&sparse, &[1, 1]), Fr::from(4));
-    assert_eq!(at(&sparse, &[0, 1]), Fr::zero());
-
-    let cases = [
-        (dense.clone(), ATyp::Mle(2), true),
+        (cubic.clone(), ATyp::Uni(3), true),
+        (cubic.clone(), ATyp::Uni(2), false),
+        (cubic, ATyp::Mle(2), false),
+        (m.clone(), ATyp::Mle(2), true),
+        (m.clone(), ATyp::Mle(3), false),
+        (m.clone(), ATyp::Uni(4), false),
         (sparse.clone(), ATyp::Mle(2), true),
-        // A product of two multilinear factors: `Poly<F, 2, 2>`.
-        (&dense * &sparse, ATyp::VPoly(2, 2), true),
-        (&dense * &sparse, ATyp::Mle(2), false),
-        (
-            VirtualPolynomial::sparse_mle(2, vec![(4, Fr::from(1))]),
-            ATyp::Mle(2),
-            false,
-        ),
-        (
-            VirtualPolynomial::from_poly(PolyVariant::from_coeffs(fr(&[1, 2, 3]))),
-            ATyp::Uni(2),
-            true,
-        ),
+        // A sum of multilinear polynomials stays multilinear.
+        (&m + &sparse, ATyp::Mle(2), true),
+        (short_mle, ATyp::Mle(2), false),
+        (product.clone(), ATyp::Mle(2), false),
+        // Two 2-variable multilinear factors: degree up to 2 in each variable.
+        (product.clone(), ATyp::VPoly(2, 2), true),
+        (product, ATyp::VPoly(2, 1), false),
     ];
     for (poly, typ, expected) in cases {
         let value = V::poly(poly);
         assert_eq!(value.conforms_to(&typ), expected, "{value} as {typ}");
     }
+}
+
+#[test]
+fn mle_constructors_index_the_table_lsb_first() {
+    use crate::virtual_polynomial::VirtualPolynomial;
+    let fr = |xs: &[u64]| xs.iter().map(|&x| Fr::from(x)).collect::<Vec<_>>();
+    let at = |p: &VirtualPolynomial<Fr>, point: &[u64]| p.evaluate_mv(&fr(point)).unwrap();
+    let dense = VirtualPolynomial::dense_mle(2, fr(&[1, 2, 3, 4]));
+    assert_eq!(at(&dense, &[1, 0]), Fr::from(2));
+    assert_eq!(at(&dense, &[0, 1]), Fr::from(3));
+
+    // Index 3 is listed twice: its entries add up.
+    let sparse = VirtualPolynomial::sparse_mle(
+        2,
+        vec![(1, Fr::from(2)), (3, Fr::from(4)), (3, Fr::from(5))],
+    );
+    assert_eq!(at(&sparse, &[1, 0]), Fr::from(2));
+    assert_eq!(at(&sparse, &[1, 1]), Fr::from(9));
+    assert_eq!(at(&sparse, &[0, 1]), Fr::zero());
+}
+
+#[test]
+#[should_panic(expected = "index 4 outside the table of 2^2 entries")]
+fn sparse_mle_rejects_an_index_outside_the_table() {
+    let _ = PolyVariant::sparse_mle(2, vec![(4, Fr::from(1))]);
 }
