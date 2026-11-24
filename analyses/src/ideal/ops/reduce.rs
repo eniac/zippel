@@ -219,6 +219,7 @@ fn fold_with_handler<C: ArkConfig + HasOpFactory>(
 #[cfg(test)]
 mod tests {
     use super::super::{Ideal, IdealBuilder};
+    use backend::PolyTyp;
 
     use crate::frontend::Polynomial;
     use backend::ArkBls12_381;
@@ -284,7 +285,7 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let poly_t = ATyp::Uni(2);
+        let poly_t = ATyp::Poly(PolyTyp::Uni { degree: 2 });
         let vec_t = ATyp::Vec(Box::new(poly_t.clone()), 3);
         let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Witness);
         ideal.register(&var_v);
@@ -388,12 +389,16 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let elem_t = ATyp::Uni(1);
+        let elem_t = ATyp::Poly(PolyTyp::Uni { degree: 1 });
         let vec_t = ATyp::Vec(Box::new(elem_t.clone()), 3);
         let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Witness);
         ideal.register(&var_v);
 
-        let var = Var::from_node(NodeIndex::new(1), ATyp::Uni(3), Qualifier::Witness);
+        let var = Var::from_node(
+            NodeIndex::new(1),
+            ATyp::Poly(PolyTyp::Uni { degree: 3 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var);
 
         builder.add_op(
@@ -433,12 +438,16 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let elem_t = ATyp::Uni(1);
+        let elem_t = ATyp::Poly(PolyTyp::Uni { degree: 1 });
         let vec_t = ATyp::Vec(Box::new(elem_t.clone()), 3);
         let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Witness);
         ideal.register(&var_v);
 
-        let var = Var::from_node(NodeIndex::new(1), ATyp::Uni(3), Qualifier::Witness);
+        let var = Var::from_node(
+            NodeIndex::new(1),
+            ATyp::Poly(PolyTyp::Uni { degree: 3 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var);
 
         // reduce(*, [x for x in polys]) — ReduceMap(Mul) with identity body over a
@@ -471,12 +480,16 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let elem_t = ATyp::Uni(3);
+        let elem_t = ATyp::Poly(PolyTyp::Uni { degree: 3 });
         let vec_t = ATyp::Vec(Box::new(elem_t.clone()), 3);
         let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Witness);
         ideal.register(&var_v);
 
-        let var = Var::from_node(NodeIndex::new(1), ATyp::Uni(2), Qualifier::Witness);
+        let var = Var::from_node(
+            NodeIndex::new(1),
+            ATyp::Poly(PolyTyp::Uni { degree: 2 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var);
 
         builder.add_op(
@@ -513,7 +526,7 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let poly_t = ATyp::Uni(2);
+        let poly_t = ATyp::Poly(PolyTyp::Uni { degree: 2 });
         let vec_t = ATyp::Vec(Box::new(poly_t.clone()), 2);
 
         let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Witness);
@@ -658,10 +671,10 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let poly1_t = ATyp::Uni(1); // Poly(1,1): 2 coefficients
+        let poly1_t = ATyp::Poly(PolyTyp::Uni { degree: 1 }); // Poly(1,1): 2 coefficients
         let inner_t = ATyp::Vec(Box::new(poly1_t.clone()), 2);
         let vec_t = ATyp::Vec(Box::new(inner_t.clone()), 2);
-        let result_poly_t = ATyp::Uni(2); // Poly(1,2): 3 coefficients
+        let result_poly_t = ATyp::Poly(PolyTyp::Uni { degree: 2 }); // Poly(1,2): 3 coefficients
         let result_t = ATyp::Vec(Box::new(result_poly_t.clone()), 2);
 
         let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Witness);

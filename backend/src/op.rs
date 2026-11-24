@@ -4,6 +4,7 @@ use lang::ast::spanned::Spanned;
 use lang::ast::{BinOp, Exclusion};
 use lang::id::Vid;
 use lang::typ::Nothing;
+use lang::typ::PolyTyp;
 use lang::typ::lub::Lub;
 
 use hashconsing::{HConsed, HConsign, HashConsign};
@@ -176,8 +177,8 @@ impl From<Ref> for NodeIndex {
 fn poly_typ_from_vec(t: ATyp) -> ATyp {
     match t {
         ATyp::Vec(_, k) if k >= 1 => ATyp::uni(k - 1),
-        ATyp::Uni(m) => ATyp::uni(m), // already a poly; identity
-        other => other,               // defensive: preserve shape
+        ATyp::Poly(PolyTyp::Uni { degree: m }) => ATyp::uni(m), // already a poly; identity
+        other => other,                                         // defensive: preserve shape
     }
 }
 
@@ -188,9 +189,9 @@ fn poly_typ_from_vec(t: ATyp) -> ATyp {
 /// Used by `Op::Coef::typ()` and `Op::Fft::typ()`.
 fn coef_typ_from_poly(t: ATyp) -> ATyp {
     match t {
-        ATyp::Uni(m) => ATyp::vec(&ATyp::scalar(), m + 1),
-        ATyp::Mle(n) => ATyp::vec(&ATyp::scalar(), 1usize << n),
-        v @ ATyp::VPoly(_, _) => ATyp::vec(&ATyp::scalar(), v.physical_len()),
+        ATyp::Poly(PolyTyp::Uni { degree: m }) => ATyp::vec(&ATyp::scalar(), m + 1),
+        ATyp::Poly(PolyTyp::Mle { vars: n }) => ATyp::vec(&ATyp::scalar(), 1usize << n),
+        v @ ATyp::Poly(PolyTyp::General { .. }) => ATyp::vec(&ATyp::scalar(), v.physical_len()),
         ATyp::Vec(deref!(elem), n) => ATyp::vec(&elem, n), // already a vec; identity
         other => other,                                    // defensive
     }
@@ -199,9 +200,9 @@ fn coef_typ_from_poly(t: ATyp) -> ATyp {
 fn selected_eval_typ<C: ArkConfig>(p: &HOp<C>, range: &CRange) -> ATyp {
     let free_len = range.len();
     match p.typ() {
-        ATyp::Uni(d) => ATyp::vpoly(free_len, d),
-        ATyp::Mle(_) => ATyp::vpoly(free_len, 1),
-        ATyp::VPoly(_, d) => ATyp::vpoly(free_len, d),
+        ATyp::Poly(PolyTyp::Uni { degree: d }) => ATyp::vpoly(free_len, d),
+        ATyp::Poly(PolyTyp::Mle { .. }) => ATyp::vpoly(free_len, 1),
+        ATyp::Poly(PolyTyp::General { vars: _, degree: d }) => ATyp::vpoly(free_len, d),
         other => other,
     }
 }
@@ -330,7 +331,7 @@ impl<C: ArkConfig, R> Op<C, R> {
                     let x_typ = x.typ();
                     let k = match &x_typ {
                         ATyp::Vec(_, n) => *n,
-                        ATyp::Uni(n) => *n,
+                        ATyp::Poly(PolyTyp::Uni { degree: n }) => *n,
                         // Scalar point: univariate evaluation `p(t)`. The
                         // result is the polynomial's coefficient type, which
                         // is always Scalar under the canonical encoding (see
@@ -343,12 +344,21 @@ impl<C: ArkConfig, R> Op<C, R> {
                         _ => return ATyp::scalar(),
                     };
                     match p.typ() {
-                        ATyp::VPoly(n, _) if k == n => ATyp::scalar(),
-                        ATyp::Mle(n) if k == n => ATyp::scalar(),
+                        ATyp::Poly(PolyTyp::General { vars: n, degree: _ }) if k == n => {
+                            ATyp::scalar()
+                        }
+                        ATyp::Poly(PolyTyp::Mle { vars: n }) if k == n => ATyp::scalar(),
                         // A one-variable polynomial held in univariate form, at a full point.
-                        ATyp::Uni(_) if k == 1 => ATyp::scalar(),
-                        ATyp::VPoly(n, m) if k < n => ATyp::VPoly(n - k, m),
-                        ATyp::Mle(n) if k < n => ATyp::Mle(n - k),
+                        ATyp::Poly(PolyTyp::Uni { .. }) if k == 1 => ATyp::scalar(),
+                        ATyp::Poly(PolyTyp::General { vars: n, degree: m }) if k < n => {
+                            ATyp::Poly(PolyTyp::General {
+                                vars: n - k,
+                                degree: m,
+                            })
+                        }
+                        ATyp::Poly(PolyTyp::Mle { vars: n }) if k < n => {
+                            ATyp::Poly(PolyTyp::Mle { vars: n - k })
+                        }
                         _ => x_typ,
                     }
                 }
@@ -388,7 +398,7 @@ impl<C: ArkConfig, R> Op<C, R> {
                 ATyp::Vec(_, k) if k.is_power_of_two() && k >= 1 => {
                     ATyp::mle(k.trailing_zeros() as usize)
                 }
-                t @ ATyp::Mle(_) => t,
+                t @ ATyp::Poly(PolyTyp::Mle { .. }) => t,
                 other => other,
             },
             Op::Reduce(op, v) => {
@@ -939,7 +949,7 @@ impl<C: HasOpFactory> GOp<C> {
                 }
                 Op::vec(vs)
             }
-            ATyp::Uni(n) if *n > 0 => {
+            ATyp::Poly(PolyTyp::Uni { degree: n }) if *n > 0 => {
                 let mut vs = vec![0; *n];
                 vs[0] = 1;
                 Op::Value(Value::VecIndex(vs.into()))

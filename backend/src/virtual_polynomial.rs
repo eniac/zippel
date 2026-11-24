@@ -5,6 +5,7 @@ use ark_ff::{Field, PrimeField};
 use ark_poly::{DenseUVPolynomial, univariate::DensePolynomial};
 use ark_serialize::{CanonicalSerialize, SerializationError};
 use lang::typ::CRange;
+use lang::typ::PolyTyp;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fmt;
@@ -896,6 +897,21 @@ impl<F: PrimeField> VirtualPolynomial<F> {
         self.products.iter().all(|(coeff, _)| coeff.is_zero())
     }
 
+    /// Whether `self` and `other` are the same polynomial, whatever their storage (dense or
+    /// sparse tables, coefficient or evaluation form): their difference normalizes to zero.
+    /// The language's `==` on polynomials; Rust's `==` compares structure.
+    ///
+    /// # Errors
+    /// When the difference does not normalize (a product of MLE factors) and the two are not
+    /// the same sum of products, equality is undecided here: the normalization error.
+    pub fn same_polynomial(&self, other: &Self) -> Result<bool, PolyError<F>> {
+        match self.poly_sub(other).normalize() {
+            Ok(difference) => Ok(difference.is_zero()),
+            Err(_) if self == other => Ok(true),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Simplify by removing zero terms
     pub fn simplify(&mut self) {
         self.products.retain(|(coeff, _)| !coeff.is_zero());
@@ -1098,12 +1114,12 @@ impl<F: PrimeField> VirtualPolynomial<F> {
                 .unwrap_or(0)
         };
         match *typ {
-            ATyp::Uni(d) => {
+            ATyp::Poly(PolyTyp::Uni { degree: d }) => {
                 self.num_variables.is_none_or(|n| n == 1)
                     && factors_ok(&PolyVariant::is_univariate)
                     && max_product_degree() <= d
             }
-            ATyp::Mle(n) => {
+            ATyp::Poly(PolyTyp::Mle { vars: n }) => {
                 self.num_vars() == Some(n)
                     && factors_ok(&|p| {
                         matches!(p, PolyVariant::DenseMle(_) | PolyVariant::SparseMle { .. })
@@ -1111,7 +1127,7 @@ impl<F: PrimeField> VirtualPolynomial<F> {
                     })
                     && self.products.iter().all(|(_, indices)| indices.len() <= 1)
             }
-            ATyp::VPoly(n, d) => {
+            ATyp::Poly(PolyTyp::General { vars: n, degree: d }) => {
                 self.num_vars() == Some(n)
                     && factors_ok(&|p| p.is_multivariate() && p.num_vars() == n)
                     && max_product_degree() <= d

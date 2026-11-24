@@ -4,6 +4,7 @@
 //! representation-aware scalar lifting for additive polynomial
 //! operations.
 
+use backend::PolyTyp;
 use std::collections::HashMap;
 
 use backend::op::HasOpFactory;
@@ -21,7 +22,7 @@ use super::combinatorics::{hypercube, multi_indices};
 /// accumulate slot-wise without sentinel vars.
 pub fn has_poly_type(typ: &ATyp) -> bool {
     match typ {
-        ATyp::Uni(_) | ATyp::Mle(_) | ATyp::VPoly(_, _) => true,
+        ATyp::Poly(_) => true,
         ATyp::Vec(inner, _) => has_poly_type(inner),
         _ => false,
     }
@@ -133,7 +134,7 @@ impl<C: ArkConfig> PolySource<C> {
     ///   `0..=m`, the Uni layout, so zero-padding is correct.
     ///
     /// The number of variables never changes: polynomials over different
-    /// numbers of variables do not combine (`CTyp::poly_vars_differ`), so
+    /// numbers of variables do not combine (`PolyTyp::join`, `PolyTyp::mul`), so
     /// lifting one to more variables panics. An MLE table in particular has no
     /// lift to more variables that keeps its polynomial by zero-padding.
     ///
@@ -171,7 +172,10 @@ impl<C: ArkConfig> PolySource<C> {
                 typ: target.clone(),
             },
 
-            (ATyp::Uni(_n1), ATyp::Uni(_n2)) => {
+            (
+                ATyp::Poly(PolyTyp::Uni { degree: _n1 }),
+                ATyp::Poly(PolyTyp::Uni { degree: _n2 }),
+            ) => {
                 let mut out = self.polys.clone();
                 out.resize(dst_len, Polynomial::zero());
                 PolySource {
@@ -180,12 +184,15 @@ impl<C: ArkConfig> PolySource<C> {
                 }
             }
 
-            (source, target) if source.poly_vars_differ(target) => panic!(
-                "lift_to: {source} → {target} changes the number of variables, which the type \
-                 checker rejects"
+            (ATyp::Poly(source), ATyp::Poly(dest)) if source.vars() != dest.vars() => panic!(
+                "lift_to: {} → {target} changes the number of variables, which the type \
+                 checker rejects",
+                self.typ
             ),
 
-            (ATyp::Mle(1), ATyp::Uni(m2)) if *m2 >= 1 => {
+            (ATyp::Poly(PolyTyp::Mle { vars: 1 }), ATyp::Poly(PolyTyp::Uni { degree: m2 }))
+                if *m2 >= 1 =>
+            {
                 assert_eq!(
                     self.polys.len(),
                     2,
@@ -202,7 +209,16 @@ impl<C: ArkConfig> PolySource<C> {
                 }
             }
 
-            (ATyp::VPoly(n, m1), ATyp::VPoly(_, m2)) if m1 <= m2 => {
+            (
+                ATyp::Poly(PolyTyp::General {
+                    vars: n,
+                    degree: m1,
+                }),
+                ATyp::Poly(PolyTyp::General {
+                    vars: _,
+                    degree: m2,
+                }),
+            ) if m1 <= m2 => {
                 let dst_idx = multi_indices(*n, *m2);
                 let src_idx = multi_indices(*n, *m1);
                 let out = Self::embed_multi_indexed_polys(&self.polys, &src_idx, &dst_idx, *n);
@@ -212,7 +228,13 @@ impl<C: ArkConfig> PolySource<C> {
                 }
             }
 
-            (ATyp::Uni(m1), ATyp::VPoly(_, m2)) if m1 <= m2 => {
+            (
+                ATyp::Poly(PolyTyp::Uni { degree: m1 }),
+                ATyp::Poly(PolyTyp::General {
+                    vars: _,
+                    degree: m2,
+                }),
+            ) if m1 <= m2 => {
                 let mut out = self.polys.clone();
                 out.resize(dst_len, Polynomial::zero());
                 PolySource {
@@ -235,7 +257,10 @@ impl<C: ArkConfig> PolySource<C> {
             //
             // The VPoly coefficient at index `k` is then
             // `Σ_b f(b) · Π_i C[b_i][k_i]`.
-            (ATyp::Mle(n), ATyp::VPoly(_, m)) if *m >= 1 => {
+            (
+                ATyp::Poly(PolyTyp::Mle { vars: n }),
+                ATyp::Poly(PolyTyp::General { vars: _, degree: m }),
+            ) if *m >= 1 => {
                 // Per-variable Lagrange eval→coeff: `C[b][k]` is the
                 // coefficient of `x^k` in `L_b(x)`.
                 // `L_0(x) = 1 - x` → C[0] = [1, -1]
@@ -298,12 +323,12 @@ impl<C: ArkConfig> PolySource<C> {
         let scalar_poly = self.polys[0].clone();
         let polys = match poly_typ {
             ATyp::Base(_) => vec![scalar_poly],
-            ATyp::Uni(_) => {
+            ATyp::Poly(PolyTyp::Uni { .. }) => {
                 let mut out = vec![Polynomial::<C::F>::zero(); poly_typ.physical_len()];
                 out[0] = scalar_poly;
                 out
             }
-            ATyp::VPoly(n, m) => {
+            ATyp::Poly(PolyTyp::General { vars: n, degree: m }) => {
                 let indices = multi_indices(*n, *m);
                 let zero_slot = indices
                     .iter()
@@ -313,7 +338,7 @@ impl<C: ArkConfig> PolySource<C> {
                 out[zero_slot] = scalar_poly;
                 out
             }
-            ATyp::Mle(_) => vec![scalar_poly; poly_typ.physical_len()],
+            ATyp::Poly(PolyTyp::Mle { .. }) => vec![scalar_poly; poly_typ.physical_len()],
             ATyp::Vec(_, _) | ATyp::Record(_) => panic!(
                 "inject_constant_to: unsupported scalar lift target {}",
                 poly_typ
@@ -323,14 +348,6 @@ impl<C: ArkConfig> PolySource<C> {
         PolySource {
             polys,
             typ: poly_typ.clone(),
-        }
-    }
-
-    pub fn poly_shape_static(t: &ATyp) -> Option<(usize, usize)> {
-        match t {
-            ATyp::VPoly(n, m) => Some((*n, *m)),
-            ATyp::Uni(m) => Some((1, *m)),
-            _ => None,
         }
     }
 
@@ -458,10 +475,17 @@ mod tests {
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_p = Var::from_node(NodeIndex::new(0), ATyp::VPoly(2, 2), Qualifier::Witness);
+        let var_p = Var::from_node(
+            NodeIndex::new(0),
+            ATyp::Poly(PolyTyp::General { vars: 2, degree: 2 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var_p);
 
-        let op: GOp<ArkBls12_381> = Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 2));
+        let op: GOp<ArkBls12_381> = Op::Ref(
+            Ref::new(NodeIndex::new(0)),
+            ATyp::Poly(PolyTyp::General { vars: 2, degree: 2 }),
+        );
         let polys = PolySource::<ArkBls12_381>::ref_vars(&op, &ideal.vars);
         assert_eq!(polys.len(), 9);
         for (i, _) in polys.iter().enumerate() {
@@ -483,10 +507,17 @@ mod tests {
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_p = Var::from_node(NodeIndex::new(0), ATyp::Mle(3), Qualifier::Witness);
+        let var_p = Var::from_node(
+            NodeIndex::new(0),
+            ATyp::Poly(PolyTyp::Mle { vars: 3 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var_p);
 
-        let op: GOp<ArkBls12_381> = Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(3));
+        let op: GOp<ArkBls12_381> = Op::Ref(
+            Ref::new(NodeIndex::new(0)),
+            ATyp::Poly(PolyTyp::Mle { vars: 3 }),
+        );
         let polys = PolySource::<ArkBls12_381>::ref_vars(&op, &ideal.vars);
         assert_eq!(polys.len(), 8);
     }
@@ -500,16 +531,20 @@ mod tests {
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
-        let src = Var::from_node(NodeIndex::new(10), ATyp::Mle(1), Qualifier::Witness);
+        let src = Var::from_node(
+            NodeIndex::new(10),
+            ATyp::Poly(PolyTyp::Mle { vars: 1 }),
+            Qualifier::Witness,
+        );
         let g0 = Polynomial::<ark_bls12_381::Fr>::var(&src.clone().with_index(0).unwrap());
         let g1 = Polynomial::<ark_bls12_381::Fr>::var(&src.clone().with_index(1).unwrap());
         let lifted = PolySource::<ArkBls12_381> {
             polys: vec![g0.clone(), g1.clone()],
-            typ: ATyp::Mle(1),
+            typ: ATyp::Poly(PolyTyp::Mle { vars: 1 }),
         }
-        .lift_to(&ATyp::Uni(1));
+        .lift_to(&ATyp::Poly(PolyTyp::Uni { degree: 1 }));
 
-        assert_eq!(lifted.typ, ATyp::Uni(1));
+        assert_eq!(lifted.typ, ATyp::Poly(PolyTyp::Uni { degree: 1 }));
         assert_eq!(lifted.polys.len(), 2);
         assert_eq!(lifted.polys[0], g0);
         assert_eq!(lifted.polys[1], &g1 - &g0);
@@ -526,17 +561,24 @@ mod tests {
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var = Var::from_node(NodeIndex::new(0), ATyp::Uni(2), Qualifier::Witness);
+        let var = Var::from_node(
+            NodeIndex::new(0),
+            ATyp::Poly(PolyTyp::Uni { degree: 2 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var);
         let src = PolySource::<ArkBls12_381>::from_ref_vars(
             &ideal.vars,
-            &Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2)),
+            &Op::Ref(
+                Ref::new(NodeIndex::new(0)),
+                ATyp::Poly(PolyTyp::Uni { degree: 2 }),
+            ),
         );
         assert_eq!(src.polys.len(), 3);
 
-        let lifted = src.lift_to(&ATyp::Uni(4));
+        let lifted = src.lift_to(&ATyp::Poly(PolyTyp::Uni { degree: 4 }));
         assert_eq!(lifted.polys.len(), 5);
-        assert_eq!(*lifted.typ(), ATyp::Uni(4));
+        assert_eq!(*lifted.typ(), ATyp::Poly(PolyTyp::Uni { degree: 4 }));
         for i in 0..3 {
             assert_eq!(
                 lifted.polys[i],
@@ -560,13 +602,20 @@ mod tests {
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var = Var::from_node(NodeIndex::new(0), ATyp::Mle(2), Qualifier::Witness);
+        let var = Var::from_node(
+            NodeIndex::new(0),
+            ATyp::Poly(PolyTyp::Mle { vars: 2 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var);
         let src = PolySource::<ArkBls12_381>::from_ref_vars(
             &ideal.vars,
-            &Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(2)),
+            &Op::Ref(
+                Ref::new(NodeIndex::new(0)),
+                ATyp::Poly(PolyTyp::Mle { vars: 2 }),
+            ),
         );
-        let _ = src.lift_to(&ATyp::Mle(3));
+        let _ = src.lift_to(&ATyp::Poly(PolyTyp::Mle { vars: 3 }));
     }
 
     #[test]
@@ -576,17 +625,27 @@ mod tests {
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var = Var::from_node(NodeIndex::new(0), ATyp::VPoly(2, 1), Qualifier::Witness);
+        let var = Var::from_node(
+            NodeIndex::new(0),
+            ATyp::Poly(PolyTyp::General { vars: 2, degree: 1 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var);
         let src = PolySource::<ArkBls12_381>::from_ref_vars(
             &ideal.vars,
-            &Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 1)),
+            &Op::Ref(
+                Ref::new(NodeIndex::new(0)),
+                ATyp::Poly(PolyTyp::General { vars: 2, degree: 1 }),
+            ),
         );
 
         // Not a prefix: [1,1] sits after [0,2] in VPoly(2, 2)'s order.
-        let lifted = src.lift_to(&ATyp::VPoly(2, 2));
+        let lifted = src.lift_to(&ATyp::Poly(PolyTyp::General { vars: 2, degree: 2 }));
         assert_eq!(lifted.polys.len(), 9);
-        assert_eq!(*lifted.typ(), ATyp::VPoly(2, 2));
+        assert_eq!(
+            *lifted.typ(),
+            ATyp::Poly(PolyTyp::General { vars: 2, degree: 2 })
+        );
         let dst = multi_indices(2, 2);
         let src_idx = multi_indices(2, 1);
         for (pos, dk) in dst.iter().enumerate() {
@@ -615,11 +674,14 @@ mod tests {
                 Polynomial::lit(&Fr::from(3u64)),
                 Polynomial::lit(&Fr::from(4u64)),
             ],
-            ATyp::Mle(2),
+            ATyp::Poly(PolyTyp::Mle { vars: 2 }),
         );
 
-        let lifted = src.lift_to(&ATyp::VPoly(2, 2));
-        assert_eq!(*lifted.typ(), ATyp::VPoly(2, 2));
+        let lifted = src.lift_to(&ATyp::Poly(PolyTyp::General { vars: 2, degree: 2 }));
+        assert_eq!(
+            *lifted.typ(),
+            ATyp::Poly(PolyTyp::General { vars: 2, degree: 2 })
+        );
         assert_eq!(lifted.polys.len(), 9);
 
         let dst = multi_indices(2, 2);
@@ -670,16 +732,26 @@ mod tests {
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var = Var::from_node(NodeIndex::new(0), ATyp::Uni(2), Qualifier::Witness);
+        let var = Var::from_node(
+            NodeIndex::new(0),
+            ATyp::Poly(PolyTyp::Uni { degree: 2 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var);
         let src = PolySource::<ArkBls12_381>::from_ref_vars(
             &ideal.vars,
-            &Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2)),
+            &Op::Ref(
+                Ref::new(NodeIndex::new(0)),
+                ATyp::Poly(PolyTyp::Uni { degree: 2 }),
+            ),
         );
         assert_eq!(src.polys.len(), 3);
 
-        let lifted = src.lift_to(&ATyp::VPoly(1, 2));
-        assert_eq!(*lifted.typ(), ATyp::VPoly(1, 2));
+        let lifted = src.lift_to(&ATyp::Poly(PolyTyp::General { vars: 1, degree: 2 }));
+        assert_eq!(
+            *lifted.typ(),
+            ATyp::Poly(PolyTyp::General { vars: 1, degree: 2 })
+        );
         assert_eq!(lifted.polys.len(), 3);
         for i in 0..3 {
             assert_eq!(
@@ -702,15 +774,26 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let var_src = Var::from_node(NodeIndex::new(0), ATyp::Uni(2), Qualifier::Witness);
+        let var_src = Var::from_node(
+            NodeIndex::new(0),
+            ATyp::Poly(PolyTyp::Uni { degree: 2 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var_src);
 
-        let var_dst = Var::from_node(NodeIndex::new(1), ATyp::Uni(4), Qualifier::Witness);
+        let var_dst = Var::from_node(
+            NodeIndex::new(1),
+            ATyp::Poly(PolyTyp::Uni { degree: 4 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var_dst);
 
         builder.add_op(
             var_dst.clone(),
-            Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2)),
+            Op::Ref(
+                Ref::new(NodeIndex::new(0)),
+                ATyp::Poly(PolyTyp::Uni { degree: 2 }),
+            ),
             &mut ideal,
         );
 

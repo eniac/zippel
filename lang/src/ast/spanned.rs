@@ -74,6 +74,14 @@ unsafe impl<T> std::ops::DerefPure for Spanned<T> {}
 // value, ignoring the span. This is the same pattern Arc<T>, Rc<T>, and
 // Cell<T> follow — wrapper types compare inner values, not metadata.
 
+/// A spanned value borrows as its node: equality, ordering and hashing ignore the span, as
+/// `Borrow` requires.
+impl<T> std::borrow::Borrow<T> for Spanned<T> {
+    fn borrow(&self) -> &T {
+        &self.node
+    }
+}
+
 impl<T: PartialEq> PartialEq for Spanned<T> {
     fn eq(&self, other: &Self) -> bool {
         self.node == other.node

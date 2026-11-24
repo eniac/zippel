@@ -1,6 +1,7 @@
 use crate::ast::BinOp;
 use crate::ast::range::{Range, RangeError};
 use crate::id::Tid;
+use crate::typ::PolyShapeError;
 use std::fmt;
 use thiserror::Error;
 
@@ -34,7 +35,7 @@ pub enum LubError {
     #[error("Unknown type `{0}`")]
     KindNotFound(Tid),
     /// A binary operation or join between polynomials over different numbers of variables
-    /// (see [`CTyp::poly_vars_differ`](crate::typ::CTyp::poly_vars_differ)).
+    /// (see [`PolyShapeError::VariableCount`]).
     #[error("{}: they are polynomials over different numbers of variables", describe_bin(*.0, .1, .2))]
     VariableCount(BinOp, String, String),
     /// A polynomial evaluation whose point shape is incompatible with the polynomial.
@@ -87,6 +88,20 @@ impl LubError {
     /// `op` failed between the polynomials `a` and `b`, whose numbers of variables differ.
     pub fn variable_count<K: fmt::Display>(op: BinOp, a: &K, b: &K) -> Self {
         LubError::VariableCount(op, a.to_string(), b.to_string())
+    }
+    /// `op` failed between the polynomials `a` and `b` because their shapes do not combine.
+    pub fn poly_shape<K: fmt::Display>(e: PolyShapeError, op: BinOp, a: &K, b: &K) -> Self {
+        match e {
+            PolyShapeError::VariableCount => LubError::variable_count(op, a, b),
+            PolyShapeError::DegreeOverflow => LubError::op(op, a, b),
+        }
+    }
+    /// `op` (or a join, for [`BinOp::Equ`]) failed between `a` and `b`.
+    pub fn op<K: fmt::Display>(op: BinOp, a: &K, b: &K) -> Self {
+        match op {
+            BinOp::Equ => LubError::Equ(a.to_string(), b.to_string()),
+            _ => LubError::Bin(op, a.to_string(), b.to_string()),
+        }
     }
     /// Evaluating the polynomial `a` at the point `b` is ill-typed.
     pub fn eval<K: fmt::Display>(a: &K, b: &K) -> Self {

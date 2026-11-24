@@ -189,9 +189,9 @@ lazy_static! {
         // Add variable "s2" of type "S"
         vctx.insert(&Vid::from("s2"), &CTyp::Base(Tid::from("S")));
         // Add variable "p" of type "Uni<F, 5>"
-        vctx.insert(&Vid::from("p"), &CTyp::Uni(Tid::from("F"), Spanned::dummy(5)));
+        vctx.insert(&Vid::from("p"), &CTyp::uni(&Tid::from("F"), 5));
         // Add variable "m" of type "Mle<F, 8>"
-        vctx.insert(&Vid::from("m"), &CTyp::Mle(Tid::from("F"), Spanned::dummy(8)));
+        vctx.insert(&Vid::from("m"), &CTyp::mle(&Tid::from("F"), 8));
         vctx
     };
 }
@@ -343,10 +343,7 @@ fn test_binary_mul_inference() {
 fn test_binary_div_inference() {
     let fctx = Set::new();
     let mut vctx = VAR_CTX.clone();
-    vctx.insert(
-        &Vid::from("pc"),
-        &CTyp::Uni(Tid::from("F"), Spanned::dummy(0)),
-    );
+    vctx.insert(&Vid::from("pc"), &CTyp::uni(&Tid::from("F"), 0));
 
     // Create expression x / y
     let field_div = div(varstr("f1"), varstr("f2"));
@@ -403,7 +400,7 @@ fn test_binary_div_inference() {
     let poly_div_scalar = div(varstr("p"), varstr("f1"));
     assert_eq!(
         poly_div_scalar.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::Uni(Tid::from("F"), Spanned::dummy(5)))
+        Ok(CTyp::uni(&Tid::from("F"), 5))
     );
 
     // Create expression p / p; Poly / Poly remains accepted and keeps the
@@ -411,14 +408,14 @@ fn test_binary_div_inference() {
     let uni_div = div(varstr("p"), varstr("p"));
     assert_eq!(
         uni_div.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::Uni(Tid::from("F"), Spanned::dummy(5)))
+        Ok(CTyp::uni(&Tid::from("F"), 5))
     );
 
     // Dividing by a declared-constant polynomial keeps the dividend's bound.
     let uni_div_constant = div(varstr("p"), varstr("pc"));
     assert_eq!(
         uni_div_constant.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::Uni(Tid::from("F"), Spanned::dummy(5)))
+        Ok(CTyp::uni(&Tid::from("F"), 5))
     );
 
     // A divisor bound above the dividend's is well-typed: declared bounds do
@@ -426,7 +423,7 @@ fn test_binary_div_inference() {
     let uni_div_larger_divisor_bound = div(varstr("pc"), varstr("p"));
     assert_eq!(
         uni_div_larger_divisor_bound.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::Uni(Tid::from("F"), Spanned::dummy(0)))
+        Ok(CTyp::uni(&Tid::from("F"), 0))
     );
 }
 
@@ -454,7 +451,7 @@ fn test_binary_rem_inference() {
     let uni_rem = rem(varstr("p"), varstr("p"));
     assert_eq!(
         uni_rem.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::Uni(Tid::from("F"), Spanned::dummy(4)))
+        Ok(CTyp::uni(&Tid::from("F"), 4))
     );
 }
 
@@ -719,13 +716,13 @@ fn test_app() {
     let mle_app = app("m".into(), Vec::from([lit(1)]));
     assert_eq!(
         mle_app.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::Mle(Tid::from("F"), Spanned::dummy(7)))
+        Ok(CTyp::mle(&Tid::from("F"), 7))
     );
 
     let mle_app_vec = app("m".into(), Vec::from([varstr("v1")]));
     assert_eq!(
         mle_app_vec.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::Mle(Tid::from("F"), Spanned::dummy(3)))
+        Ok(CTyp::mle(&Tid::from("F"), 3))
     );
 }
 
@@ -771,7 +768,7 @@ fn test_phase14_poly_shape_sweep() {
         let e = poly(v);
         assert_eq!(
             e.infer(&KIND_CTX, &fctx, &vctx),
-            Ok(CTyp::Uni(Tid::from("F"), Spanned::dummy(k - 1))),
+            Ok(CTyp::uni(&Tid::from("F"), k - 1)),
             "poly([F; {k}]) should yield Poly<F, 1, {}>",
             k - 1,
         );
@@ -787,10 +784,7 @@ fn test_phase14_coef_shape_sweep() {
     for m in [0usize, 1, 2, 3, 4, 7] {
         let mut vctx = VAR_CTX.clone();
         let pname = format!("p_{m}");
-        vctx.insert(
-            &Vid::from(pname.as_str()),
-            &CTyp::Uni(Tid::from("F"), Spanned::dummy(m)),
-        );
+        vctx.insert(&Vid::from(pname.as_str()), &CTyp::uni(&Tid::from("F"), m));
         let e = coef(varstr(pname.as_str()));
         assert_eq!(
             e.infer(&KIND_CTX, &fctx, &vctx),
@@ -820,7 +814,7 @@ fn test_phase14_mle_pow2_sweep() {
         let e = mle(varstr(vname.as_str()));
         assert_eq!(
             e.infer(&KIND_CTX, &fctx, &vctx),
-            Ok(CTyp::Mle(Tid::from("F"), Spanned::dummy(n))),
+            Ok(CTyp::mle(&Tid::from("F"), n)),
             "mle([F; {len}]) should yield Mle<F, {n}>",
         );
     }
@@ -859,10 +853,7 @@ fn test_phase14_evaluate_grid_accept_sweep() {
     for m in [0usize, 1, 3, 7] {
         let mut vctx = VAR_CTX.clone();
         let pname = format!("p_{m}");
-        vctx.insert(
-            &Vid::from(pname.as_str()),
-            &CTyp::Uni(Tid::from("F"), Spanned::dummy(m)),
-        );
+        vctx.insert(&Vid::from(pname.as_str()), &CTyp::uni(&Tid::from("F"), m));
         let e = evaluate_grid(varstr(pname.as_str()));
         assert_eq!(
             e.infer(&KIND_CTX, &fctx, &vctx),
@@ -883,10 +874,7 @@ fn test_phase14_evaluate_grid_reject_sweep() {
     for m in [2usize, 4, 5] {
         let mut vctx = VAR_CTX.clone();
         let pname = format!("p_{m}");
-        vctx.insert(
-            &Vid::from(pname.as_str()),
-            &CTyp::Uni(Tid::from("F"), Spanned::dummy(m)),
-        );
+        vctx.insert(&Vid::from(pname.as_str()), &CTyp::uni(&Tid::from("F"), m));
         let e = evaluate_grid(varstr(pname.as_str()));
         let result = e.infer(&KIND_CTX, &fctx, &vctx);
         assert!(
@@ -910,7 +898,7 @@ fn test_phase14_interpolate_unary_accept_sweep() {
         let e = interpolate_grid(v);
         assert_eq!(
             e.infer(&KIND_CTX, &fctx, &vctx),
-            Ok(CTyp::Uni(Tid::from("F"), Spanned::dummy(n - 1))),
+            Ok(CTyp::uni(&Tid::from("F"), n - 1)),
             "interpolate([F; {n}]) should yield Poly<F, 1, {}>",
             n - 1,
         );
@@ -949,7 +937,7 @@ fn test_phase14_interpolate_binary_shape_sweep() {
         let e = interpolate_at(pts, evs);
         assert_eq!(
             e.infer(&KIND_CTX, &fctx, &vctx),
-            Ok(CTyp::Uni(Tid::from("F"), Spanned::dummy(n - 1))),
+            Ok(CTyp::uni(&Tid::from("F"), n - 1)),
             "interpolate(pts: [F; {n}], evs: [F; {n}]) should yield \
                  Poly<F, 1, {}>",
             n - 1,
@@ -967,10 +955,7 @@ fn test_phase14_ram_uni_scalar_index_boundary() {
     let fctx = Set::new();
     let mut vctx = VAR_CTX.clone();
     // p3 : Poly<F, 1, 3>  --  max degree 3, 4 coefficients (indices 0..4).
-    vctx.insert(
-        &Vid::from("p3"),
-        &CTyp::Uni(Tid::from("F"), Spanned::dummy(3)),
-    );
+    vctx.insert(&Vid::from("p3"), &CTyp::uni(&Tid::from("F"), 3));
 
     // Indexing at 0, 1, 2 was already accepted under the old bound.
     for i in 0usize..=2 {
@@ -1010,10 +995,7 @@ fn test_phase14_ram_uni_scalar_index_boundary() {
 fn test_phase14_ram_uni_vector_index_boundary() {
     let fctx = Set::new();
     let mut vctx = VAR_CTX.clone();
-    vctx.insert(
-        &Vid::from("p3"),
-        &CTyp::Uni(Tid::from("F"), Spanned::dummy(3)),
-    );
+    vctx.insert(&Vid::from("p3"), &CTyp::uni(&Tid::from("F"), 3));
 
     // Slicing all 4 coefficient indices (range 0..4) must typecheck under
     // the m+1 convention (r.end = 4 <= n + 1 = 4). Was rejected before.
@@ -1049,7 +1031,7 @@ fn test_phase14_map_over_poly_vector() {
     let fctx = Set::new();
     let mut vctx = VAR_CTX.clone();
     // pv : [Poly<F, 1, 3>; 4]
-    let poly_t = CTyp::Uni(Tid::from("F"), Spanned::dummy(3));
+    let poly_t = CTyp::uni(&Tid::from("F"), 3);
     vctx.insert(&Vid::from("pv"), &CTyp::vec(&poly_t, 4));
 
     // map x in pv => x       -- the result element type matches the
@@ -1078,7 +1060,7 @@ fn test_phase14_map_over_poly_vector() {
 fn test_phase14_reduce_add_over_poly_vector() {
     let fctx = Set::new();
     let mut vctx = VAR_CTX.clone();
-    let poly_t = CTyp::Uni(Tid::from("F"), Spanned::dummy(3));
+    let poly_t = CTyp::uni(&Tid::from("F"), 3);
     vctx.insert(&Vid::from("pv"), &CTyp::vec(&poly_t, 4));
 
     let e = reduce(BinOp::Add, varstr("pv"));
@@ -1112,7 +1094,7 @@ fn test_reduce_mul_poly_invalid_coeff_kind() {
     let fctx = Set::new();
     let mut vctx = VAR_CTX.clone();
     // Poly with group coefficients G
-    let poly_t = CTyp::Uni(Tid::from("G"), Spanned::dummy(3));
+    let poly_t = CTyp::uni(&Tid::from("G"), 3);
     vctx.insert(&Vid::from("pv_g"), &CTyp::vec(&poly_t, 4));
 
     let e = reduce(BinOp::Mul, varstr("pv_g"));
@@ -1125,7 +1107,7 @@ fn test_reduce_mul_poly_overflow() {
     let fctx = Set::new();
     let mut vctx = VAR_CTX.clone();
     // Poly with field coefficients F but extremely large degree to trigger overflow
-    let poly_t = CTyp::Uni(Tid::from("F"), Spanned::dummy(usize::MAX / 2));
+    let poly_t = CTyp::uni(&Tid::from("F"), usize::MAX / 2);
     vctx.insert(&Vid::from("pv_overflow"), &CTyp::vec(&poly_t, 4));
 
     let e = reduce(BinOp::Mul, varstr("pv_overflow"));
@@ -1145,11 +1127,7 @@ fn test_reduce_mul_poly_pbt() {
         let degree = u.int_in_range(0..=4)?;
         let vector_len = u.int_in_range(1..=4)?;
 
-        let poly_t = CTyp::Poly(
-            Tid::from("F"),
-            Spanned::dummy(num_vars),
-            Spanned::dummy(degree),
-        );
+        let poly_t = CTyp::poly(&Tid::from("F"), num_vars, degree);
         let vec_poly_t = CTyp::vec(&poly_t, vector_len);
 
         let mut vctx = Ctx::new();
@@ -1157,11 +1135,7 @@ fn test_reduce_mul_poly_pbt() {
 
         let e = reduce(BinOp::Mul, varstr("pv"));
         let expected_deg = degree * vector_len;
-        let expected_t = CTyp::Poly(
-            Tid::from("F"),
-            Spanned::dummy(num_vars),
-            Spanned::dummy(expected_deg),
-        );
+        let expected_t = CTyp::poly(&Tid::from("F"), num_vars, expected_deg);
 
         assert_eq!(
             e.infer(&KIND_CTX, &fctx, &vctx),
@@ -1407,10 +1381,7 @@ fn test_mle_eval_inference() {
     let mut vctx = VAR_CTX.clone();
 
     // Add variable "m3" of type Mle<F, 3>
-    vctx.insert(
-        &Vid::from("m3"),
-        &CTyp::Mle(Tid::from("F"), Spanned::dummy(3)),
-    );
+    vctx.insert(&Vid::from("m3"), &CTyp::mle(&Tid::from("F"), 3));
     // Add variable "v3" of type [F; 3]
     vctx.insert(
         &Vid::from("v3"),
@@ -1432,7 +1403,7 @@ fn test_mle_eval_inference() {
     let eval_v2 = evaluate_at(varstr("m3"), varstr("v2"));
     assert_eq!(
         eval_v2.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::Mle(Tid::from("F"), Spanned::dummy(1)))
+        Ok(CTyp::mle(&Tid::from("F"), 1))
     );
 
     // eval(m3, v3) -> F -> Base(F)
@@ -1448,10 +1419,7 @@ fn test_mle_eval_out_of_bounds() {
     let fctx = Set::new();
     let mut vctx = VAR_CTX.clone();
 
-    vctx.insert(
-        &Vid::from("m3"),
-        &CTyp::Mle(Tid::from("F"), Spanned::dummy(3)),
-    );
+    vctx.insert(&Vid::from("m3"), &CTyp::mle(&Tid::from("F"), 3));
     // v1 has length 5, which is > 3
     let eval_bad = evaluate_at(varstr("m3"), varstr("v1"));
     assert!(eval_bad.infer(&KIND_CTX, &fctx, &vctx).is_err());
@@ -1487,10 +1455,7 @@ fn test_eval_univariate_vector_rejected() {
 fn test_selected_eval_inference() {
     let fctx = Set::new();
     let mut vctx = VAR_CTX.clone();
-    vctx.insert(
-        &Vid::from("m3"),
-        &CTyp::Poly(Tid::from("F"), Spanned::dummy(3), Spanned::dummy(4)),
-    );
+    vctx.insert(&Vid::from("m3"), &CTyp::poly(&Tid::from("F"), 3, 4));
     vctx.insert(
         &Vid::from("fixed1"),
         &CTyp::Vec(
@@ -1522,11 +1487,7 @@ fn test_selected_eval_inference() {
     let wide_range = evaluate_selected(CRange::from_raw(1, 1, 3), varstr("m3"), varstr("fixed1"));
     assert_eq!(
         wide_range.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::Poly(
-            Tid::from("F"),
-            Spanned::dummy(2),
-            Spanned::dummy(4)
-        ))
+        Ok(CTyp::poly(&Tid::from("F"), 2, 4))
     );
 }
 
@@ -1534,10 +1495,7 @@ fn test_selected_eval_inference() {
 fn test_selected_eval_rejects_invalid_ranges_and_arity() {
     let fctx = Set::new();
     let mut vctx = VAR_CTX.clone();
-    vctx.insert(
-        &Vid::from("m3"),
-        &CTyp::Poly(Tid::from("F"), Spanned::dummy(3), Spanned::dummy(4)),
-    );
+    vctx.insert(&Vid::from("m3"), &CTyp::poly(&Tid::from("F"), 3, 4));
     vctx.insert(
         &Vid::from("fixed2"),
         &CTyp::Vec(
@@ -1586,7 +1544,7 @@ fn test_mle_eval_pbt() {
         let num_vars = u.int_in_range(2..=10)?;
         let eval_len = u.int_in_range(1..=num_vars)?;
 
-        let mle_t = CTyp::Mle(Tid::from("F"), Spanned::dummy(num_vars));
+        let mle_t = CTyp::mle(&Tid::from("F"), num_vars);
         let vec_t = CTyp::Vec(
             Box::new(Spanned::dummy(CTyp::Base(Tid::from("F")))),
             Spanned::dummy(eval_len),
@@ -1608,10 +1566,7 @@ fn test_mle_eval_pbt() {
         } else {
             assert_eq!(
                 res,
-                Ok(CTyp::Mle(
-                    Tid::from("F"),
-                    Spanned::dummy(num_vars - eval_len)
-                )),
+                Ok(CTyp::mle(&Tid::from("F"), num_vars - eval_len)),
                 "evaluating MLE with M variables should yield MLE with N-M variables"
             );
         }
@@ -1671,10 +1626,7 @@ fn test_coef_rejection() {
     assert!(coef_bad1.infer(&KIND_CTX, &fctx, &vctx).is_err());
 
     // coef on multivariate polynomial (MLE) with too many variables to shift (e.g. 128) should fail typecheck (not panic)
-    vctx.insert(
-        &Vid::from("m_large"),
-        &CTyp::Mle(Tid::from("F"), Spanned::dummy(128)),
-    );
+    vctx.insert(&Vid::from("m_large"), &CTyp::mle(&Tid::from("F"), 128));
     let coef_overflow = coef(varstr("m_large"));
     assert!(coef_overflow.infer(&KIND_CTX, &fctx, &vctx).is_err());
 }

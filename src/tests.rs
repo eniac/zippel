@@ -625,3 +625,86 @@ fn polynomials_over_the_same_variables_combine_in_analysis_and_runtime() {
         );
     }
 }
+
+/// `==` on polynomials means the same polynomial in both the completeness
+/// analysis and the runtime, whatever the storage: equal polynomials stored as
+/// a univariate, a dense table or a sparse table compare equal, and a join of
+/// two encodings keeps each value.
+#[test]
+fn polynomial_equality_agrees_in_analysis_and_runtime() {
+    use ark_ff::UniformRand;
+    type F = <ArkBls12_381 as ArkConfig>::F;
+    let mut rng = ark_std::test_rng();
+    let (a, b, x) = (F::rand(&mut rng), F::rand(&mut rng), F::rand(&mut rng));
+    let zero = F::from(0u64);
+    // `u`, `m` and `ms` are all a + b·x; `m2` differs.
+    let inputs: TestInputs = HashMap::from([
+        (
+            "u",
+            Value::poly(backend::VirtualPolynomial::univariate(vec![
+                a, b, zero, zero,
+            ])),
+        ),
+        (
+            "m",
+            Value::poly(backend::VirtualPolynomial::dense_mle(1, vec![a, a + b])),
+        ),
+        (
+            "ms",
+            Value::poly(backend::VirtualPolynomial::sparse_mle(
+                1,
+                vec![(0, a), (1, a + b)],
+            )),
+        ),
+        (
+            "m2",
+            Value::poly(backend::VirtualPolynomial::dense_mle(
+                1,
+                vec![a, a + b + F::from(1u64)],
+            )),
+        ),
+        ("x", Value::Scalar(x)),
+    ]);
+    // (relation, body, whether the honest run verifies)
+    for (relation, body, verifies) in [
+        ("u == m", "verify(u == m)", true),
+        ("m == ms", "verify(m == ms)", true),
+        ("x == x", "verify(u == m2)", false),
+        (
+            "x == x",
+            "let v = [u, m];\n let w = v[1];\n y <- w(x);\n verify(y == m(x))",
+            true,
+        ),
+        (
+            "x == x",
+            "let v = [u, m];\n let w = v[0];\n y <- w(x);\n verify(y == u(x))",
+            true,
+        ),
+    ] {
+        let protocol = compile_src(&format!(
+            "proto eq<F: Field>(
+                instance u: Uni<F, 3>, instance m: Mle<F, 1>, instance ms: Mle<F, 1>,
+                instance m2: Mle<F, 1>, instance x: F,
+            ) where {relation} {{
+                {body}
+            }}"
+        ));
+        let analysis = protocol.prepare_analysis().expect("prepare analysis");
+        let completeness = analysis.run(Analysis::Completeness, analyses::GbBackendKind::ArkGb);
+        assert_eq!(
+            completeness.is_ok(),
+            verifies,
+            "completeness of `{body}`: {completeness:?}"
+        );
+        let proof = protocol
+            .project_prover()
+            .prove(inputs.clone())
+            .expect("prove");
+        let verifier = protocol.project_verifier().expect("project verifier");
+        assert_eq!(
+            verifier.verify(proof, inputs.clone()).ok(),
+            Some(verifies),
+            "runtime of `{body}`"
+        );
+    }
+}

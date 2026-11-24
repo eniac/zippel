@@ -10,6 +10,7 @@
 //! sample that excludes zero is nonzero by its exclusion generator (see
 //! `sample_op`), from which the condition follows.
 
+use backend::PolyTyp;
 use backend::op::HasOpFactory;
 use backend::{ABase, ATyp, ArkConfig, ArkScalarOps};
 use graph::HOp;
@@ -135,7 +136,7 @@ fn div_rem_leaf<C: ArkConfig + HasOpFactory>(
         }
     };
     match a.typ() {
-        ATyp::Mle(_) => match b.typ() {
+        ATyp::Poly(PolyTyp::Mle { .. }) => match b.typ() {
             ATyp::Base(ABase::Scalar | ABase::Fin(_)) => {
                 if is_rem {
                     panic!(
@@ -148,7 +149,7 @@ fn div_rem_leaf<C: ArkConfig + HasOpFactory>(
             }
             _ => super::uncovered_op(&label("mle-unsupported"), target),
         },
-        ATyp::Uni(_) => match b.typ() {
+        ATyp::Poly(PolyTyp::Uni { .. }) => match b.typ() {
             ATyp::Base(ABase::Scalar | ABase::Fin(_)) => {
                 if is_rem {
                     panic!(
@@ -159,12 +160,12 @@ fn div_rem_leaf<C: ArkConfig + HasOpFactory>(
                 }
                 slot_wise_div(ctx, target, a.polys(), &b.polys()[0]);
             }
-            ATyp::Uni(_) => {
+            ATyp::Poly(PolyTyp::Uni { .. }) => {
                 div_rem_poly(ctx, target, a, b, is_rem);
             }
             _ => super::uncovered_op(&label("uni-unsupported"), target),
         },
-        ATyp::VPoly(_, _) => match b.typ() {
+        ATyp::Poly(PolyTyp::General { .. }) => match b.typ() {
             ATyp::Base(ABase::Scalar | ABase::Fin(_)) => {
                 if is_rem {
                     panic!(
@@ -242,17 +243,20 @@ fn div_rem_poly<C: ArkConfig + HasOpFactory>(
     b: &PolySource<C>,
     is_rem: bool,
 ) {
-    let (_, ma) = PolySource::<C>::poly_shape_static(a.typ()).unwrap();
-    let (_, mb) = PolySource::<C>::poly_shape_static(b.typ()).unwrap();
+    let (ATyp::Poly(a_shape), ATyp::Poly(b_shape)) = (a.typ(), b.typ()) else {
+        panic!("div_rem_poly: operands must be polynomials");
+    };
+    let (ma, mb) = (a_shape.degree(), b_shape.degree());
 
     if mb == 0 {
         // Divisor is a declared constant: quotient = a / b[0], remainder = 0.
         let r_typ = if is_rem {
             target.typ.clone()
         } else {
-            ATyp::Uni(0)
+            ATyp::Poly(PolyTyp::Uni { degree: 0 })
         };
-        let (q_wit, r_wit) = alloc_div_witness_pair(ctx, ATyp::Uni(ma), r_typ);
+        let (q_wit, r_wit) =
+            alloc_div_witness_pair(ctx, ATyp::Poly(PolyTyp::Uni { degree: ma }), r_typ);
         slot_wise_div(ctx, &q_wit, a.polys(), &b.polys()[0]);
         for rf in r_wit.slots() {
             ctx.ideal.generating_set.push(Polynomial::var(&rf));
@@ -263,7 +267,11 @@ fn div_rem_poly<C: ArkConfig + HasOpFactory>(
     }
 
     let mr = mb - 1;
-    let (q_wit, r_wit) = alloc_div_witness_pair(ctx, ATyp::Uni(ma), ATyp::Uni(mr));
+    let (q_wit, r_wit) = alloc_div_witness_pair(
+        ctx,
+        ATyp::Poly(PolyTyp::Uni { degree: ma }),
+        ATyp::Poly(PolyTyp::Uni { degree: mr }),
+    );
 
     // Degree chain, giving `s_0`, unless the divisor's lead is a nonzero
     // constant.
@@ -516,6 +524,7 @@ fn inlined<C: ArkConfig>(ctx: &EncodeCtx<'_, C>, poly: &Polynomial<C::F>) -> Pol
 mod tests {
     use super::super::test_helpers::*;
     use super::super::{Ideal, IdealBuilder};
+    use backend::PolyTyp;
 
     use crate::frontend::Polynomial;
     use backend::ArkBls12_381;
@@ -552,18 +561,36 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_a = Var::from_node(NodeIndex::new(0), ATyp::Uni(2), Qualifier::Witness);
+        let var_a = Var::from_node(
+            NodeIndex::new(0),
+            ATyp::Poly(PolyTyp::Uni { degree: 2 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var_a);
-        let var_b = Var::from_node(NodeIndex::new(1), ATyp::Uni(1), Qualifier::Witness);
+        let var_b = Var::from_node(
+            NodeIndex::new(1),
+            ATyp::Poly(PolyTyp::Uni { degree: 1 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var_b);
 
         let basis_before = ideal.generating_set.len();
-        let var = Var::from_node(NodeIndex::new(2), ATyp::Uni(2), Qualifier::Witness);
+        let var = Var::from_node(
+            NodeIndex::new(2),
+            ATyp::Poly(PolyTyp::Uni { degree: 2 }),
+            Qualifier::Witness,
+        );
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Div,
-            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2))),
-            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::Uni(1))),
-            ATyp::Uni(2),
+            mk::<ArkBls12_381>(Op::Ref(
+                Ref::new(NodeIndex::new(0)),
+                ATyp::Poly(PolyTyp::Uni { degree: 2 }),
+            )),
+            mk::<ArkBls12_381>(Op::Ref(
+                Ref::new(NodeIndex::new(1)),
+                ATyp::Poly(PolyTyp::Uni { degree: 1 }),
+            )),
+            ATyp::Poly(PolyTyp::Uni { degree: 2 }),
         );
         builder.add_op(var.clone(), op, &mut ideal);
 
@@ -572,13 +599,13 @@ mod tests {
         let q_wit = Var::from_var(
             "__zippel::gb::div_q::0",
             petgraph::graph::NodeIndex::new(usize::MAX),
-            ATyp::Uni(2),
+            ATyp::Poly(PolyTyp::Uni { degree: 2 }),
             Qualifier::Local,
         );
         let r_wit = Var::from_var(
             "__zippel::gb::div_r::0",
             petgraph::graph::NodeIndex::new(usize::MAX - 1),
-            ATyp::Uni(0),
+            ATyp::Poly(PolyTyp::Uni { degree: 0 }),
             Qualifier::Local,
         );
 
@@ -682,13 +709,25 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_a = Var::from_node(NodeIndex::new(0), ATyp::Uni(4), Qualifier::Witness);
-        let var_b = Var::from_node(NodeIndex::new(1), ATyp::Uni(2), Qualifier::Witness);
+        let var_a = Var::from_node(
+            NodeIndex::new(0),
+            ATyp::Poly(PolyTyp::Uni { degree: 4 }),
+            Qualifier::Witness,
+        );
+        let var_b = Var::from_node(
+            NodeIndex::new(1),
+            ATyp::Poly(PolyTyp::Uni { degree: 2 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var_a);
         ideal.register(&var_b);
 
         // lub_div(Uni(4), Uni(2)) = Uni(4).
-        let target = Var::from_node(NodeIndex::new(2), ATyp::Uni(4), Qualifier::Witness);
+        let target = Var::from_node(
+            NodeIndex::new(2),
+            ATyp::Poly(PolyTyp::Uni { degree: 4 }),
+            Qualifier::Witness,
+        );
         ideal.register(&target);
 
         let before = ideal.generating_set.len();
@@ -696,9 +735,15 @@ mod tests {
             target.clone(),
             Op::Bin(
                 BinOp::Div,
-                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(4))),
-                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::Uni(2))),
-                ATyp::Uni(4),
+                mk::<ArkBls12_381>(Op::Ref(
+                    Ref::new(NodeIndex::new(0)),
+                    ATyp::Poly(PolyTyp::Uni { degree: 4 }),
+                )),
+                mk::<ArkBls12_381>(Op::Ref(
+                    Ref::new(NodeIndex::new(1)),
+                    ATyp::Poly(PolyTyp::Uni { degree: 2 }),
+                )),
+                ATyp::Poly(PolyTyp::Uni { degree: 4 }),
             ),
             &mut ideal,
         );
@@ -811,18 +856,36 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let _var_a = Var::from_node(NodeIndex::new(0), ATyp::Uni(2), Qualifier::Witness);
+        let _var_a = Var::from_node(
+            NodeIndex::new(0),
+            ATyp::Poly(PolyTyp::Uni { degree: 2 }),
+            Qualifier::Witness,
+        );
         ideal.register(&_var_a);
-        let _var_b = Var::from_node(NodeIndex::new(1), ATyp::Uni(1), Qualifier::Witness);
+        let _var_b = Var::from_node(
+            NodeIndex::new(1),
+            ATyp::Poly(PolyTyp::Uni { degree: 1 }),
+            Qualifier::Witness,
+        );
         ideal.register(&_var_b);
 
         let basis_before = ideal.generating_set.len();
-        let var = Var::from_node(NodeIndex::new(2), ATyp::Uni(0), Qualifier::Witness);
+        let var = Var::from_node(
+            NodeIndex::new(2),
+            ATyp::Poly(PolyTyp::Uni { degree: 0 }),
+            Qualifier::Witness,
+        );
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Rem,
-            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2))),
-            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::Uni(1))),
-            ATyp::Uni(0),
+            mk::<ArkBls12_381>(Op::Ref(
+                Ref::new(NodeIndex::new(0)),
+                ATyp::Poly(PolyTyp::Uni { degree: 2 }),
+            )),
+            mk::<ArkBls12_381>(Op::Ref(
+                Ref::new(NodeIndex::new(1)),
+                ATyp::Poly(PolyTyp::Uni { degree: 1 }),
+            )),
+            ATyp::Poly(PolyTyp::Uni { degree: 0 }),
         );
         builder.add_op(var.clone(), op, &mut ideal);
 
@@ -830,7 +893,7 @@ mod tests {
         let r_wit = Var::from_var(
             "__zippel::gb::div_r::0",
             petgraph::graph::NodeIndex::new(usize::MAX - 1),
-            ATyp::Uni(0),
+            ATyp::Poly(PolyTyp::Uni { degree: 0 }),
             Qualifier::Local,
         );
         let scl = |p: &Var, i: usize| p.clone().with_index(i).unwrap();
@@ -873,20 +936,38 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_a = Var::from_node(NodeIndex::new(0), ATyp::Uni(1), Qualifier::Witness);
-        let var_b = Var::from_node(NodeIndex::new(1), ATyp::Uni(0), Qualifier::Witness);
+        let var_a = Var::from_node(
+            NodeIndex::new(0),
+            ATyp::Poly(PolyTyp::Uni { degree: 1 }),
+            Qualifier::Witness,
+        );
+        let var_b = Var::from_node(
+            NodeIndex::new(1),
+            ATyp::Poly(PolyTyp::Uni { degree: 0 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var_a);
         ideal.register(&var_b);
 
         let before = ideal.generating_set.len();
-        let target = Var::from_node(NodeIndex::new(2), ATyp::Uni(1), Qualifier::Witness);
+        let target = Var::from_node(
+            NodeIndex::new(2),
+            ATyp::Poly(PolyTyp::Uni { degree: 1 }),
+            Qualifier::Witness,
+        );
         builder.add_op(
             target,
             Op::Bin(
                 BinOp::Div,
-                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(1))),
-                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::Uni(0))),
-                ATyp::Uni(1),
+                mk::<ArkBls12_381>(Op::Ref(
+                    Ref::new(NodeIndex::new(0)),
+                    ATyp::Poly(PolyTyp::Uni { degree: 1 }),
+                )),
+                mk::<ArkBls12_381>(Op::Ref(
+                    Ref::new(NodeIndex::new(1)),
+                    ATyp::Poly(PolyTyp::Uni { degree: 0 }),
+                )),
+                ATyp::Poly(PolyTyp::Uni { degree: 1 }),
             ),
             &mut ideal,
         );
@@ -923,19 +1004,37 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let _var_a = Var::from_node(NodeIndex::new(0), ATyp::Uni(2), Qualifier::Witness);
+        let _var_a = Var::from_node(
+            NodeIndex::new(0),
+            ATyp::Poly(PolyTyp::Uni { degree: 2 }),
+            Qualifier::Witness,
+        );
         ideal.register(&_var_a);
-        let _var_b = Var::from_node(NodeIndex::new(1), ATyp::Uni(1), Qualifier::Witness);
+        let _var_b = Var::from_node(
+            NodeIndex::new(1),
+            ATyp::Poly(PolyTyp::Uni { degree: 1 }),
+            Qualifier::Witness,
+        );
         ideal.register(&_var_b);
 
         let basis_before_div = ideal.generating_set.len();
         let _q_res = {
-            let var = Var::from_node(NodeIndex::new(2), ATyp::Uni(2), Qualifier::Witness);
+            let var = Var::from_node(
+                NodeIndex::new(2),
+                ATyp::Poly(PolyTyp::Uni { degree: 2 }),
+                Qualifier::Witness,
+            );
             let op: GOp<ArkBls12_381> = Op::Bin(
                 BinOp::Div,
-                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2))),
-                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::Uni(1))),
-                ATyp::Uni(2),
+                mk::<ArkBls12_381>(Op::Ref(
+                    Ref::new(NodeIndex::new(0)),
+                    ATyp::Poly(PolyTyp::Uni { degree: 2 }),
+                )),
+                mk::<ArkBls12_381>(Op::Ref(
+                    Ref::new(NodeIndex::new(1)),
+                    ATyp::Poly(PolyTyp::Uni { degree: 1 }),
+                )),
+                ATyp::Poly(PolyTyp::Uni { degree: 2 }),
             );
             builder.add_op(var.clone(), op, &mut ideal);
             var
@@ -943,12 +1042,22 @@ mod tests {
         let after_div = ideal.generating_set.len();
 
         let _r_res = {
-            let var = Var::from_node(NodeIndex::new(3), ATyp::Uni(0), Qualifier::Witness);
+            let var = Var::from_node(
+                NodeIndex::new(3),
+                ATyp::Poly(PolyTyp::Uni { degree: 0 }),
+                Qualifier::Witness,
+            );
             let op: GOp<ArkBls12_381> = Op::Bin(
                 BinOp::Rem,
-                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2))),
-                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::Uni(1))),
-                ATyp::Uni(0),
+                mk::<ArkBls12_381>(Op::Ref(
+                    Ref::new(NodeIndex::new(0)),
+                    ATyp::Poly(PolyTyp::Uni { degree: 2 }),
+                )),
+                mk::<ArkBls12_381>(Op::Ref(
+                    Ref::new(NodeIndex::new(1)),
+                    ATyp::Poly(PolyTyp::Uni { degree: 1 }),
+                )),
+                ATyp::Poly(PolyTyp::Uni { degree: 0 }),
             );
             builder.add_op(var.clone(), op, &mut ideal);
             var
@@ -990,10 +1099,10 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         for (idx, name, typ) in [
-            (0, "a", ATyp::Uni(1)),
-            (1, "b", ATyp::Uni(1)),
-            (2, "c", ATyp::Uni(2)),
-            (3, "d", ATyp::Uni(1)),
+            (0, "a", ATyp::Poly(PolyTyp::Uni { degree: 1 })),
+            (1, "b", ATyp::Poly(PolyTyp::Uni { degree: 1 })),
+            (2, "c", ATyp::Poly(PolyTyp::Uni { degree: 2 })),
+            (3, "d", ATyp::Poly(PolyTyp::Uni { degree: 1 })),
         ] {
             let var = Var::from_var(name, NodeIndex::new(idx), typ, Qualifier::Instance);
             ideal.register(&var);
@@ -1002,28 +1111,36 @@ mod tests {
         let mk_ref = |idx, typ| mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(idx)), typ));
 
         let mut add_derived_operand = |mul_idx, sub_idx| {
-            let mul_ref = Var::from_node(NodeIndex::new(mul_idx), ATyp::Uni(2), Qualifier::Witness);
+            let mul_ref = Var::from_node(
+                NodeIndex::new(mul_idx),
+                ATyp::Poly(PolyTyp::Uni { degree: 2 }),
+                Qualifier::Witness,
+            );
             ideal.register(&mul_ref);
             builder.add_op(
                 mul_ref.clone(),
                 Op::Bin(
                     BinOp::Mul,
-                    mk_ref(0, ATyp::Uni(1)),
-                    mk_ref(1, ATyp::Uni(1)),
-                    ATyp::Uni(2),
+                    mk_ref(0, ATyp::Poly(PolyTyp::Uni { degree: 1 })),
+                    mk_ref(1, ATyp::Poly(PolyTyp::Uni { degree: 1 })),
+                    ATyp::Poly(PolyTyp::Uni { degree: 2 }),
                 ),
                 &mut ideal,
             );
 
-            let sub_ref = Var::from_node(NodeIndex::new(sub_idx), ATyp::Uni(2), Qualifier::Witness);
+            let sub_ref = Var::from_node(
+                NodeIndex::new(sub_idx),
+                ATyp::Poly(PolyTyp::Uni { degree: 2 }),
+                Qualifier::Witness,
+            );
             ideal.register(&sub_ref);
             builder.add_op(
                 sub_ref.clone(),
                 Op::Bin(
                     BinOp::Sub,
-                    mk_ref(mul_idx, ATyp::Uni(2)),
-                    mk_ref(2, ATyp::Uni(2)),
-                    ATyp::Uni(2),
+                    mk_ref(mul_idx, ATyp::Poly(PolyTyp::Uni { degree: 2 })),
+                    mk_ref(2, ATyp::Poly(PolyTyp::Uni { degree: 2 })),
+                    ATyp::Poly(PolyTyp::Uni { degree: 2 }),
                 ),
                 &mut ideal,
             );
@@ -1034,26 +1151,34 @@ mod tests {
         add_derived_operand(12, 13);
 
         // Uni(2) / Uni(1) keeps the dividend's bound: the quotient is Uni(2).
-        let q = Var::from_node(NodeIndex::new(20), ATyp::Uni(2), Qualifier::Witness);
+        let q = Var::from_node(
+            NodeIndex::new(20),
+            ATyp::Poly(PolyTyp::Uni { degree: 2 }),
+            Qualifier::Witness,
+        );
         builder.add_op(
             q,
             Op::Bin(
                 BinOp::Div,
-                mk_ref(11, ATyp::Uni(2)),
-                mk_ref(3, ATyp::Uni(1)),
-                ATyp::Uni(2),
+                mk_ref(11, ATyp::Poly(PolyTyp::Uni { degree: 2 })),
+                mk_ref(3, ATyp::Poly(PolyTyp::Uni { degree: 1 })),
+                ATyp::Poly(PolyTyp::Uni { degree: 2 }),
             ),
             &mut ideal,
         );
 
-        let r = Var::from_node(NodeIndex::new(21), ATyp::Uni(0), Qualifier::Witness);
+        let r = Var::from_node(
+            NodeIndex::new(21),
+            ATyp::Poly(PolyTyp::Uni { degree: 0 }),
+            Qualifier::Witness,
+        );
         builder.add_op(
             r,
             Op::Bin(
                 BinOp::Rem,
-                mk_ref(13, ATyp::Uni(2)),
-                mk_ref(3, ATyp::Uni(1)),
-                ATyp::Uni(0),
+                mk_ref(13, ATyp::Poly(PolyTyp::Uni { degree: 2 })),
+                mk_ref(3, ATyp::Poly(PolyTyp::Uni { degree: 1 })),
+                ATyp::Poly(PolyTyp::Uni { degree: 0 }),
             ),
             &mut ideal,
         );
@@ -1189,20 +1314,31 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_a = Var::from_node(NodeIndex::new(0), ATyp::Uni(2), Qualifier::Witness);
+        let var_a = Var::from_node(
+            NodeIndex::new(0),
+            ATyp::Poly(PolyTyp::Uni { degree: 2 }),
+            Qualifier::Witness,
+        );
         let var_b = Var::from_node(NodeIndex::new(1), ATyp::scalar(), Qualifier::Witness);
         ideal.register(&var_a);
         ideal.register(&var_b);
 
-        let var = Var::from_node(NodeIndex::new(2), ATyp::Uni(2), Qualifier::Witness);
+        let var = Var::from_node(
+            NodeIndex::new(2),
+            ATyp::Poly(PolyTyp::Uni { degree: 2 }),
+            Qualifier::Witness,
+        );
         let before = ideal.generating_set.len();
         builder.add_op(
             var.clone(),
             Op::Bin(
                 BinOp::Div,
-                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2))),
+                mk::<ArkBls12_381>(Op::Ref(
+                    Ref::new(NodeIndex::new(0)),
+                    ATyp::Poly(PolyTyp::Uni { degree: 2 }),
+                )),
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::scalar())),
-                ATyp::Uni(2),
+                ATyp::Poly(PolyTyp::Uni { degree: 2 }),
             ),
             &mut ideal,
         );
@@ -1221,20 +1357,31 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_a = Var::from_node(NodeIndex::new(0), ATyp::Mle(2), Qualifier::Witness);
+        let var_a = Var::from_node(
+            NodeIndex::new(0),
+            ATyp::Poly(PolyTyp::Mle { vars: 2 }),
+            Qualifier::Witness,
+        );
         let var_b = Var::from_node(NodeIndex::new(1), ATyp::scalar(), Qualifier::Witness);
         ideal.register(&var_a);
         ideal.register(&var_b);
 
-        let var = Var::from_node(NodeIndex::new(2), ATyp::Mle(2), Qualifier::Witness);
+        let var = Var::from_node(
+            NodeIndex::new(2),
+            ATyp::Poly(PolyTyp::Mle { vars: 2 }),
+            Qualifier::Witness,
+        );
         let before = ideal.generating_set.len();
         builder.add_op(
             var,
             Op::Bin(
                 BinOp::Div,
-                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(2))),
+                mk::<ArkBls12_381>(Op::Ref(
+                    Ref::new(NodeIndex::new(0)),
+                    ATyp::Poly(PolyTyp::Mle { vars: 2 }),
+                )),
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::scalar())),
-                ATyp::Mle(2),
+                ATyp::Poly(PolyTyp::Mle { vars: 2 }),
             ),
             &mut ideal,
         );
@@ -1253,11 +1400,11 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let vec_typ = ATyp::Vec(Box::new(ATyp::Uni(2)), 2);
+        let vec_typ = ATyp::Vec(Box::new(ATyp::Poly(PolyTyp::Uni { degree: 2 })), 2);
         // lub_div: Uni(2) / Uni(2) = Uni(2) (the quotient keeps the dividend bound)
-        let div_typ = ATyp::Vec(Box::new(ATyp::Uni(2)), 2);
+        let div_typ = ATyp::Vec(Box::new(ATyp::Poly(PolyTyp::Uni { degree: 2 })), 2);
         // lub_rem: Uni(2) % Uni(2) = Uni(2-1) = Uni(1)
-        let rem_typ = ATyp::Vec(Box::new(ATyp::Uni(1)), 2);
+        let rem_typ = ATyp::Vec(Box::new(ATyp::Poly(PolyTyp::Uni { degree: 1 })), 2);
         for idx in 0..2 {
             ideal.register(&Var::from_node(
                 NodeIndex::new(idx),
@@ -1473,21 +1620,39 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let var_a = Var::from_node(NodeIndex::new(0), ATyp::Mle(2), Qualifier::Witness);
-        let var_b = Var::from_node(NodeIndex::new(1), ATyp::Mle(2), Qualifier::Witness);
+        let var_a = Var::from_node(
+            NodeIndex::new(0),
+            ATyp::Poly(PolyTyp::Mle { vars: 2 }),
+            Qualifier::Witness,
+        );
+        let var_b = Var::from_node(
+            NodeIndex::new(1),
+            ATyp::Poly(PolyTyp::Mle { vars: 2 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var_a);
         ideal.register(&var_b);
 
-        let var = Var::from_node(NodeIndex::new(2), ATyp::Mle(2), Qualifier::Witness);
+        let var = Var::from_node(
+            NodeIndex::new(2),
+            ATyp::Poly(PolyTyp::Mle { vars: 2 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var);
 
-        let a = Op::Ref(graph::Ref::new(NodeIndex::new(0)), ATyp::Mle(2));
-        let b = Op::Ref(graph::Ref::new(NodeIndex::new(1)), ATyp::Mle(2));
+        let a = Op::Ref(
+            graph::Ref::new(NodeIndex::new(0)),
+            ATyp::Poly(PolyTyp::Mle { vars: 2 }),
+        );
+        let b = Op::Ref(
+            graph::Ref::new(NodeIndex::new(1)),
+            ATyp::Poly(PolyTyp::Mle { vars: 2 }),
+        );
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Div,
             mk::<ArkBls12_381>(a),
             mk::<ArkBls12_381>(b),
-            ATyp::Mle(2),
+            ATyp::Poly(PolyTyp::Mle { vars: 2 }),
         );
         builder.add_op(var, op, &mut ideal);
     }
@@ -1502,12 +1667,16 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let vec_t = ATyp::Vec(Box::new(ATyp::Uni(3)), 2);
+        let vec_t = ATyp::Vec(Box::new(ATyp::Poly(PolyTyp::Uni { degree: 3 })), 2);
         let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Witness);
         ideal.register(&var_v);
 
         // lub_div: Uni(3) / Uni(3) = Uni(3) (the quotient keeps the dividend bound)
-        let var = Var::from_node(NodeIndex::new(1), ATyp::Uni(3), Qualifier::Witness);
+        let var = Var::from_node(
+            NodeIndex::new(1),
+            ATyp::Poly(PolyTyp::Uni { degree: 3 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var);
 
         let op: GOp<ArkBls12_381> = Op::Reduce(
@@ -1536,14 +1705,18 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let dividend_t = ATyp::Uni(1);
-        let divisor_t = ATyp::Uni(3);
+        let dividend_t = ATyp::Poly(PolyTyp::Uni { degree: 1 });
+        let divisor_t = ATyp::Poly(PolyTyp::Uni { degree: 3 });
         let var_a = Var::from_node(NodeIndex::new(0), dividend_t.clone(), Qualifier::Witness);
         let var_b = Var::from_node(NodeIndex::new(1), divisor_t.clone(), Qualifier::Witness);
         ideal.register(&var_a);
         ideal.register(&var_b);
 
-        let var = Var::from_node(NodeIndex::new(2), ATyp::Uni(2), Qualifier::Witness);
+        let var = Var::from_node(
+            NodeIndex::new(2),
+            ATyp::Poly(PolyTyp::Uni { degree: 2 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var);
 
         let before = ideal.generating_set.len();
@@ -1553,7 +1726,7 @@ mod tests {
                 BinOp::Rem,
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), dividend_t)),
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), divisor_t)),
-                ATyp::Uni(2),
+                ATyp::Poly(PolyTyp::Uni { degree: 2 }),
             ),
             &mut ideal,
         );
@@ -1570,13 +1743,13 @@ mod tests {
         let q_wit = Var::from_var(
             "__zippel::gb::div_q::0",
             NodeIndex::new(usize::MAX),
-            ATyp::Uni(1),
+            ATyp::Poly(PolyTyp::Uni { degree: 1 }),
             Qualifier::Local,
         );
         let r_wit = Var::from_var(
             "__zippel::gb::div_r::0",
             NodeIndex::new(usize::MAX - 1),
-            ATyp::Uni(2),
+            ATyp::Poly(PolyTyp::Uni { degree: 2 }),
             Qualifier::Local,
         );
         let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
@@ -1639,9 +1812,9 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let elem_a = ATyp::Uni(2);
+        let elem_a = ATyp::Poly(PolyTyp::Uni { degree: 2 });
         let vec_a = ATyp::Vec(Box::new(elem_a.clone()), 2);
-        let div_t = ATyp::Uni(1);
+        let div_t = ATyp::Poly(PolyTyp::Uni { degree: 1 });
 
         let var_a = Var::from_node(NodeIndex::new(0), vec_a.clone(), Qualifier::Witness);
         ideal.register(&var_a);
@@ -1651,7 +1824,7 @@ mod tests {
 
         // lub_div(Vec(Uni(2),2), Uni(1)) = Vec(lub_div(Uni(2), Uni(1)), 2)
         //                                   = Vec(Uni(2), 2)
-        let result_t = ATyp::Vec(Box::new(ATyp::Uni(2)), 2);
+        let result_t = ATyp::Vec(Box::new(ATyp::Poly(PolyTyp::Uni { degree: 2 })), 2);
         let var_r = Var::from_node(NodeIndex::new(2), result_t.clone(), Qualifier::Witness);
         ideal.register(&var_r);
 
@@ -1694,8 +1867,8 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let dividend_t = ATyp::Uni(2);
-        let elem_b = ATyp::Uni(1);
+        let dividend_t = ATyp::Poly(PolyTyp::Uni { degree: 2 });
+        let elem_b = ATyp::Poly(PolyTyp::Uni { degree: 1 });
         let vec_b = ATyp::Vec(Box::new(elem_b.clone()), 2);
 
         let var_a = Var::from_node(NodeIndex::new(0), dividend_t.clone(), Qualifier::Witness);
@@ -1706,7 +1879,7 @@ mod tests {
 
         // lub_div(Uni(2), Vec(Uni(1),2)) = Vec(lub_div(Uni(2), Uni(1)), 2)
         //                                 = Vec(Uni(2), 2)
-        let result_t = ATyp::Vec(Box::new(ATyp::Uni(2)), 2);
+        let result_t = ATyp::Vec(Box::new(ATyp::Poly(PolyTyp::Uni { degree: 2 })), 2);
         let var_r = Var::from_node(NodeIndex::new(2), result_t.clone(), Qualifier::Witness);
         ideal.register(&var_r);
 

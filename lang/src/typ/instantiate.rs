@@ -191,9 +191,9 @@ impl Instantiation {
     }
 
     /// Matches a parameter type (callee names) against an argument type (caller names),
-    /// binding the parameters it meets. Three widenings are allowed: a polynomial where a wider
-    /// one of the same encoding is expected ([`CTyp::poly_fit`]), an integer where a wider integer
-    /// range is expected, and an integer where a scalar is expected.
+    /// binding the parameters it meets. Three widenings are allowed: a polynomial where one it
+    /// fits is expected ([`PolyTyp::fits`](crate::typ::PolyTyp::fits)), an integer where a wider
+    /// integer range is expected, and an integer where a scalar is expected.
     ///
     /// # Errors
     /// The shapes differ, a kind class differs, or a parameter would stand for two different
@@ -211,9 +211,11 @@ impl Instantiation {
             (CTyp::Unit, CTyp::Unit) | (CTyp::Bool, CTyp::Bool) => Ok(()),
             // An integer fits an integer parameter whose range contains its range.
             (CTyp::Fin(p), CTyp::Fin(a)) => a.is_subset_of(p).then_some(()).ok_or_else(mismatch),
-            // A polynomial argument fits a parameter as `CTyp::poly_fit` says.
-            (CTyp::Uni(..) | CTyp::Mle(..) | CTyp::Poly(..), _) => {
-                let (a, p) = arg.poly_fit(param).ok_or_else(mismatch)?;
+            // A polynomial argument fits a parameter as `PolyTyp::fits` says.
+            (CTyp::Poly(p, param_shape), CTyp::Poly(a, arg_shape)) => {
+                if !arg_shape.fits(param_shape) {
+                    return Err(mismatch());
+                }
                 self.bind(p, a, caller).map_err(within)
             }
             (CTyp::Vec(p, pn), CTyp::Vec(a, an)) => {

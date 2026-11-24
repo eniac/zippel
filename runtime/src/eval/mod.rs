@@ -2,6 +2,7 @@
 pub mod error;
 
 use ark_ff::{One, Zero};
+use backend::PolyTyp;
 use backend::op::{GOp, HOp, Op, Ref};
 use backend::{ATyp, ArkConfig, SelectedEvalShape, Value};
 use error::EvalError;
@@ -36,9 +37,9 @@ use std::collections::HashMap;
 /// fallback behavior.
 fn selected_eval_shape<C: ArkConfig>(p: &HOp<C>, range: &lang::ast::CRange) -> SelectedEvalShape {
     let (input_num_vars, max_degree) = match p.typ() {
-        ATyp::Uni(d) => (1, d),
-        ATyp::Mle(n) => (n, 1),
-        ATyp::VPoly(n, d) => (n, d),
+        ATyp::Poly(PolyTyp::Uni { degree: d }) => (1, d),
+        ATyp::Poly(PolyTyp::Mle { vars: n }) => (n, 1),
+        ATyp::Poly(PolyTyp::General { vars: n, degree: d }) => (n, d),
         other => panic!("Selected eval expects polynomial input, got {other}"),
     };
     SelectedEvalShape::new(input_num_vars, range.len(), max_degree)

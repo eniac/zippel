@@ -88,6 +88,7 @@ fn slot_differences<C: ArkConfig + HasOpFactory>(
 #[cfg(test)]
 mod tests {
     use super::super::{Ideal, IdealBuilder};
+    use backend::PolyTyp;
 
     use crate::Var;
     use crate::frontend::Polynomial;
@@ -171,7 +172,7 @@ mod tests {
         //   d_0 * b = 0  where d_0 = a[0] - c[0]
         //   d_1 * b = 0  where d_1 = a[1] - c[1]
         //   d_0*inv_0 + d_1*inv_1 + b - 1 = 0
-        let (var_a, var_c, var_b, ideal) = equ_ideal(ATyp::Uni(1));
+        let (var_a, var_c, var_b, ideal) = equ_ideal(ATyp::Poly(PolyTyp::Uni { degree: 1 }));
         assert_eq!(
             ideal.generating_set.len(),
             3,
@@ -192,7 +193,7 @@ mod tests {
     #[test]
     fn test_equ_uni2_three_slots() {
         // Uni(2) == Uni(2): 3 coefficient slots.
-        let (var_a, var_c, var_b, ideal) = equ_ideal(ATyp::Uni(2));
+        let (var_a, var_c, var_b, ideal) = equ_ideal(ATyp::Poly(PolyTyp::Uni { degree: 2 }));
         assert_eq!(
             ideal.generating_set.len(),
             4,
@@ -212,7 +213,8 @@ mod tests {
     #[test]
     fn test_equ_vpoly_2_1_four_slots() {
         // VPoly(2,1) == VPoly(2,1): 4 coefficient slots (1, x2, x1, x1*x2).
-        let (var_a, var_c, var_b, ideal) = equ_ideal(ATyp::VPoly(2, 1));
+        let (var_a, var_c, var_b, ideal) =
+            equ_ideal(ATyp::Poly(PolyTyp::General { vars: 2, degree: 1 }));
         assert_eq!(
             ideal.generating_set.len(),
             5,
@@ -273,8 +275,8 @@ mod tests {
         // to Uni(2), so every element contributes 3 slots and the padded top
         // coefficient compares 0 against c[i][2].
         let (var_a, var_c, var_b, ideal) = equ_ideal_mixed(
-            ATyp::Vec(Box::new(ATyp::Uni(1)), 2),
-            ATyp::Vec(Box::new(ATyp::Uni(2)), 2),
+            ATyp::Vec(Box::new(ATyp::Poly(PolyTyp::Uni { degree: 1 })), 2),
+            ATyp::Vec(Box::new(ATyp::Poly(PolyTyp::Uni { degree: 2 })), 2),
         );
         assert_eq!(ideal.generating_set.len(), 7);
         for i in 0..2 {

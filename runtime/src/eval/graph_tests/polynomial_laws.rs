@@ -1,5 +1,6 @@
 use crate::eval::eval_op;
 use ark_poly::{DenseUVPolynomial, univariate::DensePolynomial};
+use backend::PolyTyp;
 use backend::{ATyp, ArkBn254, PolyVariant, Value, VirtualPolynomial};
 /// Tests for polynomial ring laws and algebraic properties end-to-end through graph operations
 use graph::{Op, mk};
@@ -28,14 +29,14 @@ fn test_addition_commutative() {
         lang::ast::BinOp::Add,
         mk::<ArkBn254>(Op::Value(p1.clone())),
         mk::<ArkBn254>(Op::Value(p2.clone())),
-        ATyp::Uni(10),
+        ATyp::Poly(PolyTyp::Uni { degree: 10 }),
     );
 
     let op2 = Op::Bin(
         lang::ast::BinOp::Add,
         mk::<ArkBn254>(Op::Value(p2.clone())),
         mk::<ArkBn254>(Op::Value(p1.clone())),
-        ATyp::Uni(10),
+        ATyp::Poly(PolyTyp::Uni { degree: 10 }),
     );
 
     let env = HashMap::new();
@@ -57,13 +58,13 @@ fn test_addition_associative() {
         lang::ast::BinOp::Add,
         mk::<ArkBn254>(Op::Value(p1.clone())),
         mk::<ArkBn254>(Op::Value(p2.clone())),
-        ATyp::Uni(10),
+        ATyp::Poly(PolyTyp::Uni { degree: 10 }),
     );
     let op1 = Op::Bin(
         lang::ast::BinOp::Add,
         mk::<ArkBn254>(inner1),
         mk::<ArkBn254>(Op::Value(p3.clone())),
-        ATyp::Uni(10),
+        ATyp::Poly(PolyTyp::Uni { degree: 10 }),
     );
 
     // p1 + (p2 + p3)
@@ -71,13 +72,13 @@ fn test_addition_associative() {
         lang::ast::BinOp::Add,
         mk::<ArkBn254>(Op::Value(p2.clone())),
         mk::<ArkBn254>(Op::Value(p3.clone())),
-        ATyp::Uni(10),
+        ATyp::Poly(PolyTyp::Uni { degree: 10 }),
     );
     let op2 = Op::Bin(
         lang::ast::BinOp::Add,
         mk::<ArkBn254>(Op::Value(p1.clone())),
         mk::<ArkBn254>(inner2),
-        ATyp::Uni(10),
+        ATyp::Poly(PolyTyp::Uni { degree: 10 }),
     );
 
     let env = HashMap::new();
@@ -97,7 +98,7 @@ fn test_addition_identity() {
         lang::ast::BinOp::Add,
         mk::<ArkBn254>(Op::Value(p.clone())),
         mk::<ArkBn254>(Op::Value(zero)),
-        ATyp::Uni(10),
+        ATyp::Poly(PolyTyp::Uni { degree: 10 }),
     );
 
     let env = HashMap::new();
@@ -116,14 +117,14 @@ fn test_multiplication_commutative() {
         lang::ast::BinOp::Mul,
         mk::<ArkBn254>(Op::Value(p1.clone())),
         mk::<ArkBn254>(Op::Value(p2.clone())),
-        ATyp::Uni(10),
+        ATyp::Poly(PolyTyp::Uni { degree: 10 }),
     );
 
     let op2 = Op::Bin(
         lang::ast::BinOp::Mul,
         mk::<ArkBn254>(Op::Value(p2.clone())),
         mk::<ArkBn254>(Op::Value(p1.clone())),
-        ATyp::Uni(10),
+        ATyp::Poly(PolyTyp::Uni { degree: 10 }),
     );
 
     let env = HashMap::new();
@@ -145,13 +146,13 @@ fn test_multiplication_associative() {
         lang::ast::BinOp::Mul,
         mk::<ArkBn254>(Op::Value(p1.clone())),
         mk::<ArkBn254>(Op::Value(p2.clone())),
-        ATyp::Uni(10),
+        ATyp::Poly(PolyTyp::Uni { degree: 10 }),
     );
     let op1 = Op::Bin(
         lang::ast::BinOp::Mul,
         mk::<ArkBn254>(inner1),
         mk::<ArkBn254>(Op::Value(p3.clone())),
-        ATyp::Uni(10),
+        ATyp::Poly(PolyTyp::Uni { degree: 10 }),
     );
 
     // p1 * (p2 * p3)
@@ -159,13 +160,13 @@ fn test_multiplication_associative() {
         lang::ast::BinOp::Mul,
         mk::<ArkBn254>(Op::Value(p2.clone())),
         mk::<ArkBn254>(Op::Value(p3.clone())),
-        ATyp::Uni(10),
+        ATyp::Poly(PolyTyp::Uni { degree: 10 }),
     );
     let op2 = Op::Bin(
         lang::ast::BinOp::Mul,
         mk::<ArkBn254>(Op::Value(p1.clone())),
         mk::<ArkBn254>(inner2),
-        ATyp::Uni(10),
+        ATyp::Poly(PolyTyp::Uni { degree: 10 }),
     );
 
     let env = HashMap::new();
@@ -185,7 +186,7 @@ fn test_multiplication_identity() {
         lang::ast::BinOp::Mul,
         mk::<ArkBn254>(Op::Value(p.clone())),
         mk::<ArkBn254>(Op::Value(one)),
-        ATyp::Uni(10),
+        ATyp::Poly(PolyTyp::Uni { degree: 10 }),
     );
 
     let env = HashMap::new();
@@ -206,13 +207,13 @@ fn test_distributivity() {
         lang::ast::BinOp::Add,
         mk::<ArkBn254>(Op::Value(p2.clone())),
         mk::<ArkBn254>(Op::Value(p3.clone())),
-        ATyp::Uni(10),
+        ATyp::Poly(PolyTyp::Uni { degree: 10 }),
     );
     let op1 = Op::Bin(
         lang::ast::BinOp::Mul,
         mk::<ArkBn254>(Op::Value(p1.clone())),
         mk::<ArkBn254>(inner_add),
-        ATyp::Uni(10),
+        ATyp::Poly(PolyTyp::Uni { degree: 10 }),
     );
 
     // (p1 * p2) + (p1 * p3)
@@ -220,19 +221,19 @@ fn test_distributivity() {
         lang::ast::BinOp::Mul,
         mk::<ArkBn254>(Op::Value(p1.clone())),
         mk::<ArkBn254>(Op::Value(p2.clone())),
-        ATyp::Uni(10),
+        ATyp::Poly(PolyTyp::Uni { degree: 10 }),
     );
     let mul2 = Op::Bin(
         lang::ast::BinOp::Mul,
         mk::<ArkBn254>(Op::Value(p1.clone())),
         mk::<ArkBn254>(Op::Value(p3.clone())),
-        ATyp::Uni(10),
+        ATyp::Poly(PolyTyp::Uni { degree: 10 }),
     );
     let op2 = Op::Bin(
         lang::ast::BinOp::Add,
         mk::<ArkBn254>(mul1),
         mk::<ArkBn254>(mul2),
-        ATyp::Uni(10),
+        ATyp::Poly(PolyTyp::Uni { degree: 10 }),
     );
 
     let env = HashMap::new();
@@ -257,13 +258,13 @@ fn test_scalar_multiplication_compatibility() {
         lang::ast::BinOp::Mul,
         mk::<ArkBn254>(Op::Value(s1.clone())),
         mk::<ArkBn254>(Op::Value(s2.clone())),
-        ATyp::Uni(10),
+        ATyp::Poly(PolyTyp::Uni { degree: 10 }),
     );
     let op1 = Op::Bin(
         lang::ast::BinOp::Mul,
         mk::<ArkBn254>(scalar_mul),
         mk::<ArkBn254>(Op::Value(p.clone())),
-        ATyp::Uni(10),
+        ATyp::Poly(PolyTyp::Uni { degree: 10 }),
     );
 
     // s1 * (s2 * p)
@@ -271,13 +272,13 @@ fn test_scalar_multiplication_compatibility() {
         lang::ast::BinOp::Mul,
         mk::<ArkBn254>(Op::Value(s2.clone())),
         mk::<ArkBn254>(Op::Value(p.clone())),
-        ATyp::Uni(10),
+        ATyp::Poly(PolyTyp::Uni { degree: 10 }),
     );
     let op2 = Op::Bin(
         lang::ast::BinOp::Mul,
         mk::<ArkBn254>(Op::Value(s1.clone())),
         mk::<ArkBn254>(inner_mul),
-        ATyp::Uni(10),
+        ATyp::Poly(PolyTyp::Uni { degree: 10 }),
     );
 
     let env = HashMap::new();
@@ -301,7 +302,7 @@ fn test_subtraction_as_addition_of_negation() {
         lang::ast::BinOp::Sub,
         mk::<ArkBn254>(Op::Value(p1.clone())),
         mk::<ArkBn254>(Op::Value(p2.clone())),
-        ATyp::Uni(10),
+        ATyp::Poly(PolyTyp::Uni { degree: 10 }),
     );
 
     // p1 + (-1 * p2) = p1 + (neg p2)
@@ -310,13 +311,13 @@ fn test_subtraction_as_addition_of_negation() {
         lang::ast::BinOp::Sub,
         mk::<ArkBn254>(Op::Value(make_scalar(0))),
         mk::<ArkBn254>(Op::Value(p2.clone())),
-        ATyp::Uni(10),
+        ATyp::Poly(PolyTyp::Uni { degree: 10 }),
     );
     let add_op = Op::Bin(
         lang::ast::BinOp::Add,
         mk::<ArkBn254>(Op::Value(p1.clone())),
         mk::<ArkBn254>(neg_p2),
-        ATyp::Uni(10),
+        ATyp::Poly(PolyTyp::Uni { degree: 10 }),
     );
 
     let env = HashMap::new();
@@ -348,7 +349,7 @@ fn polynomial_division_coef_preserves_declared_bound() {
         lang::ast::BinOp::Div,
         mk::<ArkBn254>(Op::Value(dividend.clone())),
         mk::<ArkBn254>(Op::Value(one)),
-        ATyp::Uni(4),
+        ATyp::Poly(PolyTyp::Uni { degree: 4 }),
     );
     let result = eval_op(
         &mk::<ArkBn254>(Op::Coef(mk::<ArkBn254>(div))),
@@ -375,7 +376,7 @@ fn polynomial_division_coef_preserves_declared_bound() {
         lang::ast::BinOp::Div,
         mk::<ArkBn254>(Op::Value(dividend.clone())),
         mk::<ArkBn254>(Op::Value(dividend)),
-        ATyp::Uni(4),
+        ATyp::Poly(PolyTyp::Uni { degree: 4 }),
     );
     let result_self = eval_op(
         &mk::<ArkBn254>(Op::Coef(mk::<ArkBn254>(div_self))),

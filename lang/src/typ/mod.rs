@@ -15,6 +15,7 @@ mod kind;
 /// Least-upper bounds joining operand types of binary operations.
 pub mod lub;
 mod nothing;
+mod poly;
 mod qualifier;
 /// Substitutions for type aliases and symbolic sizes.
 pub mod subst;
@@ -33,6 +34,7 @@ pub use infer::{TypeError, TypeTable};
 pub use kind::{CKind, Kind, UKind};
 pub use lub::LubError;
 pub use nothing::Nothing;
+pub use poly::{PolyShapeError, PolyTyp};
 pub use qualifier::Qualifier;
 pub use subst::SizeSubsts;
 pub use typevar::{CTypeVar, CTypeVars, TypeVar, TypeVars, UTypeVar, UTypeVars};
@@ -44,15 +46,9 @@ use std::fmt;
 /// The types of expressions, `N` is the size parameter
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Typ<T, N> {
-    /// Univariate polynomial over base type T with the given degree bound, in coefficient form
-    /// (source `Uni<F, D>`).
-    Uni(T, Spanned<N>),
-    /// Multilinear polynomial over base type T in the given number of variables, by its
-    /// evaluations on the Boolean hypercube (source `Mle<F, N>`).
-    Mle(T, Spanned<N>),
-    /// General multivariate polynomial over base type T with the given number of variables and
-    /// degree bound (source `Poly<F, V, D>`).
-    Poly(T, Spanned<N>, Spanned<N>),
+    /// Polynomial over base type T, in the encoding [`PolyTyp`] names (source `Uni<F, D>`,
+    /// `Mle<F, N>` or `Poly<F, V, D>`).
+    Poly(T, PolyTyp<Spanned<N>>),
     /// Vector of size `N` and base type [Typ]
     Vec(Box<Spanned<Typ<T, N>>>, Spanned<N>),
     /// Tid type [Tid]
@@ -94,7 +90,7 @@ pub type CTyps = Typs<Tid, usize>;
 impl<N: Clone> TidSubst for GTyp<N> {
     fn map_tids(&mut self, f: &dyn Fn(&Tid) -> Option<Tid>) {
         match self {
-            Typ::Uni(b, _) | Typ::Mle(b, _) | Typ::Poly(b, _, _) | Typ::Base(b) => {
+            Typ::Poly(b, _) | Typ::Base(b) => {
                 if let Some(t) = f(b) {
                     *b = t;
                 }
@@ -174,40 +170,31 @@ impl<T, N> Typ<T, N> {
 impl<N> GTyp<N> {
     /// A univariate polynomial of degree `n` over base type `b`, with a dummy span.
     pub fn uni(b: &Tid, n: N) -> Self {
-        Typ::Uni(b.clone(), Spanned::dummy(n))
+        Typ::Poly(
+            b.clone(),
+            PolyTyp::Uni {
+                degree: Spanned::dummy(n),
+            },
+        )
     }
     /// A multilinear polynomial in `m` variables over base type `b`, with a dummy span.
     pub fn mle(b: &Tid, m: N) -> Self {
-        Typ::Mle(b.clone(), Spanned::dummy(m))
+        Typ::Poly(
+            b.clone(),
+            PolyTyp::Mle {
+                vars: Spanned::dummy(m),
+            },
+        )
     }
     /// A general polynomial in `m` variables of degree `n` over base type `b`, with dummy spans.
     pub fn poly(b: &Tid, m: N, n: N) -> Self {
-        Typ::Poly(b.clone(), Spanned::dummy(m), Spanned::dummy(n))
-    }
-
-    /// The base type of a polynomial of any encoding; `None` for a type that is not one.
-    pub fn poly_base(&self) -> Option<&Tid> {
-        match self {
-            Typ::Uni(b, _) | Typ::Mle(b, _) | Typ::Poly(b, _, _) => Some(b),
-            _ => None,
-        }
-    }
-
-    /// This polynomial, of the same encoding and sizes, over base type `b`.
-    ///
-    /// # Panics
-    /// Panics if `self` is not a polynomial; callers check [`Self::poly_base`] first.
-    #[must_use]
-    pub fn with_poly_base(&self, b: Tid) -> Self
-    where
-        N: Clone,
-    {
-        match self {
-            Typ::Uni(_, n) => Typ::Uni(b, n.clone()),
-            Typ::Mle(_, n) => Typ::Mle(b, n.clone()),
-            Typ::Poly(_, m, n) => Typ::Poly(b, m.clone(), n.clone()),
-            _ => unreachable!("with_poly_base on a non-polynomial type"),
-        }
+        Typ::Poly(
+            b.clone(),
+            PolyTyp::General {
+                vars: Spanned::dummy(m),
+                degree: Spanned::dummy(n),
+            },
+        )
     }
 
     /// Resolves this type to the scalar-kinded [`Tid`] it can be treated as, if any.
@@ -272,9 +259,7 @@ impl<T: Clone, N: Clone> ToTraversal1<T> for Typ<T, N> {
         f: &mut dyn FnMut(T) -> Result<Z, E>,
     ) -> Result<Self::Output<Z>, E> {
         match self {
-            Typ::Uni(b, n) => Ok(Typ::Uni(f(b)?, n)),
-            Typ::Mle(b, n) => Ok(Typ::Mle(f(b)?, n)),
-            Typ::Poly(b, m, n) => Ok(Typ::Poly(f(b)?, m, n)),
+            Typ::Poly(b, p) => Ok(Typ::Poly(f(b)?, p)),
             Typ::Base(b) => Ok(Typ::Base(f(b)?)),
             Typ::Vec(deref!(b), n) => Ok(Typ::Vec(Box::new(b.traverse1(f)?), n)),
             Typ::Fin(r) => Ok(Typ::Fin(r)),
@@ -299,12 +284,9 @@ impl<T: Clone, N: Clone> ToTraversal2<N> for Typ<T, N> {
         f: &mut dyn FnMut(N) -> Result<Z, E>,
     ) -> Result<Self::Output<Z>, E> {
         match self {
-            Typ::Uni(b, n) => Ok(Typ::Uni(b, Spanned::new(f(n.node)?, n.span))),
-            Typ::Mle(b, n) => Ok(Typ::Mle(b, Spanned::new(f(n.node)?, n.span))),
-            Typ::Poly(b, m, n) => Ok(Typ::Poly(
+            Typ::Poly(b, p) => Ok(Typ::Poly(
                 b,
-                Spanned::new(f(m.node)?, m.span),
-                Spanned::new(f(n.node)?, n.span),
+                p.try_map(|s| Ok(Spanned::new(f(s.node)?, s.span)))?,
             )),
             Typ::Base(b) => Ok(Typ::Base(b)),
             Typ::Vec(b, n) => Ok(Typ::Vec(
@@ -408,9 +390,7 @@ impl<N: Clone> TypeInline<N> for GTyp<N> {
                 }
             }
             Typ::Vec(t, n) => Typ::Vec(Box::new(t.type_inline(ctx)), n),
-            Typ::Uni(b, n) => Typ::Uni(b, n),
-            Typ::Mle(b, n) => Typ::Mle(b, n),
-            Typ::Poly(b, m, n) => Typ::Poly(b, m, n),
+            Typ::Poly(b, p) => Typ::Poly(b, p),
             Typ::Fin(r) => Typ::Fin(r),
             Typ::Unit => Typ::Unit,
             Typ::Bool => Typ::Bool,
@@ -432,9 +412,11 @@ impl<N: Clone> TypeInline<N> for GTyps<N> {
 impl<T: fmt::Display, N: fmt::Display> fmt::Display for Typ<T, N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Typ::Uni(b, n) => write!(f, "Uni<{b}, {}>", n.node),
-            Typ::Mle(b, n) => write!(f, "Mle<{b}, {}>", n.node),
-            Typ::Poly(b, m, n) => write!(f, "Poly<{b}, {}, {}>", m.node, n.node),
+            Typ::Poly(b, PolyTyp::Uni { degree }) => write!(f, "Uni<{b}, {}>", degree.node),
+            Typ::Poly(b, PolyTyp::Mle { vars }) => write!(f, "Mle<{b}, {}>", vars.node),
+            Typ::Poly(b, PolyTyp::General { vars, degree }) => {
+                write!(f, "Poly<{b}, {}, {}>", vars.node, degree.node)
+            }
             Typ::Base(base) => write!(f, "{base}"),
             Typ::Vec(t, n) => write!(f, "[{t}; {}]", n.node),
             Typ::Fin(r) => write!(f, "Fin<{r}>"),

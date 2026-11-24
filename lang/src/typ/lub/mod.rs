@@ -8,7 +8,7 @@ use crate::ast::BinOp;
 use crate::ast::range::Range;
 use crate::ast::spanned::Spanned;
 use crate::id::Tid;
-use crate::typ::{CKind, CTyp, CTypeVar, Kind, Nothing};
+use crate::typ::{CKind, CTyp, CTypeVar, Kind, Nothing, PolyTyp};
 use share::Ctx;
 
 /// Instances of this trait can be added, multiplied, divided, exp'd and dot product'd together, generating constraints and type errors
@@ -443,7 +443,6 @@ impl Lub for CTyp {
     type Context = Ctx<Tid, CKind>;
     fn lub_equ(x: &Self, y: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Self, LubError> {
         match (x, y) {
-            (p, q) if p.poly_vars_differ(q) => Err(LubError::variable_count(BinOp::Equ, &x, &y)),
             (CTyp::Unit, CTyp::Unit) => Ok(CTyp::Unit),
             (CTyp::Bool, CTyp::Bool) => Ok(CTyp::Bool),
             (CTyp::Base(a), CTyp::Base(b)) => Ok(CTyp::Base(
@@ -454,26 +453,7 @@ impl Lub for CTyp {
                 Range::lub_equ(a, b, &Nothing)
                     .map_err(|e| LubError::next(LubError::equ(&x, &y), e))?,
             )),
-            // Polynomials over the same variables: of one encoding, the wider type of that
-            // encoding; of different encodings, the general polynomial covering both.
-            (CTyp::Uni(a, n), CTyp::Uni(b, m)) => Ok(CTyp::uni(
-                &Tid::lub_equ(a, b, ctx).map_err(|e| LubError::next(LubError::equ(&x, &y), e))?,
-                n.node.max(m.node),
-            )),
-            (CTyp::Mle(a, n), CTyp::Mle(b, m)) => Ok(CTyp::mle(
-                &Tid::lub_equ(a, b, ctx).map_err(|e| LubError::next(LubError::equ(&x, &y), e))?,
-                n.node.max(m.node),
-            )),
-            (p, q)
-                if let (Some((a, n, ma)), Some((b, _, mb))) = (p.poly_shape(), q.poly_shape()) =>
-            {
-                Ok(CTyp::poly(
-                    &Tid::lub_equ(a, b, ctx)
-                        .map_err(|e| LubError::next(LubError::equ(&x, &y), e))?,
-                    n,
-                    ma.max(mb),
-                ))
-            }
+            (CTyp::Poly(..), CTyp::Poly(..)) => lub_polys(BinOp::Equ, x, y, ctx),
             // [A; N] == [B; M]
             (CTyp::Vec(a, n), CTyp::Vec(b, m)) if n == m => Ok(CTyp::vec(
                 &CTyp::lub_equ(&a.node, &b.node, ctx)
@@ -520,7 +500,6 @@ impl Lub for CTyp {
 
     fn lub_add(x: &Self, y: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Self, LubError> {
         match (x, y) {
-            (p, q) if p.poly_vars_differ(q) => Err(LubError::variable_count(BinOp::Add, &x, &y)),
             (CTyp::Base(a), CTyp::Base(b)) => Ok(CTyp::Base(
                 Tid::lub_add(a, b, ctx).map_err(|e| LubError::next(LubError::add(&x, &y), e))?,
             )),
@@ -530,30 +509,7 @@ impl Lub for CTyp {
             )),
             (CTyp::FieldLiteral, CTyp::FieldLiteral | CTyp::Fin(_))
             | (CTyp::Fin(_), CTyp::FieldLiteral) => Ok(CTyp::FieldLiteral),
-            // Uni<A> + Uni<B> = Uni<max(A, B)>
-            (CTyp::Uni(a, n), CTyp::Uni(b, m)) => {
-                let t = Tid::lub_add(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::add(&x, &y), e))?;
-                Ok(CTyp::uni(&t, n.node.max(m.node)))
-            }
-            // Mle<A, n> + Mle<B, n> = Mle<A + B, n>
-            (CTyp::Mle(a, n), CTyp::Mle(b, m)) => {
-                let t = Tid::lub_add(a, b, ctx)
-                    .map_err(|err| LubError::next(LubError::add(&x, &y), err))?;
-                Ok(CTyp::mle(&t, n.node.max(m.node)))
-            }
-            // Any other two polynomials (over the same variables): a general polynomial of the
-            // higher degree.
-            (p, q)
-                if let (Some((a, n, ma)), Some((b, _, mb))) = (p.poly_shape(), q.poly_shape()) =>
-            {
-                Ok(CTyp::poly(
-                    &Tid::lub_add(a, b, ctx)
-                        .map_err(|e| LubError::next(LubError::add(&x, &y), e))?,
-                    n,
-                    ma.max(mb),
-                ))
-            }
+            (CTyp::Poly(..), CTyp::Poly(..)) => lub_polys(BinOp::Add, x, y, ctx),
             // Vec<A> + Vec<B> = Vec<C> where C = A = B
             (CTyp::Vec(a, n), CTyp::Vec(b, m)) => {
                 if n == m {
@@ -584,29 +540,23 @@ impl Lub for CTyp {
                     Err(LubError::add(&x, &y))
                 }
             }
-            // Finite fields can act like univariate polynomials
-            (CTyp::Base(a), CTyp::Uni(b, n)) | (CTyp::Uni(b, n), CTyp::Base(a)) => {
+            // A scalar acts like a constant polynomial: the polynomial keeps its encoding.
+            (CTyp::Base(a), CTyp::Poly(b, p)) | (CTyp::Poly(b, p), CTyp::Base(a)) => {
                 let t = Tid::lub_add(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::add(&x, &y), e))?;
-                Ok(CTyp::uni(&t, n.node))
+                Ok(CTyp::Poly(t, p.clone()))
             }
-            // Indices can act like univariate polynomials
-            (CTyp::Fin(_) | CTyp::FieldLiteral, CTyp::Uni(b, n))
-            | (CTyp::Uni(b, n), CTyp::Fin(_) | CTyp::FieldLiteral) => Ok(CTyp::uni(b, n.node)),
-            (CTyp::Mle(a, n), CTyp::Base(b)) | (CTyp::Base(b), CTyp::Mle(a, n)) => {
-                let t = Tid::lub_add(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::add(&x, &y), e))?;
-                Ok(CTyp::mle(&t, n.node))
+            // Indices act like constants too
+            (CTyp::Fin(_) | CTyp::FieldLiteral, CTyp::Poly(b, p))
+            | (CTyp::Poly(b, p), CTyp::Fin(_) | CTyp::FieldLiteral) => {
+                Ok(CTyp::Poly(b.clone(), p.clone()))
             }
-            (CTyp::Mle(a, n), CTyp::Fin(_) | CTyp::FieldLiteral)
-            | (CTyp::Fin(_) | CTyp::FieldLiteral, CTyp::Mle(a, n)) => Ok(CTyp::mle(a, n.node)),
             (_, _) => Err(LubError::add(&x, &y)),
         }
     }
 
     fn lub_sub(x: &Self, y: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Self, LubError> {
         match (x, y) {
-            (p, q) if p.poly_vars_differ(q) => Err(LubError::variable_count(BinOp::Sub, &x, &y)),
             (CTyp::Base(a), CTyp::Base(b)) => Ok(CTyp::Base(
                 Tid::lub_sub(a, b, ctx).map_err(|e| LubError::next(LubError::sub(&x, &y), e))?,
             )),
@@ -616,30 +566,7 @@ impl Lub for CTyp {
             )),
             (CTyp::FieldLiteral, CTyp::FieldLiteral | CTyp::Fin(_))
             | (CTyp::Fin(_), CTyp::FieldLiteral) => Ok(CTyp::FieldLiteral),
-            // Uni<A> - Uni<B> = Uni<max(A, B)>
-            (CTyp::Uni(a, n), CTyp::Uni(b, m)) => {
-                let t = Tid::lub_sub(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?;
-                Ok(CTyp::uni(&t, n.node.max(m.node)))
-            }
-            // Mle<A, n> - Mle<B, n> = Mle<A - B, n>
-            (CTyp::Mle(a, n), CTyp::Mle(b, m)) => {
-                let t = Tid::lub_sub(a, b, ctx)
-                    .map_err(|err| LubError::next(LubError::sub(&x, &y), err))?;
-                Ok(CTyp::mle(&t, n.node.max(m.node)))
-            }
-            // Any other two polynomials (over the same variables): a general polynomial of the
-            // higher degree.
-            (p, q)
-                if let (Some((a, n, ma)), Some((b, _, mb))) = (p.poly_shape(), q.poly_shape()) =>
-            {
-                Ok(CTyp::poly(
-                    &Tid::lub_sub(a, b, ctx)
-                        .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?,
-                    n,
-                    ma.max(mb),
-                ))
-            }
+            (CTyp::Poly(..), CTyp::Poly(..)) => lub_polys(BinOp::Sub, x, y, ctx),
             // Vec<A> - Vec<B> = Vec<C> where C = A = B
             (CTyp::Vec(a, n), CTyp::Vec(b, m)) => {
                 if n == m {
@@ -666,29 +593,23 @@ impl Lub for CTyp {
                     Err(LubError::sub(&x, &y))
                 }
             }
-            // Finite fields can act like univariate polynomials
-            (CTyp::Base(a), CTyp::Uni(b, n)) | (CTyp::Uni(b, n), CTyp::Base(a)) => {
+            // A scalar acts like a constant polynomial: the polynomial keeps its encoding.
+            (CTyp::Base(a), CTyp::Poly(b, p)) | (CTyp::Poly(b, p), CTyp::Base(a)) => {
                 let t = Tid::lub_sub(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?;
-                Ok(CTyp::uni(&t, n.node))
+                Ok(CTyp::Poly(t, p.clone()))
             }
-            // Indices can act like univariate polynomials
-            (CTyp::Fin(_) | CTyp::FieldLiteral, CTyp::Uni(b, n))
-            | (CTyp::Uni(b, n), CTyp::Fin(_) | CTyp::FieldLiteral) => Ok(CTyp::uni(b, n.node)),
-            (CTyp::Mle(a, n), CTyp::Base(b)) | (CTyp::Base(b), CTyp::Mle(a, n)) => {
-                let t = Tid::lub_sub(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?;
-                Ok(CTyp::mle(&t, n.node))
+            // Indices act like constants too
+            (CTyp::Fin(_) | CTyp::FieldLiteral, CTyp::Poly(b, p))
+            | (CTyp::Poly(b, p), CTyp::Fin(_) | CTyp::FieldLiteral) => {
+                Ok(CTyp::Poly(b.clone(), p.clone()))
             }
-            (CTyp::Mle(a, n), CTyp::Fin(_) | CTyp::FieldLiteral)
-            | (CTyp::Fin(_) | CTyp::FieldLiteral, CTyp::Mle(a, n)) => Ok(CTyp::mle(a, n.node)),
             (_, _) => Err(LubError::sub(&x, &y)),
         }
     }
 
     fn lub_mul(x: &Self, y: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Self, LubError> {
         match (x, y) {
-            (p, q) if p.poly_vars_differ(q) => Err(LubError::variable_count(BinOp::Mul, &x, &y)),
             (CTyp::Base(a), CTyp::Base(b)) => Ok(CTyp::Base(
                 Tid::lub_mul(a, b, ctx).map_err(|e| LubError::next(LubError::mul(&x, &y), e))?,
             )),
@@ -698,29 +619,7 @@ impl Lub for CTyp {
             )),
             (CTyp::FieldLiteral, CTyp::FieldLiteral | CTyp::Fin(_))
             | (CTyp::Fin(_), CTyp::FieldLiteral) => Ok(CTyp::FieldLiteral),
-            // Uni<A> * Uni<B> = Uni<A + B>: degrees add under multiplication.
-            (CTyp::Uni(a, n), CTyp::Uni(b, m)) => {
-                let degree = n.checked_add(m.node).ok_or_else(|| LubError::mul(&x, &y))?;
-                Ok(CTyp::uni(
-                    &Tid::lub_mul(a, b, ctx)
-                        .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?,
-                    degree,
-                ))
-            }
-            // Any other two polynomials over the same variables (`Mle * Mle` included): a
-            // general polynomial,
-            // Poly(F, n, m) * Poly(F, n, m') = Poly(F, n, m+m').
-            (p, q)
-                if let (Some((a, n, ma)), Some((b, _, mb))) = (p.poly_shape(), q.poly_shape()) =>
-            {
-                let degree = ma.checked_add(mb).ok_or_else(|| LubError::mul(&x, &y))?;
-                Ok(CTyp::poly(
-                    &Tid::lub_mul(a, b, ctx)
-                        .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?,
-                    n,
-                    degree,
-                ))
-            }
+            (CTyp::Poly(..), CTyp::Poly(..)) => lub_polys(BinOp::Mul, x, y, ctx),
             // Vec<A> * Vec<B> = Vec<C> where C = A = B
             (CTyp::Vec(a, n), CTyp::Vec(b, m)) => {
                 if n == m {
@@ -738,24 +637,14 @@ impl Lub for CTyp {
                 &CTyp::lub_mul(a, b, ctx).map_err(|e| LubError::next(LubError::mul(&x, &y), e))?,
                 n.node,
             )),
-            // Uni<A> * c = Uni<A> if c is a finite field
-            (a, CTyp::Uni(b, n)) | (CTyp::Uni(b, n), a) => {
-                let t = CTyp::lub_mul(a, &CTyp::base(b), ctx)
-                    .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?;
-                if let CTyp::Base(c) = t {
-                    Ok(CTyp::uni(&c, n.node))
-                } else {
-                    Err(LubError::mul(&x, &y))
-                }
-            }
-            // Mle<A> * c = Mle<A> if c is a finite field
-            (a, CTyp::Mle(b, n)) | (CTyp::Mle(b, n), a) => {
-                let t = CTyp::lub_mul(a, &CTyp::base(b), ctx)
-                    .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?;
-                if let CTyp::Base(c) = t {
-                    Ok(CTyp::mle(&c, n.node))
-                } else {
-                    Err(LubError::mul(&x, &y))
+            // p * c keeps p's encoding if c is a finite field (scalar multiplication)
+            (c @ (CTyp::Base(_) | CTyp::Fin(_) | CTyp::FieldLiteral), CTyp::Poly(b, p))
+            | (CTyp::Poly(b, p), c @ (CTyp::Base(_) | CTyp::Fin(_) | CTyp::FieldLiteral)) => {
+                match CTyp::lub_mul(c, &CTyp::base(b), ctx)
+                    .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?
+                {
+                    CTyp::Base(t) => Ok(CTyp::Poly(t, p.clone())),
+                    _ => Err(LubError::mul(&x, &y)),
                 }
             }
             // Indices can act like finite fields; beside a group, the group's unique scalar
@@ -834,10 +723,13 @@ impl Lub for CTyp {
             // Both indices are degree *upper bounds*, not exact degrees, so the
             // quotient keeps the dividend's bound: `ma - mb` would be unsound
             // whenever the divisor's actual degree is below its bound.
-            (CTyp::Uni(a, ma), CTyp::Uni(b, _mb)) => Ok(CTyp::uni(
-                &Tid::lub_div(a, b, ctx).map_err(|e| LubError::next(LubError::div(&x, &y), e))?,
-                ma.node,
-            )),
+            (CTyp::Poly(a, p @ PolyTyp::Uni { .. }), CTyp::Poly(b, PolyTyp::Uni { .. })) => {
+                Ok(CTyp::Poly(
+                    Tid::lub_div(a, b, ctx)
+                        .map_err(|e| LubError::next(LubError::div(&x, &y), e))?,
+                    p.clone(),
+                ))
+            }
             // Vec<A> / Vec<B> = Vec<C> where C = A = B
             (CTyp::Vec(a, n), CTyp::Vec(b, m)) => {
                 if n == m {
@@ -857,13 +749,12 @@ impl Lub for CTyp {
             )),
 
             // p / c keeps p's encoding and sizes if c is a finite field (scalar division)
-            (p, a) if let Some(b) = p.poly_base() => {
-                let t = CTyp::lub_div(&CTyp::base(b), a, ctx)
-                    .map_err(|e| LubError::next(LubError::div(&x, &y), e))?;
-                if let CTyp::Base(c) = t {
-                    Ok(p.with_poly_base(c))
-                } else {
-                    Err(LubError::div(&x, &y))
+            (CTyp::Poly(b, p), c @ (CTyp::Base(_) | CTyp::Fin(_) | CTyp::FieldLiteral)) => {
+                match CTyp::lub_div(&CTyp::base(b), c, ctx)
+                    .map_err(|e| LubError::next(LubError::div(&x, &y), e))?
+                {
+                    CTyp::Base(t) => Ok(CTyp::Poly(t, p.clone())),
+                    _ => Err(LubError::div(&x, &y)),
                 }
             }
             // Indices can act like finite fields
@@ -884,10 +775,15 @@ impl Lub for CTyp {
             )),
             // Polynomial remainder is supported only for univariate operands.
             // The result bound is one below the divisor's degree bound.
-            (CTyp::Uni(a, _ma), CTyp::Uni(b, mb)) if mb.node >= 1 => Ok(CTyp::uni(
-                &Tid::lub_equ(a, b, ctx).map_err(|e| LubError::next(LubError::rem(&x, &y), e))?,
-                mb.checked_sub(1).ok_or_else(|| LubError::rem(&x, &y))?,
-            )),
+            (CTyp::Poly(a, PolyTyp::Uni { .. }), CTyp::Poly(b, PolyTyp::Uni { degree }))
+                if degree.node >= 1 =>
+            {
+                Ok(CTyp::uni(
+                    &Tid::lub_equ(a, b, ctx)
+                        .map_err(|e| LubError::next(LubError::rem(&x, &y), e))?,
+                    degree.node - 1,
+                ))
+            }
             // Vec<A> % Vec<B> = Vec<C> where C = A = B
             (CTyp::Vec(a, n), CTyp::Vec(b, m)) => {
                 if n == m {
@@ -948,11 +844,11 @@ impl Lub for CTyp {
             )),
 
             // Uni<B> ^ Fin<i..j> = Uni<B*(j-1)>
-            (CTyp::Uni(a, n), CTyp::Fin(r)) => r
+            (CTyp::Poly(a, PolyTyp::Uni { degree }), CTyp::Fin(r)) => r
                 .end()
                 .checked_sub(1)
                 .ok_or_else(|| LubError::pow(&x, &y))
-                .and_then(|exp| n.checked_mul(exp).ok_or_else(|| LubError::pow(&x, &y)))
+                .and_then(|exp| degree.checked_mul(exp).ok_or_else(|| LubError::pow(&x, &y)))
                 .map(|deg| CTyp::uni(a, deg)),
 
             (_, _) => Err(LubError::pow(&x, &y)),
@@ -1037,58 +933,24 @@ impl Lub for CTyp {
     }
 }
 
+/// The type of `x op y` (`op` one of `==`, `+`, `-`, `*`) for polynomials `x` and `y`: the
+/// base types combine by `op`, the shapes by [`PolyTyp::combine`].
+fn lub_polys(op: BinOp, x: &CTyp, y: &CTyp, ctx: &Ctx<Tid, CKind>) -> Result<CTyp, LubError> {
+    let (CTyp::Poly(a, p), CTyp::Poly(b, q)) = (x, y) else {
+        return Err(LubError::op(op, x, y));
+    };
+    let shape = p
+        .combine(op, q)
+        .map_err(|e| LubError::poly_shape(e, op, x, y))?;
+    let base = Tid::lub_op(op, a, b, ctx).map_err(|e| LubError::next(LubError::op(op, x, y), e))?;
+    Ok(CTyp::Poly(base, shape.spanned()))
+}
+
 impl CTyp {
-    /// The base types of a polynomial `self` and a polynomial `expected` when a value of
-    /// `self` may stand where `expected` is declared (a return value, a record field, a call
-    /// argument); `None` when it may not or either is not a polynomial. Only a polynomial of
-    /// the same encoding fits:
-    /// - `Uni<A, d>` fits `Uni<B, d'>` and `Poly<A, v, d>` fits `Poly<B, v, d'>` for `d <= d'`:
-    ///   padding coefficients with zeros keeps the polynomial;
-    /// - `Mle<A, n>` fits `Mle<B, n>`;
-    /// - the number of variables never changes ([`CTyp::poly_vars_differ`]).
-    ///
-    /// A different encoding does not fit even when it describes the same polynomials: each
-    /// encoding is a representation the analyses and the input check rely on, so changing it
-    /// is never implicit.
-    pub fn poly_fit<'a>(&'a self, expected: &'a Self) -> Option<(&'a Tid, &'a Tid)> {
-        match (self, expected) {
-            (CTyp::Uni(a, d), CTyp::Uni(b, e)) if d.node <= e.node => Some((a, b)),
-            (CTyp::Mle(a, n), CTyp::Mle(b, m)) if n.node == m.node => Some((a, b)),
-            (CTyp::Poly(a, v, d), CTyp::Poly(b, w, e)) if v.node == w.node && d.node <= e.node => {
-                Some((a, b))
-            }
-            _ => None,
-        }
-    }
-
-    /// Whether `self` and `other` are both polynomials, over different numbers of variables
-    /// (`Uni` has one). Such polynomials never combine, join or fit: lifting one to the
-    /// other's variables has no meaning every layer shares (the analysis would zero-pad an MLE
-    /// table, so the new variables vanish, and the runtime cannot evaluate the mix).
-    #[must_use]
-    pub fn poly_vars_differ(&self, other: &Self) -> bool {
-        matches!(
-            (self.poly_shape(), other.poly_shape()),
-            (Some((_, n, _)), Some((_, m, _))) if n != m
-        )
-    }
-
-    /// A polynomial's base type, variable count and degree bound, as a general polynomial:
-    /// `Uni<F, d>` has one variable of degree `d`, `Mle<F, n>` `n` variables of degree 1.
-    /// `None` for a type that is not a polynomial.
-    pub fn poly_shape(&self) -> Option<(&Tid, usize, usize)> {
-        match self {
-            CTyp::Uni(b, d) => Some((b, 1, d.node)),
-            CTyp::Mle(b, n) => Some((b, n.node, 1)),
-            CTyp::Poly(b, m, d) => Some((b, m.node, d.node)),
-            _ => None,
-        }
-    }
-
     /// Whether a value of this type can stand where `expected` is declared: a function body
     /// against its return type, a value against a record field. Unlike [`Lub::lub_equ`], this
     /// is one-way:
-    /// - a polynomial fits as [`CTyp::poly_fit`] says, with equal base types;
+    /// - a polynomial fits as [`PolyTyp::fits`] says, with equal base types;
     /// - an integer (`Fin`) fits a wider integer range, and a scalar;
     /// - a field-only integer fits a scalar, never an integer range or a group;
     /// - vectors need equal lengths, records every expected field;
@@ -1101,9 +963,7 @@ impl CTyp {
             (CTyp::Fin(_) | CTyp::FieldLiteral, CTyp::Base(b)) => {
                 ctx.get(b).is_some_and(CKind::is_scalar)
             }
-            (CTyp::Uni(..) | CTyp::Mle(..) | CTyp::Poly(..), _) => self
-                .poly_fit(expected)
-                .is_some_and(|(a, b)| Tid::lub_equ(a, b, ctx).is_ok()),
+            (CTyp::Poly(a, p), CTyp::Poly(b, q)) => p.fits(q) && Tid::lub_equ(a, b, ctx).is_ok(),
             (CTyp::Vec(a, n), CTyp::Vec(b, m)) => n == m && a.node.fits(&b.node, ctx),
             (CTyp::Record(fa), CTyp::Record(fb)) => fb
                 .iter()

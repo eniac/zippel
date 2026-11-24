@@ -1,7 +1,7 @@
 //! Vectors: literals, comprehensions, `reduce` and indexing.
 
 use super::*;
-use crate::typ::CTyps;
+use crate::typ::{CTyps, PolyTyp};
 
 impl CRef<'_> {
     pub(super) fn infer_vec(self, v: &Exps, env: &Env<'_>) -> Result<CTyp, TypeError> {
@@ -69,8 +69,9 @@ impl CRef<'_> {
                 // Multiplying a vector of polynomials multiplies all factors, so
                 // the resulting degree is the element degree times vector length.
                 if op == BinOp::Mul
-                    && let Some((_, _, d)) = elem.poly_shape()
+                    && let CTyp::Poly(_, shape) = &elem.node
                 {
+                    let d = shape.degree();
                     // Validate the pairwise multiplication under the kind context first.
                     let res_t = CTyp::lub_op(op, &elem, &elem, kctx).map_err(TypeError::from)?;
                     let degree = d
@@ -79,9 +80,11 @@ impl CRef<'_> {
                     // A product of univariate polynomials is univariate; of any others, a
                     // general polynomial.
                     match res_t {
-                        CTyp::Uni(res_a, _) => return Ok(CTyp::uni(&res_a, degree)),
-                        CTyp::Poly(res_a, num_vars, _) => {
-                            return Ok(CTyp::poly(&res_a, num_vars.node, degree));
+                        CTyp::Poly(res_a, PolyTyp::Uni { .. }) => {
+                            return Ok(CTyp::uni(&res_a, degree));
+                        }
+                        CTyp::Poly(res_a, PolyTyp::General { vars, .. }) => {
+                            return Ok(CTyp::poly(&res_a, vars.node, degree));
                         }
                         _ => {}
                     }

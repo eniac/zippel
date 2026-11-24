@@ -212,6 +212,7 @@ mod tests {
     use crate::frontend::Polynomial;
     use crate::tests::lowered;
     use backend::ArkBls12_381;
+    use backend::PolyTyp;
 
     use share::Ctx;
     use share::unwrap;
@@ -627,14 +628,14 @@ mod tests {
             tc.clos
                 .iter()
                 .any(|(_var, op)| matches!(op, graph::Op::Evaluate(..))
-                    && op.typ() == backend::ATyp::Mle(1)),
+                    && op.typ() == backend::ATyp::Poly(PolyTyp::Mle { vars: 1 })),
             "transitive closure should preserve materialized partial MLE eval as Mle(1)"
         );
         assert!(
             !tc.clos
                 .iter()
                 .any(|(_var, op)| matches!(op, graph::Op::Evaluate(..))
-                    && op.typ() == backend::ATyp::Uni(1)),
+                    && op.typ() == backend::ATyp::Poly(PolyTyp::Uni { degree: 1 })),
             "transitive closure should not recompute the same eval as Uni(1)"
         );
     }
@@ -702,37 +703,52 @@ mod tests {
             BOp::Evaluate(mk(p), None, Some(mk(x)))
         };
 
-        let op = mk_eval(ATyp::Uni(3), ATyp::scalar());
+        let op = mk_eval(ATyp::Poly(PolyTyp::Uni { degree: 3 }), ATyp::scalar());
         assert_eq!(
             op.typ(),
             ATyp::scalar(),
             "univariate eval at a scalar point should be scalar"
         );
 
-        let op = mk_eval(ATyp::VPoly(1, 3), ATyp::scalar());
+        let op = mk_eval(
+            ATyp::Poly(PolyTyp::General { vars: 1, degree: 3 }),
+            ATyp::scalar(),
+        );
         assert_eq!(op.typ(), ATyp::scalar());
 
-        let op = mk_eval(ATyp::VPoly(2, 2), ATyp::Vec(Box::new(ATyp::scalar()), 2));
+        let op = mk_eval(
+            ATyp::Poly(PolyTyp::General { vars: 2, degree: 2 }),
+            ATyp::Vec(Box::new(ATyp::scalar()), 2),
+        );
         assert_eq!(
             op.typ(),
             ATyp::scalar(),
             "full multivariate VPoly eval should be scalar"
         );
 
-        let op = mk_eval(ATyp::VPoly(3, 2), ATyp::Vec(Box::new(ATyp::scalar()), 1));
+        let op = mk_eval(
+            ATyp::Poly(PolyTyp::General { vars: 3, degree: 2 }),
+            ATyp::Vec(Box::new(ATyp::scalar()), 1),
+        );
         assert_eq!(
             op.typ(),
-            ATyp::VPoly(2, 2),
+            ATyp::Poly(PolyTyp::General { vars: 2, degree: 2 }),
             "partial multivariate VPoly eval should drop k variables"
         );
 
-        let op = mk_eval(ATyp::Mle(2), ATyp::Vec(Box::new(ATyp::scalar()), 2));
+        let op = mk_eval(
+            ATyp::Poly(PolyTyp::Mle { vars: 2 }),
+            ATyp::Vec(Box::new(ATyp::scalar()), 2),
+        );
         assert_eq!(op.typ(), ATyp::scalar(), "full Mle eval should be scalar");
 
-        let op = mk_eval(ATyp::Mle(3), ATyp::Vec(Box::new(ATyp::scalar()), 2));
+        let op = mk_eval(
+            ATyp::Poly(PolyTyp::Mle { vars: 3 }),
+            ATyp::Vec(Box::new(ATyp::scalar()), 2),
+        );
         assert_eq!(
             op.typ(),
-            ATyp::Mle(1),
+            ATyp::Poly(PolyTyp::Mle { vars: 1 }),
             "partial Mle eval should drop k variables"
         );
     }

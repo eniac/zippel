@@ -28,9 +28,11 @@ pub use error::PolyError;
 use mle::Table;
 use multivariate::Multivariate;
 
-/// Polynomial types supported by the backend. Equality is structural: the same encoding
-/// with the same contents.
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+/// Polynomial types supported by the backend. `Eq` is structural (the same encoding with the
+/// same contents), so it agrees with the structural `Ord` used to sort product factors; the
+/// language's `==` compares polynomials instead
+/// ([`VirtualPolynomial::same_polynomial`](crate::VirtualPolynomial::same_polynomial)).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PolyVariant<F: Field> {
     /// Dense univariate polynomial
     DenseUni(DensePolynomial<F>),
@@ -243,7 +245,8 @@ impl<F: Field> PolyVariant<F> {
         match self {
             PolyVariant::DenseUni(p) => p.is_zero(),
             PolyVariant::SparseUni(p) => p.is_zero(),
-            PolyVariant::DenseMle(mle) => mle.is_zero(),
+            // Not arkworks' `is_zero`, which holds only for a zero-variable table.
+            PolyVariant::DenseMle(mle) => mle.evaluations.iter().all(Zero::is_zero),
             PolyVariant::SparseMultivariate(p) => p.is_zero(),
             PolyVariant::SparseMle { evals, .. } => evals.iter().all(|(_, v)| v.is_zero()),
         }

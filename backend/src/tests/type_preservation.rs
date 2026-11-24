@@ -17,9 +17,9 @@
 //! ## Predicate: `has_atyp`
 //!
 //! [`has_atyp`] is a lenient structural predicate: a `Value::Poly` whose
-//! univariate `degree() ≤ n` inhabits `ATyp::VPoly(1, n)` and `ATyp::Uni(n)`.
+//! univariate `degree() ≤ n` inhabits `Uni { degree: n }` and `General { vars: 1, degree: n }`.
 //! However it is *strict* about variant family — a `Value::VecScalar` does
-//! NOT inhabit `ATyp::VPoly` or `ATyp::Uni`, even if it semantically
+//! NOT inhabit a polynomial `ATyp`, even if it semantically
 //! represents a polynomial in coefficient form. This is by design: the bug
 //! the user flagged (`value_ifft` returning `VecScalar` when the spec says
 //! `Poly(F, 1, n)`) is exactly this kind of variant mismatch.
@@ -31,6 +31,7 @@ use arbitrary::{Arbitrary, Unstructured};
 use ark_std::test_rng;
 use lang::ast::BinOp;
 use lang::typ::CRange;
+use lang::typ::PolyTyp;
 
 type TestConfig = ArkBls12_381;
 type V = Value<TestConfig>;
@@ -89,11 +90,13 @@ pub fn has_atyp<C: ArkConfig>(v: &Value<C>, t: &ATyp) -> bool {
         }
 
         // --- polynomials (lenient on degree/vars upper bound) ---
-        (Value::Poly(p), ATyp::Uni(n)) => p.is_univariate() && p.degree() <= *n,
-        (Value::Poly(p), ATyp::Mle(k)) => {
+        (Value::Poly(p), ATyp::Poly(PolyTyp::Uni { degree: n })) => {
+            p.is_univariate() && p.degree() <= *n
+        }
+        (Value::Poly(p), ATyp::Poly(PolyTyp::Mle { vars: k })) => {
             p.is_multilinear() && p.num_vars().map(|v| v == *k).unwrap_or(false)
         }
-        (Value::Poly(p), ATyp::VPoly(m, n)) => {
+        (Value::Poly(p), ATyp::Poly(PolyTyp::General { vars: m, degree: n })) => {
             // Univariate polys are VPoly with vars=1.
             // Multilinear polys have degree 1 in each var.
             let nv = p.num_vars().unwrap_or(1);
@@ -294,7 +297,7 @@ mod scaffolding {
         // `Value::random(Mle(k))` must respect the supplied num_vars.
         let mut rng = test_rng();
         for k in 1..=4usize {
-            let t = ATyp::Mle(k);
+            let t = ATyp::Poly(PolyTyp::Mle { vars: k });
             let v: V = Value::random(&mut rng, &t);
             assert!(
                 has_atyp(&v, &t),
@@ -765,7 +768,7 @@ mod cross_layer {
             let t: AnyMleATyp = u.arbitrary()?;
             let n = t.n;
             let mut rng = test_rng();
-            let v: V = Value::random(&mut rng, &ATyp::Mle(n));
+            let v: V = Value::random(&mut rng, &ATyp::Poly(PolyTyp::Mle { vars: n }));
 
             let v_for_op = v.clone();
             let op_typ_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -921,7 +924,7 @@ mod cross_layer {
         arbtest::arbtest(|u| {
             let n: usize = u.int_in_range(2..=4)?;
             let mut rng = test_rng();
-            let p: V = Value::random(&mut rng, &ATyp::Mle(n));
+            let p: V = Value::random(&mut rng, &ATyp::Poly(PolyTyp::Mle { vars: n }));
             let x: V = Value::random(&mut rng, &ATyp::vec_scalar(n));
             let op = eval_op(&p, &x);
             let expected = op.typ();
@@ -941,7 +944,7 @@ mod cross_layer {
     fn pbt_eval_mle_full_single_var() {
         let n = 1usize;
         let mut rng = test_rng();
-        let p: V = Value::random(&mut rng, &ATyp::Mle(n));
+        let p: V = Value::random(&mut rng, &ATyp::Poly(PolyTyp::Mle { vars: n }));
         let x: V = Value::random(&mut rng, &ATyp::vec_scalar(n));
         let op = eval_op(&p, &x);
         let expected = op.typ();
@@ -961,7 +964,7 @@ mod cross_layer {
             let n: usize = u.int_in_range(2..=4)?;
             let k: usize = u.int_in_range(1..=(n - 1))?;
             let mut rng = test_rng();
-            let p: V = Value::random(&mut rng, &ATyp::Mle(n));
+            let p: V = Value::random(&mut rng, &ATyp::Poly(PolyTyp::Mle { vars: n }));
             let x: V = Value::random(&mut rng, &ATyp::vec_scalar(k));
             let op = eval_op(&p, &x);
             let expected = op.typ();

@@ -1,5 +1,6 @@
 //! Evaluation op encoders: `eval_op`, `eval_to_poly`, `eval_to_poly_as`.
 
+use backend::PolyTyp;
 use std::collections::HashMap;
 
 use ark_ff::One;
@@ -30,7 +31,7 @@ pub fn eval_to_poly<C: ArkConfig>(
     let xs_polys = PolySource::ref_vars(xs, vars);
     let k = xs_polys.len();
     match &p_typ {
-        ATyp::Uni(_) | ATyp::VPoly(1, _) => {
+        ATyp::Poly(PolyTyp::Uni { .. }) | ATyp::Poly(PolyTyp::General { vars: 1, degree: _ }) => {
             assert!(
                 k >= 1,
                 "Evaluate on Uni/VPoly(1,_) requires at least 1 point; got {}",
@@ -51,7 +52,10 @@ pub fn eval_to_poly<C: ArkConfig>(
                 })
                 .collect()
         }
-        ATyp::VPoly(n, mdeg) if *n >= 2 && k <= *n => {
+        ATyp::Poly(PolyTyp::General {
+            vars: n,
+            degree: mdeg,
+        }) if *n >= 2 && k <= *n => {
             assert!(
                 k >= 1,
                 "Evaluate on VPoly requires at least 1 point; got {}",
@@ -95,7 +99,7 @@ pub fn eval_to_poly<C: ArkConfig>(
                     .collect()
             }
         }
-        ATyp::Mle(n) if k <= *n => {
+        ATyp::Poly(PolyTyp::Mle { vars: n }) if k <= *n => {
             assert!(
                 k >= 1,
                 "Evaluate on Mle requires at least 1 point; got {}",
@@ -155,14 +159,27 @@ pub fn eval_to_poly_as<C: ArkConfig>(
     let raw_typ = {
         let k = PolySource::ref_vars(xs, vars).len();
         match p.typ() {
-            ATyp::Mle(n) if k < n => ATyp::Mle(n - k),
-            ATyp::Mle(n) if k == n => ATyp::scalar(),
-            ATyp::VPoly(n, m) if n >= 2 && k < n => ATyp::VPoly(n - k, m),
-            ATyp::VPoly(n, _) if n >= 2 && k == n => ATyp::scalar(),
-            ATyp::Uni(_) | ATyp::VPoly(1, _) if target_typ.physical_len() == polys.len() => {
+            ATyp::Poly(PolyTyp::Mle { vars: n }) if k < n => {
+                ATyp::Poly(PolyTyp::Mle { vars: n - k })
+            }
+            ATyp::Poly(PolyTyp::Mle { vars: n }) if k == n => ATyp::scalar(),
+            ATyp::Poly(PolyTyp::General { vars: n, degree: m }) if n >= 2 && k < n => {
+                ATyp::Poly(PolyTyp::General {
+                    vars: n - k,
+                    degree: m,
+                })
+            }
+            ATyp::Poly(PolyTyp::General { vars: n, degree: _ }) if n >= 2 && k == n => {
+                ATyp::scalar()
+            }
+            ATyp::Poly(PolyTyp::Uni { .. })
+            | ATyp::Poly(PolyTyp::General { vars: 1, degree: _ })
+                if target_typ.physical_len() == polys.len() =>
+            {
                 target_typ.clone()
             }
-            ATyp::Uni(_) | ATyp::VPoly(1, _) => ATyp::vec(&ATyp::scalar(), k),
+            ATyp::Poly(PolyTyp::Uni { .. })
+            | ATyp::Poly(PolyTyp::General { vars: 1, degree: _ }) => ATyp::vec(&ATyp::scalar(), k),
             other => other,
         }
     };
@@ -189,7 +206,9 @@ pub fn selected_eval_to_poly<C: ArkConfig>(
 
     let fixed_polys = PolySource::ref_vars(fixed, vars);
     match p.typ() {
-        ATyp::VPoly(n, d) if range.end() <= n && fixed_polys.len() == n.saturating_sub(1) => {
+        ATyp::Poly(PolyTyp::General { vars: n, degree: d })
+            if range.end() <= n && fixed_polys.len() == n.saturating_sub(1) =>
+        {
             let p_polys = PolySource::ref_vars(p, vars);
             let all_indices = multi_indices(n, d);
             let mut out = vec![
@@ -216,7 +235,9 @@ pub fn selected_eval_to_poly<C: ArkConfig>(
             }
             Some(out)
         }
-        ATyp::Mle(n) if range.end() <= n && fixed_polys.len() == n.saturating_sub(1) => {
+        ATyp::Poly(PolyTyp::Mle { vars: n })
+            if range.end() <= n && fixed_polys.len() == n.saturating_sub(1) =>
+        {
             let p_polys = PolySource::ref_vars(p, vars);
             let all_b = hypercube(n);
             let one = Polynomial::<C::F>::lit(&C::F::one());
@@ -291,6 +312,7 @@ pub fn eval_op<C: ArkConfig + HasOpFactory>(
 
 #[cfg(test)]
 mod tests {
+    use backend::PolyTyp;
 
     use super::super::{Ideal, IdealBuilder};
 
@@ -315,24 +337,39 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let _var_p = {
-            let p = Var::from_node(NodeIndex::new(0), ATyp::VPoly(1, 1), Qualifier::Witness);
+            let p = Var::from_node(
+                NodeIndex::new(0),
+                ATyp::Poly(PolyTyp::General { vars: 1, degree: 1 }),
+                Qualifier::Witness,
+            );
             ideal.register(&p);
             p
         };
         let _var_xs = {
-            let p = Var::from_node(NodeIndex::new(1), ATyp::Uni(1), Qualifier::Witness);
+            let p = Var::from_node(
+                NodeIndex::new(1),
+                ATyp::Poly(PolyTyp::Uni { degree: 1 }),
+                Qualifier::Witness,
+            );
             ideal.register(&p);
             p
         };
 
-        let var = Var::from_node(NodeIndex::new(2), ATyp::Uni(1), Qualifier::Witness);
+        let var = Var::from_node(
+            NodeIndex::new(2),
+            ATyp::Poly(PolyTyp::Uni { degree: 1 }),
+            Qualifier::Witness,
+        );
 
         let op: GOp<ArkBls12_381> = Op::Evaluate(
-            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(1, 1))),
+            mk::<ArkBls12_381>(Op::Ref(
+                Ref::new(NodeIndex::new(0)),
+                ATyp::Poly(PolyTyp::General { vars: 1, degree: 1 }),
+            )),
             None,
             Some(mk::<ArkBls12_381>(Op::Ref(
                 Ref::new(NodeIndex::new(1)),
-                ATyp::Uni(1),
+                ATyp::Poly(PolyTyp::Uni { degree: 1 }),
             ))),
         );
         builder.add_op(var.clone(), op, &mut ideal);
@@ -347,8 +384,16 @@ mod tests {
         }
         // Each ideal slot: poly = a_0 + a_1 * xs[i] (a linear polynomial in
         // 4 input variables). Check it depends on exactly {a_0, a_1, xs[i]}.
-        let var_a = Var::from_node(NodeIndex::new(0), ATyp::VPoly(1, 1), Qualifier::Witness);
-        let var_xs = Var::from_node(NodeIndex::new(1), ATyp::Uni(1), Qualifier::Witness);
+        let var_a = Var::from_node(
+            NodeIndex::new(0),
+            ATyp::Poly(PolyTyp::General { vars: 1, degree: 1 }),
+            Qualifier::Witness,
+        );
+        let var_xs = Var::from_node(
+            NodeIndex::new(1),
+            ATyp::Poly(PolyTyp::Uni { degree: 1 }),
+            Qualifier::Witness,
+        );
         let a0 = var_a.clone().with_index(0).unwrap();
         let a1 = var_a.clone().with_index(1).unwrap();
         let x0 = var_xs.clone().with_index(0).unwrap();
@@ -383,54 +428,74 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         // Bind p: Vec of scalars on node 0, then Poly on node 1.
-        let var_vp = Var::from_node(NodeIndex::new(0), ATyp::VPoly(1, 1), Qualifier::Witness);
+        let var_vp = Var::from_node(
+            NodeIndex::new(0),
+            ATyp::Poly(PolyTyp::General { vars: 1, degree: 1 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var_vp);
         let coefs: Vec<_> = [3u64, 5]
             .iter()
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(*n)))))
             .collect();
         builder.add_op(var_vp.clone(), Op::Vec(coefs), &mut ideal);
-        let var_p = Var::from_node(NodeIndex::new(1), ATyp::VPoly(1, 1), Qualifier::Witness);
+        let var_p = Var::from_node(
+            NodeIndex::new(1),
+            ATyp::Poly(PolyTyp::General { vars: 1, degree: 1 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var_p);
         builder.add_op(
             var_p.clone(),
             Op::Poly(mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(0)),
-                ATyp::VPoly(1, 1),
+                ATyp::Poly(PolyTyp::General { vars: 1, degree: 1 }),
             ))),
             &mut ideal,
         );
 
         // Bind xs: Vec of scalars on node 2, then Poly on node 3.
-        let var_vxs = Var::from_node(NodeIndex::new(2), ATyp::Uni(1), Qualifier::Witness);
+        let var_vxs = Var::from_node(
+            NodeIndex::new(2),
+            ATyp::Poly(PolyTyp::Uni { degree: 1 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var_vxs);
         let xs_vals: Vec<_> = [7u64, 11]
             .iter()
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(*n)))))
             .collect();
         builder.add_op(var_vxs.clone(), Op::Vec(xs_vals), &mut ideal);
-        let var_xs = Var::from_node(NodeIndex::new(3), ATyp::Uni(1), Qualifier::Witness);
+        let var_xs = Var::from_node(
+            NodeIndex::new(3),
+            ATyp::Poly(PolyTyp::Uni { degree: 1 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var_xs);
         builder.add_op(
             var_xs.clone(),
             Op::Poly(mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(2)),
-                ATyp::Uni(1),
+                ATyp::Poly(PolyTyp::Uni { degree: 1 }),
             ))),
             &mut ideal,
         );
 
         // Now issue eval: p(xs).
-        let var = Var::from_node(NodeIndex::new(4), ATyp::Uni(1), Qualifier::Witness);
+        let var = Var::from_node(
+            NodeIndex::new(4),
+            ATyp::Poly(PolyTyp::Uni { degree: 1 }),
+            Qualifier::Witness,
+        );
         let op: GOp<ArkBls12_381> = Op::Evaluate(
             mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(1)),
-                ATyp::VPoly(1, 1),
+                ATyp::Poly(PolyTyp::General { vars: 1, degree: 1 }),
             )),
             None,
             Some(mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(3)),
-                ATyp::Uni(1),
+                ATyp::Poly(PolyTyp::Uni { degree: 1 }),
             ))),
         );
         builder.add_op(var.clone(), op, &mut ideal);
@@ -458,12 +523,20 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let _ = {
-            let p = Var::from_node(NodeIndex::new(0), ATyp::VPoly(2, 2), Qualifier::Witness);
+            let p = Var::from_node(
+                NodeIndex::new(0),
+                ATyp::Poly(PolyTyp::General { vars: 2, degree: 2 }),
+                Qualifier::Witness,
+            );
             ideal.register(&p);
             p
         };
         let _ = {
-            let p = Var::from_node(NodeIndex::new(1), ATyp::Uni(1), Qualifier::Witness);
+            let p = Var::from_node(
+                NodeIndex::new(1),
+                ATyp::Poly(PolyTyp::Uni { degree: 1 }),
+                Qualifier::Witness,
+            );
             ideal.register(&p);
             p
         };
@@ -472,12 +545,12 @@ mod tests {
         let op: GOp<ArkBls12_381> = Op::Evaluate(
             backend::op::mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(0)),
-                ATyp::VPoly(2, 2),
+                ATyp::Poly(PolyTyp::General { vars: 2, degree: 2 }),
             )),
             None,
             Some(backend::op::mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(1)),
-                ATyp::Uni(1),
+                ATyp::Poly(PolyTyp::Uni { degree: 1 }),
             ))),
         );
         builder.add_op(var.clone(), op, &mut ideal);
@@ -504,33 +577,48 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let _ = {
-            let p = Var::from_node(NodeIndex::new(0), ATyp::VPoly(3, 1), Qualifier::Witness);
+            let p = Var::from_node(
+                NodeIndex::new(0),
+                ATyp::Poly(PolyTyp::General { vars: 3, degree: 1 }),
+                Qualifier::Witness,
+            );
             ideal.register(&p);
             p
         };
         let _ = {
-            let p = Var::from_node(NodeIndex::new(1), ATyp::Uni(0), Qualifier::Witness);
+            let p = Var::from_node(
+                NodeIndex::new(1),
+                ATyp::Poly(PolyTyp::Uni { degree: 0 }),
+                Qualifier::Witness,
+            );
             ideal.register(&p);
             p
         };
 
-        let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(2, 1), Qualifier::Witness);
+        let var = Var::from_node(
+            NodeIndex::new(2),
+            ATyp::Poly(PolyTyp::General { vars: 2, degree: 1 }),
+            Qualifier::Witness,
+        );
         let op: GOp<ArkBls12_381> = Op::Evaluate(
             backend::op::mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(0)),
-                ATyp::VPoly(3, 1),
+                ATyp::Poly(PolyTyp::General { vars: 3, degree: 1 }),
             )),
             None,
             Some(backend::op::mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(1)),
-                ATyp::Uni(0),
+                ATyp::Poly(PolyTyp::Uni { degree: 0 }),
             ))),
         );
         builder.add_op(var.clone(), op, &mut ideal);
 
         // VPoly(2, 1) has physical_len = (1+1)^2 = 4 slots (constant, one per
         // variable, and the cross term).
-        assert_eq!(ATyp::VPoly(2, 1).physical_len(), 4);
+        assert_eq!(
+            ATyp::Poly(PolyTyp::General { vars: 2, degree: 1 }).physical_len(),
+            4
+        );
         for i in 0..4 {
             assert!(
                 ideal.pl.contains(&var.clone().with_index(i).unwrap()),
@@ -550,12 +638,20 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let _ = {
-            let p = Var::from_node(NodeIndex::new(0), ATyp::Mle(2), Qualifier::Witness);
+            let p = Var::from_node(
+                NodeIndex::new(0),
+                ATyp::Poly(PolyTyp::Mle { vars: 2 }),
+                Qualifier::Witness,
+            );
             ideal.register(&p);
             p
         };
         let _ = {
-            let p = Var::from_node(NodeIndex::new(1), ATyp::Uni(1), Qualifier::Witness);
+            let p = Var::from_node(
+                NodeIndex::new(1),
+                ATyp::Poly(PolyTyp::Uni { degree: 1 }),
+                Qualifier::Witness,
+            );
             ideal.register(&p);
             p
         };
@@ -564,12 +660,12 @@ mod tests {
         let op: GOp<ArkBls12_381> = Op::Evaluate(
             backend::op::mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(0)),
-                ATyp::Mle(2),
+                ATyp::Poly(PolyTyp::Mle { vars: 2 }),
             )),
             None,
             Some(backend::op::mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(1)),
-                ATyp::Uni(1),
+                ATyp::Poly(PolyTyp::Uni { degree: 1 }),
             ))),
         );
         builder.add_op(var.clone(), op, &mut ideal);
@@ -591,26 +687,38 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let _ = {
-            let p = Var::from_node(NodeIndex::new(0), ATyp::Mle(3), Qualifier::Witness);
+            let p = Var::from_node(
+                NodeIndex::new(0),
+                ATyp::Poly(PolyTyp::Mle { vars: 3 }),
+                Qualifier::Witness,
+            );
             ideal.register(&p);
             p
         };
         let _ = {
-            let p = Var::from_node(NodeIndex::new(1), ATyp::Uni(0), Qualifier::Witness);
+            let p = Var::from_node(
+                NodeIndex::new(1),
+                ATyp::Poly(PolyTyp::Uni { degree: 0 }),
+                Qualifier::Witness,
+            );
             ideal.register(&p);
             p
         };
 
-        let var = Var::from_node(NodeIndex::new(2), ATyp::Mle(2), Qualifier::Witness);
+        let var = Var::from_node(
+            NodeIndex::new(2),
+            ATyp::Poly(PolyTyp::Mle { vars: 2 }),
+            Qualifier::Witness,
+        );
         let op: GOp<ArkBls12_381> = Op::Evaluate(
             backend::op::mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(0)),
-                ATyp::Mle(3),
+                ATyp::Poly(PolyTyp::Mle { vars: 3 }),
             )),
             None,
             Some(backend::op::mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(1)),
-                ATyp::Uni(0),
+                ATyp::Poly(PolyTyp::Uni { degree: 0 }),
             ))),
         );
         builder.add_op(var.clone(), op, &mut ideal);

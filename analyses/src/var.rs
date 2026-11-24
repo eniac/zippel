@@ -1,3 +1,4 @@
+use backend::PolyTyp;
 use backend::op::Ref;
 use graph::{Dag, Node};
 use lang::typ::Qualifier;
@@ -117,13 +118,13 @@ impl Var {
                 }
                 (**t).clone()
             }
-            ATyp::Uni(m) => {
+            ATyp::Poly(PolyTyp::Uni { degree: m }) => {
                 if i > *m {
                     return None;
                 }
                 ATyp::scalar()
             }
-            ATyp::Mle(n) => {
+            ATyp::Poly(PolyTyp::Mle { vars: n }) => {
                 let len = 1usize
                     .checked_shl((*n).try_into().expect("with_index: Mle n exceeds u32"))
                     .expect("with_index: Mle 1 << n overflow");
@@ -132,7 +133,7 @@ impl Var {
                 }
                 ATyp::scalar()
             }
-            ATyp::VPoly(_, _) => {
+            ATyp::Poly(PolyTyp::General { .. }) => {
                 if i >= self.typ.physical_len() {
                     return None;
                 }
@@ -164,14 +165,16 @@ impl Var {
         match &self.typ {
             ATyp::Base(ABase::Unit) => vec![],
             ATyp::Base(_) => vec![self.clone()],
-            ATyp::Uni(m) => (0..=*m).filter_map(|i| self.with_index(i)).collect(),
-            ATyp::Mle(n) => {
+            ATyp::Poly(PolyTyp::Uni { degree: m }) => {
+                (0..=*m).filter_map(|i| self.with_index(i)).collect()
+            }
+            ATyp::Poly(PolyTyp::Mle { vars: n }) => {
                 let len = 1usize
                     .checked_shl((*n).try_into().expect("collect_slots: Mle n exceeds u32"))
                     .expect("collect_slots: Mle 1 << n overflow");
                 (0..len).filter_map(|i| self.with_index(i)).collect()
             }
-            ATyp::VPoly(_, _) => (0..self.typ.physical_len())
+            ATyp::Poly(PolyTyp::General { .. }) => (0..self.typ.physical_len())
                 .filter_map(|i| self.with_index(i))
                 .collect(),
             ATyp::Vec(t, n) => {

@@ -5,6 +5,7 @@ use ark_ec::{AffineRepr, CurveGroup, PrimeGroup};
 use ark_ff::Zero;
 use ark_std::test_rng;
 use lang::typ::CRange;
+use lang::typ::PolyTyp;
 use share::assert_deq;
 use std::sync::Arc;
 
@@ -330,7 +331,7 @@ fn inverse_test() {
     let c = (&a / &b).dot(b.clone());
     assert_deq!(&c, &Value::<TestConfig>::scalar_from_usize(10));
 
-    let a = Value::<TestConfig>::random(&mut rng, &ATyp::Uni(1));
+    let a = Value::<TestConfig>::random(&mut rng, &ATyp::Poly(PolyTyp::Uni { degree: 1 }));
     let b = a.clone() * a.clone();
     let c = b.clone() / a.clone();
     assert_deq!(&a, &c);
@@ -1737,20 +1738,28 @@ fn conforms_to_bounds_a_polynomial_by_its_type() {
         }));
 
     let cases = [
-        (cubic.clone(), ATyp::Uni(3), true),
-        (cubic.clone(), ATyp::Uni(2), false),
-        (cubic, ATyp::Mle(2), false),
-        (m.clone(), ATyp::Mle(2), true),
-        (m.clone(), ATyp::Mle(3), false),
-        (m.clone(), ATyp::Uni(4), false),
-        (sparse.clone(), ATyp::Mle(2), true),
+        (cubic.clone(), ATyp::Poly(PolyTyp::Uni { degree: 3 }), true),
+        (cubic.clone(), ATyp::Poly(PolyTyp::Uni { degree: 2 }), false),
+        (cubic, ATyp::Poly(PolyTyp::Mle { vars: 2 }), false),
+        (m.clone(), ATyp::Poly(PolyTyp::Mle { vars: 2 }), true),
+        (m.clone(), ATyp::Poly(PolyTyp::Mle { vars: 3 }), false),
+        (m.clone(), ATyp::Poly(PolyTyp::Uni { degree: 4 }), false),
+        (sparse.clone(), ATyp::Poly(PolyTyp::Mle { vars: 2 }), true),
         // A sum of multilinear polynomials stays multilinear.
-        (&m + &sparse, ATyp::Mle(2), true),
-        (short_mle, ATyp::Mle(2), false),
-        (product.clone(), ATyp::Mle(2), false),
+        (&m + &sparse, ATyp::Poly(PolyTyp::Mle { vars: 2 }), true),
+        (short_mle, ATyp::Poly(PolyTyp::Mle { vars: 2 }), false),
+        (product.clone(), ATyp::Poly(PolyTyp::Mle { vars: 2 }), false),
         // Two 2-variable multilinear factors: degree up to 2 in each variable.
-        (product.clone(), ATyp::VPoly(2, 2), true),
-        (product, ATyp::VPoly(2, 1), false),
+        (
+            product.clone(),
+            ATyp::Poly(PolyTyp::General { vars: 2, degree: 2 }),
+            true,
+        ),
+        (
+            product,
+            ATyp::Poly(PolyTyp::General { vars: 2, degree: 1 }),
+            false,
+        ),
     ];
     for (poly, typ, expected) in cases {
         let value = V::poly(poly);
@@ -1781,4 +1790,49 @@ fn mle_constructors_index_the_table_lsb_first() {
 #[should_panic(expected = "index 4 outside the table of 2^2 entries")]
 fn sparse_mle_rejects_an_index_outside_the_table() {
     let _ = PolyVariant::sparse_mle(2, vec![(4, Fr::from(1))]);
+}
+
+/// The language's `==` on polynomials compares polynomials, not storage: a dense and a sparse
+/// table, or a univariate and a one-variable MLE, holding the same polynomial are equal.
+#[test]
+fn polynomial_equality_ignores_storage() {
+    use crate::virtual_polynomial::VirtualPolynomial;
+    type V = Value<TestConfig>;
+    let fr = |xs: &[u64]| xs.iter().map(|&x| Fr::from(x)).collect::<Vec<_>>();
+    let poly = |p: VirtualPolynomial<Fr>| V::poly(p);
+    // 2 + 3x as a dense table, a sparse table and coefficients (with a zero high coefficient).
+    let dense = poly(VirtualPolynomial::dense_mle(1, fr(&[2, 5])));
+    let sparse = poly(VirtualPolynomial::sparse_mle(
+        1,
+        vec![(0, Fr::from(2)), (1, Fr::from(5))],
+    ));
+    let uni = poly(VirtualPolynomial::univariate(fr(&[2, 3, 0, 0])));
+    let other = poly(VirtualPolynomial::dense_mle(1, fr(&[2, 6])));
+    assert!(V::equ(&dense, &sparse));
+    assert!(V::equ(&dense, &uni));
+    assert!(V::equ(&uni, &sparse));
+    assert!(!V::equ(&dense, &other));
+    assert!(!V::equ(&uni, &other));
+    // An all-zero table over several variables is the zero polynomial.
+    let zero = VirtualPolynomial::dense_mle(2, fr(&[0, 0, 0, 0]));
+    assert!(PolyVariant::dense_mle(2, fr(&[0, 0, 0, 0])).is_zero());
+    assert!(V::equ(
+        &poly(zero),
+        &poly(VirtualPolynomial::sparse_mle(2, vec![]))
+    ));
+}
+
+/// Products of MLE factors do not normalize: the same product is equal to itself, and two
+/// different products are undecided rather than reported unequal.
+#[test]
+fn polynomial_equality_of_mle_products_is_decided_or_refused() {
+    use crate::virtual_polynomial::VirtualPolynomial;
+    let fr = |xs: &[u64]| xs.iter().map(|&x| Fr::from(x)).collect::<Vec<_>>();
+    let f = VirtualPolynomial::dense_mle(1, fr(&[1, 2]));
+    let g = VirtualPolynomial::dense_mle(1, fr(&[3, 4]));
+    assert_eq!(
+        f.poly_mul(&g).same_polynomial(&g.poly_mul(&f)).ok(),
+        Some(true)
+    );
+    assert!(f.poly_mul(&g).same_polynomial(&f.poly_mul(&f)).is_err());
 }

@@ -162,6 +162,7 @@ fn pow_op_inner<C: ArkConfig + HasOpFactory>(
 
 #[cfg(test)]
 mod tests {
+    use backend::PolyTyp;
 
     use super::super::{Ideal, IdealBuilder};
 
@@ -223,8 +224,8 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let uni2 = ATyp::Uni(2);
-        let ideal_uni4 = ATyp::Uni(4);
+        let uni2 = ATyp::Poly(PolyTyp::Uni { degree: 2 });
+        let ideal_uni4 = ATyp::Poly(PolyTyp::Uni { degree: 4 });
 
         let var_a = Var::from_node(NodeIndex::new(0), uni2.clone(), Qualifier::Witness);
         ideal.register(&var_a);
@@ -265,8 +266,8 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let uni2 = ATyp::Uni(2);
-        let ideal_uni4 = ATyp::Uni(4);
+        let uni2 = ATyp::Poly(PolyTyp::Uni { degree: 2 });
+        let ideal_uni4 = ATyp::Poly(PolyTyp::Uni { degree: 4 });
         let vec_uni2 = ATyp::Vec(Box::new(uni2.clone()), 2);
         let vec_ideal = ATyp::Vec(Box::new(ideal_uni4.clone()), 2);
 
@@ -574,8 +575,8 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let uni2 = ATyp::Uni(2);
-        let uni4 = ATyp::Uni(4);
+        let uni2 = ATyp::Poly(PolyTyp::Uni { degree: 2 });
+        let uni4 = ATyp::Poly(PolyTyp::Uni { degree: 4 });
         let vec_uni2 = ATyp::Vec(Box::new(uni2.clone()), 2);
         let vec_ideal = ATyp::Vec(Box::new(uni4.clone()), 2);
 

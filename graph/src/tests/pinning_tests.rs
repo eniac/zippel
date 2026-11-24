@@ -9,6 +9,7 @@ use crate::node::ArgKind;
 use crate::{
     Dep, DepType, GOp, GraphError, HOp, Node, Nothing, Op, PrivateValue, Ref, UDag, UDags, mk,
 };
+use backend::PolyTyp;
 use backend::{ATyp, ArkBls12_381};
 use lang::ast::BinOp;
 use lang::ast::spanned::Spanned;
@@ -560,7 +561,7 @@ fn pin_coef() {
 
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
-    let poly_typ = ATyp::Uni(4);
+    let poly_typ = ATyp::Poly(PolyTyp::Uni { degree: 4 });
     let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_t("a", poly_typ.clone())]);
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, poly_typ);
@@ -627,7 +628,7 @@ fn pin_fft() {
 
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
-    let poly_typ = ATyp::Uni(3);
+    let poly_typ = ATyp::Poly(PolyTyp::Uni { degree: 3 });
     let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_t("a", poly_typ.clone())]);
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, poly_typ);
@@ -1002,9 +1003,9 @@ fn pin_bin_rem() {
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let b = Vid::new("b");
-    let at_a = ATyp::Uni(3);
-    let at_b = ATyp::Uni(2);
-    let at_res = ATyp::Uni(1);
+    let at_a = ATyp::Poly(PolyTyp::Uni { degree: 3 });
+    let at_b = ATyp::Poly(PolyTyp::Uni { degree: 2 });
+    let at_res = ATyp::Poly(PolyTyp::Uni { degree: 1 });
 
     let (_inp, _inp_args) = expected_inp(
         &mut expected,
@@ -1036,9 +1037,9 @@ fn pin_bin_poly_div() {
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let b = Vid::new("b");
-    let at_a = ATyp::Uni(3);
-    let at_b = ATyp::Uni(2);
-    let at_res = ATyp::Uni(3);
+    let at_a = ATyp::Poly(PolyTyp::Uni { degree: 3 });
+    let at_b = ATyp::Poly(PolyTyp::Uni { degree: 2 });
+    let at_res = ATyp::Poly(PolyTyp::Uni { degree: 3 });
 
     let (_inp, _inp_args) = expected_inp(
         &mut expected,
@@ -1121,7 +1122,7 @@ fn pin_map_poly_to_scalar_binder_type() {
     assert_eq!(
         ram_node_types
             .iter()
-            .filter(|typ| **typ == ATyp::Uni(3))
+            .filter(|typ| **typ == ATyp::Poly(PolyTyp::Uni { degree: 3 }))
             .count(),
         2,
         "map binders over pv must be materialized as Uni<F, 3>, not as the scalar result type"
@@ -1166,7 +1167,7 @@ fn pin_eval() {
     let mut expected = UDag::<B>::new();
     let p = Vid::new("p");
     let x = Vid::new("x");
-    let at_p = ATyp::Uni(4);
+    let at_p = ATyp::Poly(PolyTyp::Uni { degree: 4 });
     let at_x = ATyp::scalar();
 
     let (_inp, _inp_args) = expected_inp(
@@ -1500,12 +1501,19 @@ fn pin_app_univariate_poly() {
     let (_inp, _inp_args) = expected_inp(
         &mut expected,
         "f",
-        &[instance_t("p", ATyp::Uni(2)), instance_t("x", s.clone())],
+        &[
+            instance_t("p", ATyp::Poly(PolyTyp::Uni { degree: 2 })),
+            instance_t("x", s.clone()),
+        ],
     );
     let arg_p = _inp_args[0];
     let arg_x = _inp_args[1];
 
-    let var_p = GOp::<B>::var(&Vid::new("p"), arg_p, ATyp::Uni(2));
+    let var_p = GOp::<B>::var(
+        &Vid::new("p"),
+        arg_p,
+        ATyp::Poly(PolyTyp::Uni { degree: 2 }),
+    );
     let var_x = GOp::<B>::var(&Vid::new("x"), arg_x, s.clone());
 
     // p(x) lowers directly to evaluate(p, x).

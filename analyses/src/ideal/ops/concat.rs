@@ -79,6 +79,7 @@ fn concat_op_inner<C: ArkConfig + HasOpFactory>(
 #[cfg(test)]
 mod tests {
     use super::super::{Ideal, IdealBuilder};
+    use backend::PolyTyp;
 
     use backend::ArkBls12_381;
 
@@ -96,8 +97,8 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let uni2 = ATyp::Uni(2);
-        let uni4 = ATyp::Uni(4);
+        let uni2 = ATyp::Poly(PolyTyp::Uni { degree: 2 });
+        let uni4 = ATyp::Poly(PolyTyp::Uni { degree: 4 });
         let vec_uni2 = ATyp::Vec(Box::new(uni2.clone()), 2);
         let vec_uni4 = ATyp::Vec(Box::new(uni4.clone()), 2);
         let vec_ideal = ATyp::Vec(Box::new(uni4.clone()), 4);

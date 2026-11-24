@@ -42,6 +42,7 @@ pub use config::{
     ArkFieldN, ArkGroupOps, ArkMNT4_298, ArkPairingOps, ArkPallas, ArkScalarOps, ArkSecp256k1,
     ArkVesta, DivisionByZero,
 };
+pub use lang::typ::PolyTyp;
 pub use nothing::{NoCurve, NoField, NoPairing};
 pub use op::{GOp, HasOpFactory, Op, OpExclusion, Ref};
 pub use optimization::{OptimizationStats, optimization_stats_snapshot, reset_optimization_stats};

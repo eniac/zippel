@@ -4,6 +4,7 @@
 use crate::eval::eval_op;
 use crate::eval::graph_tests::helpers::{lowered, scalar};
 use ark_ff::{One, Zero};
+use backend::PolyTyp;
 use backend::{ATyp, ArkBls12_381, Value};
 use graph::{GOp, Op, Ref, UDags, mk};
 use lang::ast::BinOp;
@@ -275,7 +276,7 @@ fn test_reduce_map_fused_optimization_fires() {
 
     let mut inputs = Ctx::new();
     let mut rng = StdRng::seed_from_u64(0);
-    let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
+    let poly_val = Value::<B>::random(&mut rng, &ATyp::Poly(PolyTyp::Mle { vars: 3 }));
     inputs.insert(&lang::id::Vid::from("p"), &poly_val.clone());
 
     reset_optimization_stats();
@@ -344,7 +345,7 @@ fn test_reduce_map_fused_optimization_skips_non_pow_two() {
 
     let mut inputs = Ctx::new();
     let mut rng = StdRng::seed_from_u64(0);
-    let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
+    let poly_val = Value::<B>::random(&mut rng, &ATyp::Poly(PolyTyp::Mle { vars: 3 }));
     inputs.insert(&lang::id::Vid::from("p"), &poly_val.clone());
 
     reset_optimization_stats();
@@ -413,7 +414,7 @@ fn test_reduce_map_fused_optimization_skips_multiplicative() {
 
     let mut inputs = Ctx::new();
     let mut rng = StdRng::seed_from_u64(0);
-    let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
+    let poly_val = Value::<B>::random(&mut rng, &ATyp::Poly(PolyTyp::Mle { vars: 3 }));
     inputs.insert(&lang::id::Vid::from("p"), &poly_val.clone());
 
     reset_optimization_stats();
@@ -561,7 +562,7 @@ fn test_reduce_map_fused_optimization_skips_modified_loop_param() {
 
     let mut inputs = Ctx::new();
     let mut rng = StdRng::seed_from_u64(0);
-    let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
+    let poly_val = Value::<B>::random(&mut rng, &ATyp::Poly(PolyTyp::Mle { vars: 3 }));
     inputs.insert(&lang::id::Vid::from("p"), &poly_val.clone());
 
     reset_optimization_stats();
@@ -639,7 +640,7 @@ fn test_reduce_map_fused_optimization_skips_poly_depending_on_loop_param() {
     let mut inputs = Ctx::new();
     let mut rng = StdRng::seed_from_u64(0);
     // poly_factory has 3 variables, evaluating it at tail[0] returns a polynomial of 2 variables.
-    let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
+    let poly_val = Value::<B>::random(&mut rng, &ATyp::Poly(PolyTyp::Mle { vars: 3 }));
     inputs.insert(&lang::id::Vid::from("poly_factory"), &poly_val.clone());
 
     reset_optimization_stats();
@@ -689,7 +690,7 @@ fn test_reduce_map_fused_optimization_skips_non_vec_domain() {
     let _res = eval_op(&rm, &env, &mut rng, &mut Vec::new());
 
     let after = optimization_stats_snapshot();
-    // Optimization does not fire because the domain type is ATyp::Uni, not ATyp::Vec
+    // Optimization does not fire because the domain type is a univariate polynomial, not ATyp::Vec
     assert_eq!(after.canonical_sumcheck_rows_seen, 0);
     assert_eq!(after.canonical_sumcheck_rows_fused, 0);
 }
@@ -716,7 +717,7 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_hypercube_domain_with_
 
     let mut inputs = Ctx::new();
     let mut rng = StdRng::seed_from_u64(0);
-    let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
+    let poly_val = Value::<B>::random(&mut rng, &ATyp::Poly(PolyTyp::Mle { vars: 3 }));
     inputs.insert(&lang::id::Vid::from("p"), &poly_val.clone());
 
     // Construct a non-canonical coordinate domain: [[1, 1], [1, 1], [1, 1], [1, 1]]
@@ -784,7 +785,7 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_indices_domain_with_ma
 
     let mut inputs = Ctx::new();
     let mut rng = StdRng::seed_from_u64(0);
-    let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
+    let poly_val = Value::<B>::random(&mut rng, &ATyp::Poly(PolyTyp::Mle { vars: 3 }));
     inputs.insert(&lang::id::Vid::from("p"), &poly_val.clone());
 
     // Construct a non-canonical in-bounds index domain: [3, 2, 1, 0] (permutation of 0..3)
@@ -855,7 +856,7 @@ fn test_reduce_map_fused_optimization_skips_arity_mismatch() {
 
     let mut inputs = Ctx::new();
     let mut rng = StdRng::seed_from_u64(0);
-    let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
+    let poly_val = Value::<B>::random(&mut rng, &ATyp::Poly(PolyTyp::Mle { vars: 3 }));
     inputs.insert(&lang::id::Vid::from("p"), &poly_val.clone());
 
     reset_optimization_stats();

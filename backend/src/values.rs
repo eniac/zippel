@@ -17,6 +17,7 @@ use ark_poly::{EvaluationDomain, GeneralEvaluationDomain, univariate::DensePolyn
 use ark_serialize::{CanonicalSerialize, SerializationError};
 use ark_std::log2;
 use lang::ast::{BinOp, Exclusion};
+use lang::typ::PolyTyp;
 use lang::typ::{CRange, Nothing};
 use rand::Rng;
 use rayon::prelude::*;
@@ -586,9 +587,15 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Base(ABase::G1) => Value::g1(C::G1::zero()),
             ATyp::Base(ABase::G2) => Value::g2(C::G2::zero()),
             ATyp::Base(ABase::GT) => Value::GT(PairingOutput::<C::P>::zero().into()),
-            ATyp::Uni(_m) => Value::poly(VirtualPolynomial::zero_with_num_vars(1)),
-            ATyp::Mle(n) => Value::poly(VirtualPolynomial::zero_with_num_vars(*n)),
-            ATyp::VPoly(n, _) => Value::poly(VirtualPolynomial::zero_with_num_vars(*n)),
+            ATyp::Poly(PolyTyp::Uni { degree: _m }) => {
+                Value::poly(VirtualPolynomial::zero_with_num_vars(1))
+            }
+            ATyp::Poly(PolyTyp::Mle { vars: n }) => {
+                Value::poly(VirtualPolynomial::zero_with_num_vars(*n))
+            }
+            ATyp::Poly(PolyTyp::General { vars: n, degree: _ }) => {
+                Value::poly(VirtualPolynomial::zero_with_num_vars(*n))
+            }
             ATyp::Vec(ATyp::Base(ABase::Fin(r)), n) if r.contains(0) => {
                 Value::VecIndex(vec![0; *n].into())
             }
@@ -627,10 +634,11 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Vec(ATyp::Base(ABase::Fin(r)), n) if r.contains(1) => {
                 Value::VecIndex(vec![1; *n].into())
             }
-            ATyp::Uni(_) => {
+            ATyp::Poly(PolyTyp::Uni { .. }) => {
                 Value::poly(VirtualPolynomial::constant_with_num_vars(C::FOps::one(), 1))
             }
-            ATyp::Mle(n) | ATyp::VPoly(n, _) => Value::poly(
+            ATyp::Poly(PolyTyp::Mle { vars: n })
+            | ATyp::Poly(PolyTyp::General { vars: n, degree: _ }) => Value::poly(
                 VirtualPolynomial::constant_with_num_vars(C::FOps::one(), *n),
             ),
             ATyp::Vec(deref!(vt), n) => {
@@ -2336,10 +2344,9 @@ impl<C: ArkConfig> Value<C> {
             (Value::G2Affine(a), Value::G2Affine(b)) => a == b,
             (Value::VecG1Affine(a), Value::VecG1Affine(b)) => a == b,
             (Value::VecG2Affine(a), Value::VecG2Affine(b)) => a == b,
-            (Value::Poly(a), Value::Poly(b)) => {
-                // Use PolyVariant's PartialEq implementation
-                a == b
-            }
+            (Value::Poly(a), Value::Poly(b)) => a
+                .same_polynomial(b)
+                .unwrap_or_else(|e| panic!("cannot decide whether {a} == {b}: {e}")),
             (Value::Record(a), Value::Record(b)) => a == b,
             (Value::Unit, Value::Unit) => true,
             (Value::Bool(a), Value::Bool(b)) => a == b,
@@ -2770,7 +2777,7 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Vec(ATyp::Base(ABase::GT), n) => Value::vec_gt(C::POps::vec_rand(rng, *n)),
             ATyp::Vec(deref!(t), n) => Value::Vec((0..*n).map(|_| Self::random(rng, t)).collect()),
             // Univariate poly: m = max_degree, so m+1 coefficients.
-            ATyp::Uni(m) => {
+            ATyp::Poly(PolyTyp::Uni { degree: m }) => {
                 let mut coeffs = C::FOps::vec_rand(rng, *m + 1);
                 if *m > 0 {
                     while coeffs[*m].is_zero() {
@@ -2780,14 +2787,14 @@ impl<C: ArkConfig> Value<C> {
                 Value::poly(VirtualPolynomial::univariate(coeffs))
             }
             // Multilinear extension on the {0,1}^n hypercube: 2^n evaluations.
-            ATyp::Mle(n) => {
+            ATyp::Poly(PolyTyp::Mle { vars: n }) => {
                 let evals = C::FOps::vec_rand(rng, 1usize << *n);
                 Value::poly(VirtualPolynomial::dense_mle(*n, evals))
             }
             // n-variate poly, degree at most m in each variable. For n <= 1 produce a
             // univariate of degree m; otherwise a multilinear extension as
             // a representative inhabitant of the type.
-            ATyp::VPoly(n, m) => {
+            ATyp::Poly(PolyTyp::General { vars: n, degree: m }) => {
                 if *n <= 1 {
                     let mut coeffs = C::FOps::vec_rand(rng, *m + 1);
                     if *m > 0 {
@@ -2934,7 +2941,7 @@ impl<C: ArkConfig> Value<C> {
                 }
                 _ => false,
             },
-            ATyp::Uni(_) | ATyp::Mle(_) | ATyp::VPoly(_, _) => {
+            ATyp::Poly(_) => {
                 matches!(self, Value::Poly(p) if p.conforms_to(typ))
             }
         }
@@ -3392,9 +3399,9 @@ impl<C: ArkConfig> Value<C> {
             }
             ATyp::Base(ABase::Unit)
             | ATyp::Base(ABase::Bool)
-            | ATyp::Uni(_)
-            | ATyp::Mle(_)
-            | ATyp::VPoly(_, _)
+            | ATyp::Poly(PolyTyp::Uni { .. })
+            | ATyp::Poly(PolyTyp::Mle { .. })
+            | ATyp::Poly(PolyTyp::General { .. })
             | ATyp::Record(_)
             | ATyp::Vec(_, _) => vec_value,
         }
@@ -3442,7 +3449,7 @@ impl<C: ArkConfig> Value<C> {
     pub fn value_coef_typed(&self, typ: &ATyp) -> Self {
         let coefs = self.value_coef();
         match typ {
-            ATyp::Uni(m) => {
+            ATyp::Poly(PolyTyp::Uni { degree: m }) => {
                 let expected = typ.physical_len();
                 let Value::VecScalar(mut v) = coefs else {
                     unreachable!("value_coef must return VecScalar")

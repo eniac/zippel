@@ -290,6 +290,7 @@ mod ref_tests {
 mod op_additional_tests {
     use crate::tests::test_helpers::*;
     use crate::{GOp, Op, mk};
+    use backend::PolyTyp;
     use backend::{ABase, ATyp, Value};
     use lang::ast::BinOp;
     use lang::ast::CRange;
@@ -344,7 +345,7 @@ mod op_additional_tests {
 
     #[test]
     fn test_op_one_uni() {
-        let typ = ATyp::Uni(3);
+        let typ = ATyp::Poly(PolyTyp::Uni { degree: 3 });
         let one = GOp::<C>::one(&typ);
         match one {
             Op::Value(Value::VecIndex(v)) => {

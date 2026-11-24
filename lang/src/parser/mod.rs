@@ -30,7 +30,7 @@ use crate::ast::{BinOp, Block, Exclusion, ExpId, Exprs, Exps, GArg, Stmt, UExp};
 use crate::ast::{ExpLiteral, Size};
 use crate::diagnostic::Diagnostic;
 use crate::id::{Tid, Vid};
-use crate::typ::{Distribution, GTyp, Kind, Qualifier, Range, Typ, TypeVar, TypeVars};
+use crate::typ::{Distribution, GTyp, Kind, PolyTyp, Qualifier, Range, Typ, TypeVar, TypeVars};
 
 use error::rich_to_diagnostic;
 
@@ -437,7 +437,8 @@ where
                 .then_ignore(just(Token::RAngle).ignored())
                 .map_with(|((b, m), n), e| {
                     let sp: SimpleSpan = e.span();
-                    Spanned::new(Typ::Poly(b.node, m, n), sp.into_range())
+                    let shape = PolyTyp::General { vars: m, degree: n };
+                    Spanned::new(Typ::Poly(b.node, shape), sp.into_range())
                 }),
             // Uni<F, N>
             just(Token::KwUni)
@@ -450,7 +451,10 @@ where
                 .then_ignore(just(Token::RAngle).ignored())
                 .map_with(|(b, n), e| {
                     let sp: SimpleSpan = e.span();
-                    Spanned::new(Typ::Uni(b.node, n), sp.into_range())
+                    Spanned::new(
+                        Typ::Poly(b.node, PolyTyp::Uni { degree: n }),
+                        sp.into_range(),
+                    )
                 }),
             // Mle<F, N>
             just(Token::KwMleTy)
@@ -462,7 +466,7 @@ where
                 .then_ignore(just(Token::Comma).ignored().or_not())
                 .then_ignore(just(Token::RAngle).ignored())
                 .map_with(|(b, n), e| {
-                    Spanned::new(Typ::Mle(b.node, n), {
+                    Spanned::new(Typ::Poly(b.node, PolyTyp::Mle { vars: n }), {
                         let sp: SimpleSpan = e.span();
                         sp.into_range()
                     })

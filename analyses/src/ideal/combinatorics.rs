@@ -120,6 +120,7 @@ pub fn lagrange_basis<F: Field>(xs: &[F]) -> Vec<Vec<F>> {
 #[cfg(test)]
 mod tests {
     use ark_ff::{One, Zero};
+    use backend::PolyTyp;
 
     use backend::ATyp;
 
@@ -129,11 +130,11 @@ mod tests {
     /// in the canonical slot order for the given type.
     pub fn index_of(typ: &ATyp, k: &[usize]) -> usize {
         match typ {
-            ATyp::VPoly(n, m) => multi_indices(*n, *m)
+            ATyp::Poly(PolyTyp::General { vars: n, degree: m }) => multi_indices(*n, *m)
                 .iter()
                 .position(|kk| kk.as_slice() == k)
                 .expect("multi-index out of range for VPoly"),
-            ATyp::Mle(n) => {
+            ATyp::Poly(PolyTyp::Mle { vars: n }) => {
                 debug_assert_eq!(k.len(), *n);
                 let mut acc = 0usize;
                 for (j, bj) in k.iter().enumerate() {
@@ -205,7 +206,7 @@ mod tests {
             let d: usize = u.int_in_range(0..=5)?;
             let expected = (d + 1).pow(u32::try_from(n).unwrap());
             assert_eq!(
-                ATyp::VPoly(n, d).physical_len(),
+                ATyp::Poly(PolyTyp::General { vars: n, degree: d }).physical_len(),
                 expected,
                 "physical_len(VPoly({n}, {d})) should be ({d} + 1)^{n} = {expected}",
             );
@@ -219,7 +220,7 @@ mod tests {
         arbtest::arbtest(|u| {
             let n: usize = u.int_in_range(0..=5)?;
             assert_eq!(
-                ATyp::Mle(n).physical_len(),
+                ATyp::Poly(PolyTyp::Mle { vars: n }).physical_len(),
                 1usize << n,
                 "physical_len(Mle({n})) should be 2^{n}",
             );
@@ -233,7 +234,7 @@ mod tests {
         arbtest::arbtest(|u| {
             let m: usize = u.int_in_range(0..=15)?;
             assert_eq!(
-                ATyp::Uni(m).physical_len(),
+                ATyp::Poly(PolyTyp::Uni { degree: m }).physical_len(),
                 m + 1,
                 "physical_len(Uni({m})) should be {} (m + 1)",
                 m + 1,
@@ -293,7 +294,7 @@ mod tests {
             let m: usize = u.int_in_range(0..=4)?;
             assert_eq!(
                 multi_indices(n, m).len(),
-                ATyp::VPoly(n, m).physical_len(),
+                ATyp::Poly(PolyTyp::General { vars: n, degree: m }).physical_len(),
                 "multi_indices({n}, {m}).len() should equal physical_len(VPoly({n}, {m}))",
             );
             Ok(())
@@ -326,7 +327,7 @@ mod tests {
             let i: usize = u.int_in_range(0..=(cube.len() - 1))?;
             let b = &cube[i];
             assert_eq!(
-                index_of(&ATyp::Mle(n), b),
+                index_of(&ATyp::Poly(PolyTyp::Mle { vars: n }), b),
                 i,
                 "Mle({n}): position {i} -> {b:?} did not round-trip",
             );
@@ -348,7 +349,7 @@ mod tests {
             let i: usize = u.int_in_range(0..=(mis.len() - 1))?;
             let k = &mis[i];
             assert_eq!(
-                index_of(&ATyp::VPoly(n, m), k),
+                index_of(&ATyp::Poly(PolyTyp::General { vars: n, degree: m }), k),
                 i,
                 "VPoly({n}, {m}): position {i} -> {k:?} did not round-trip",
             );

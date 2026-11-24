@@ -4,6 +4,7 @@
 //! per element. At the leaf level (non-Vec), dispatches to polynomial
 //! convolution (VPoly/Uni/Mle) or slot-wise multiplication (base types).
 
+use backend::PolyTyp;
 use std::collections::HashMap;
 
 use backend::op::HasOpFactory;
@@ -97,7 +98,7 @@ fn mul_leaf<C: ArkConfig + HasOpFactory>(
     match a.typ() {
         ATyp::Base(ABase::Scalar) => match b.typ() {
             ATyp::Base(_) => slot_wise_mul(ctx, target, a, b),
-            ATyp::Uni(_) | ATyp::Mle(_) | ATyp::VPoly(_, _) => {
+            ATyp::Poly(_) => {
                 let prods: Vec<Polynomial<C::F>> =
                     b.polys().iter().map(|bp| &a.polys()[0] * bp).collect();
                 link_to_polys(ctx.ideal, target, prods);
@@ -108,24 +109,28 @@ fn mul_leaf<C: ArkConfig + HasOpFactory>(
             ATyp::Base(_) => slot_wise_mul(ctx, target, a, b),
             _ => super::uncovered_op("mul-base-nonbase", target),
         },
-        ATyp::Mle(_) => match b.typ() {
+        ATyp::Poly(PolyTyp::Mle { .. }) => match b.typ() {
             ATyp::Base(ABase::Scalar) => {
                 let prods: Vec<Polynomial<C::F>> =
                     a.polys().iter().map(|ap| ap * &b.polys()[0]).collect();
                 link_to_polys(ctx.ideal, target, prods);
             }
-            ATyp::Mle(_) => mul_mle_mle(ctx, target, a, b, r_typ),
-            ATyp::Uni(_) | ATyp::VPoly(_, _) => mul_mle_vpoly(ctx, target, a, b, r_typ),
+            ATyp::Poly(PolyTyp::Mle { .. }) => mul_mle_mle(ctx, target, a, b, r_typ),
+            ATyp::Poly(PolyTyp::Uni { .. } | PolyTyp::General { .. }) => {
+                mul_mle_vpoly(ctx, target, a, b, r_typ)
+            }
             _ => super::uncovered_op("mul-mle-nonpoly", target),
         },
-        ATyp::Uni(_) | ATyp::VPoly(_, _) => match b.typ() {
+        ATyp::Poly(PolyTyp::Uni { .. } | PolyTyp::General { .. }) => match b.typ() {
             ATyp::Base(ABase::Scalar) => {
                 let prods: Vec<Polynomial<C::F>> =
                     a.polys().iter().map(|ap| ap * &b.polys()[0]).collect();
                 link_to_polys(ctx.ideal, target, prods);
             }
-            ATyp::Mle(_) => mul_mle_vpoly(ctx, target, a, b, r_typ),
-            ATyp::Uni(_) | ATyp::VPoly(_, _) => mul_vpoly_vpoly(ctx, target, a, b, r_typ),
+            ATyp::Poly(PolyTyp::Mle { .. }) => mul_mle_vpoly(ctx, target, a, b, r_typ),
+            ATyp::Poly(PolyTyp::Uni { .. } | PolyTyp::General { .. }) => {
+                mul_vpoly_vpoly(ctx, target, a, b, r_typ)
+            }
             _ => super::uncovered_op("mul-vpoly-nonpoly", target),
         },
         _ => super::uncovered_op("mul-unsupported-type", target),
@@ -159,11 +164,17 @@ fn mul_mle_mle<C: ArkConfig + HasOpFactory>(
     b: &PolySource<C>,
     r_typ: &ATyp,
 ) {
-    let (ATyp::Mle(na), ATyp::Mle(nb)) = (a.typ(), b.typ()) else {
+    let (ATyp::Poly(PolyTyp::Mle { vars: na }), ATyp::Poly(PolyTyp::Mle { vars: nb })) =
+        (a.typ(), b.typ())
+    else {
         unreachable!("mul_mle_mle called with non-Mle operands");
     };
     assert_eq!(na, nb, "mul_mle_mle: Mle arity mismatch");
-    let ATyp::VPoly(_nr, mr) = r_typ else {
+    let ATyp::Poly(PolyTyp::General {
+        vars: _nr,
+        degree: mr,
+    }) = r_typ
+    else {
         panic!("Mul Mle×Mle ideal must be VPoly");
     };
     let n = *na;
@@ -219,11 +230,21 @@ fn mul_mle_vpoly<C: ArkConfig + HasOpFactory>(
     r_typ: &ATyp,
 ) {
     let (mle_src, vpoly_src, na, mb) = match (a.typ(), b.typ()) {
-        (ATyp::Mle(n), ATyp::VPoly(_, m)) => (a, b, n, m),
-        (ATyp::VPoly(_, m), ATyp::Mle(n)) => (b, a, n, m),
+        (
+            ATyp::Poly(PolyTyp::Mle { vars: n }),
+            ATyp::Poly(PolyTyp::General { vars: _, degree: m }),
+        ) => (a, b, n, m),
+        (
+            ATyp::Poly(PolyTyp::General { vars: _, degree: m }),
+            ATyp::Poly(PolyTyp::Mle { vars: n }),
+        ) => (b, a, n, m),
         _ => unreachable!("mul_mle_vpoly called with wrong operand types"),
     };
-    let ATyp::VPoly(nr, mr) = r_typ else {
+    let ATyp::Poly(PolyTyp::General {
+        vars: nr,
+        degree: mr,
+    }) = r_typ
+    else {
         panic!("Mul Mle×VPoly ideal must be VPoly");
     };
     assert!(
@@ -296,19 +317,41 @@ fn mul_vpoly_vpoly<C: ArkConfig + HasOpFactory>(
     r_typ: &ATyp,
 ) {
     let a_norm = match a.typ() {
-        ATyp::Uni(m) => ATyp::VPoly(1, *m),
+        ATyp::Poly(PolyTyp::Uni { degree: m }) => ATyp::Poly(PolyTyp::General {
+            vars: 1,
+            degree: *m,
+        }),
         other => other.clone(),
     };
     let b_norm = match b.typ() {
-        ATyp::Uni(m) => ATyp::VPoly(1, *m),
+        ATyp::Poly(PolyTyp::Uni { degree: m }) => ATyp::Poly(PolyTyp::General {
+            vars: 1,
+            degree: *m,
+        }),
         other => other.clone(),
     };
     let r_norm = match r_typ {
-        ATyp::Uni(m) => ATyp::VPoly(1, *m),
+        ATyp::Poly(PolyTyp::Uni { degree: m }) => ATyp::Poly(PolyTyp::General {
+            vars: 1,
+            degree: *m,
+        }),
         other => other.clone(),
     };
     match (&a_norm, &b_norm, &r_norm) {
-        (ATyp::VPoly(na, ma), ATyp::VPoly(nb, mb), ATyp::VPoly(nr, mr)) if na == nb && na == nr => {
+        (
+            ATyp::Poly(PolyTyp::General {
+                vars: na,
+                degree: ma,
+            }),
+            ATyp::Poly(PolyTyp::General {
+                vars: nb,
+                degree: mb,
+            }),
+            ATyp::Poly(PolyTyp::General {
+                vars: nr,
+                degree: mr,
+            }),
+        ) if na == nb && na == nr => {
             let a_idx = multi_indices(*na, *ma);
             let b_idx = multi_indices(*nb, *mb);
             let r_idx = multi_indices(*nr, *mr);
@@ -334,6 +377,7 @@ fn mul_vpoly_vpoly<C: ArkConfig + HasOpFactory>(
 mod tests {
     use super::super::multi_indices;
     use super::super::{Ideal, IdealBuilder};
+    use backend::PolyTyp;
 
     use crate::frontend::Polynomial;
     use backend::ATyp;
@@ -353,22 +397,43 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_a = Var::from_node(NodeIndex::new(0), ATyp::VPoly(1, 1), Qualifier::Witness);
+        let var_a = Var::from_node(
+            NodeIndex::new(0),
+            ATyp::Poly(PolyTyp::General { vars: 1, degree: 1 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var_a);
-        let var_b = Var::from_node(NodeIndex::new(1), ATyp::VPoly(1, 1), Qualifier::Witness);
+        let var_b = Var::from_node(
+            NodeIndex::new(1),
+            ATyp::Poly(PolyTyp::General { vars: 1, degree: 1 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var_b);
 
-        let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(1, 2), Qualifier::Witness);
+        let var = Var::from_node(
+            NodeIndex::new(2),
+            ATyp::Poly(PolyTyp::General { vars: 1, degree: 2 }),
+            Qualifier::Witness,
+        );
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Mul,
-            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(1, 1))),
-            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::VPoly(1, 1))),
-            ATyp::VPoly(1, 2),
+            mk::<ArkBls12_381>(Op::Ref(
+                Ref::new(NodeIndex::new(0)),
+                ATyp::Poly(PolyTyp::General { vars: 1, degree: 1 }),
+            )),
+            mk::<ArkBls12_381>(Op::Ref(
+                Ref::new(NodeIndex::new(1)),
+                ATyp::Poly(PolyTyp::General { vars: 1, degree: 1 }),
+            )),
+            ATyp::Poly(PolyTyp::General { vars: 1, degree: 2 }),
         );
         builder.add_op(var.clone(), op, &mut ideal);
 
         // VPoly(1,2) has physical_len = 3 slots (degrees 0, 1, 2 in graded-lex order).
-        assert_eq!(ATyp::VPoly(1, 2).physical_len(), 3);
+        assert_eq!(
+            ATyp::Poly(PolyTyp::General { vars: 1, degree: 2 }).physical_len(),
+            3
+        );
         let a0 = var_a.clone().with_index(0).unwrap();
         let a1 = var_a.clone().with_index(1).unwrap();
         let b0 = var_b.clone().with_index(0).unwrap();
@@ -415,17 +480,35 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_a = Var::from_node(NodeIndex::new(0), ATyp::VPoly(2, 1), Qualifier::Witness);
+        let var_a = Var::from_node(
+            NodeIndex::new(0),
+            ATyp::Poly(PolyTyp::General { vars: 2, degree: 1 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var_a);
-        let var_b = Var::from_node(NodeIndex::new(1), ATyp::VPoly(2, 1), Qualifier::Witness);
+        let var_b = Var::from_node(
+            NodeIndex::new(1),
+            ATyp::Poly(PolyTyp::General { vars: 2, degree: 1 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var_b);
 
-        let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(2, 2), Qualifier::Witness);
+        let var = Var::from_node(
+            NodeIndex::new(2),
+            ATyp::Poly(PolyTyp::General { vars: 2, degree: 2 }),
+            Qualifier::Witness,
+        );
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Mul,
-            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 1))),
-            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::VPoly(2, 1))),
-            ATyp::VPoly(2, 2),
+            mk::<ArkBls12_381>(Op::Ref(
+                Ref::new(NodeIndex::new(0)),
+                ATyp::Poly(PolyTyp::General { vars: 2, degree: 1 }),
+            )),
+            mk::<ArkBls12_381>(Op::Ref(
+                Ref::new(NodeIndex::new(1)),
+                ATyp::Poly(PolyTyp::General { vars: 2, degree: 1 }),
+            )),
+            ATyp::Poly(PolyTyp::General { vars: 2, degree: 2 }),
         );
         builder.add_op(var.clone(), op, &mut ideal);
 
@@ -476,17 +559,35 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_u = Var::from_node(NodeIndex::new(0), ATyp::Mle(1), Qualifier::Witness);
+        let var_u = Var::from_node(
+            NodeIndex::new(0),
+            ATyp::Poly(PolyTyp::Mle { vars: 1 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var_u);
-        let var_v = Var::from_node(NodeIndex::new(1), ATyp::Mle(1), Qualifier::Witness);
+        let var_v = Var::from_node(
+            NodeIndex::new(1),
+            ATyp::Poly(PolyTyp::Mle { vars: 1 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var_v);
 
-        let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(1, 2), Qualifier::Witness);
+        let var = Var::from_node(
+            NodeIndex::new(2),
+            ATyp::Poly(PolyTyp::General { vars: 1, degree: 2 }),
+            Qualifier::Witness,
+        );
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Mul,
-            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(1))),
-            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::Mle(1))),
-            ATyp::VPoly(1, 2),
+            mk::<ArkBls12_381>(Op::Ref(
+                Ref::new(NodeIndex::new(0)),
+                ATyp::Poly(PolyTyp::Mle { vars: 1 }),
+            )),
+            mk::<ArkBls12_381>(Op::Ref(
+                Ref::new(NodeIndex::new(1)),
+                ATyp::Poly(PolyTyp::Mle { vars: 1 }),
+            )),
+            ATyp::Poly(PolyTyp::General { vars: 1, degree: 2 }),
         );
         builder.add_op(var.clone(), op, &mut ideal);
 
@@ -555,17 +656,35 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_u = Var::from_node(NodeIndex::new(0), ATyp::Mle(1), Qualifier::Witness);
+        let var_u = Var::from_node(
+            NodeIndex::new(0),
+            ATyp::Poly(PolyTyp::Mle { vars: 1 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var_u);
-        let var_b = Var::from_node(NodeIndex::new(1), ATyp::VPoly(1, 1), Qualifier::Witness);
+        let var_b = Var::from_node(
+            NodeIndex::new(1),
+            ATyp::Poly(PolyTyp::General { vars: 1, degree: 1 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var_b);
 
-        let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(1, 2), Qualifier::Witness);
+        let var = Var::from_node(
+            NodeIndex::new(2),
+            ATyp::Poly(PolyTyp::General { vars: 1, degree: 2 }),
+            Qualifier::Witness,
+        );
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Mul,
-            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(1))),
-            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::VPoly(1, 1))),
-            ATyp::VPoly(1, 2),
+            mk::<ArkBls12_381>(Op::Ref(
+                Ref::new(NodeIndex::new(0)),
+                ATyp::Poly(PolyTyp::Mle { vars: 1 }),
+            )),
+            mk::<ArkBls12_381>(Op::Ref(
+                Ref::new(NodeIndex::new(1)),
+                ATyp::Poly(PolyTyp::General { vars: 1, degree: 1 }),
+            )),
+            ATyp::Poly(PolyTyp::General { vars: 1, degree: 2 }),
         );
         builder.add_op(var.clone(), op, &mut ideal);
 
@@ -617,17 +736,35 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_b = Var::from_node(NodeIndex::new(0), ATyp::VPoly(2, 1), Qualifier::Witness);
+        let var_b = Var::from_node(
+            NodeIndex::new(0),
+            ATyp::Poly(PolyTyp::General { vars: 2, degree: 1 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var_b);
-        let var_u = Var::from_node(NodeIndex::new(1), ATyp::Mle(2), Qualifier::Witness);
+        let var_u = Var::from_node(
+            NodeIndex::new(1),
+            ATyp::Poly(PolyTyp::Mle { vars: 2 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var_u);
 
-        let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(2, 2), Qualifier::Witness);
+        let var = Var::from_node(
+            NodeIndex::new(2),
+            ATyp::Poly(PolyTyp::General { vars: 2, degree: 2 }),
+            Qualifier::Witness,
+        );
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Mul,
-            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 1))),
-            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::Mle(2))),
-            ATyp::VPoly(2, 2),
+            mk::<ArkBls12_381>(Op::Ref(
+                Ref::new(NodeIndex::new(0)),
+                ATyp::Poly(PolyTyp::General { vars: 2, degree: 1 }),
+            )),
+            mk::<ArkBls12_381>(Op::Ref(
+                Ref::new(NodeIndex::new(1)),
+                ATyp::Poly(PolyTyp::Mle { vars: 2 }),
+            )),
+            ATyp::Poly(PolyTyp::General { vars: 2, degree: 2 }),
         );
         builder.add_op(var.clone(), op, &mut ideal);
 
@@ -655,17 +792,35 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_u = Var::from_node(NodeIndex::new(0), ATyp::Mle(2), Qualifier::Witness);
+        let var_u = Var::from_node(
+            NodeIndex::new(0),
+            ATyp::Poly(PolyTyp::Mle { vars: 2 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var_u);
-        let var_b = Var::from_node(NodeIndex::new(1), ATyp::VPoly(2, 1), Qualifier::Witness);
+        let var_b = Var::from_node(
+            NodeIndex::new(1),
+            ATyp::Poly(PolyTyp::General { vars: 2, degree: 1 }),
+            Qualifier::Witness,
+        );
         ideal.register(&var_b);
 
-        let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(2, 2), Qualifier::Witness);
+        let var = Var::from_node(
+            NodeIndex::new(2),
+            ATyp::Poly(PolyTyp::General { vars: 2, degree: 2 }),
+            Qualifier::Witness,
+        );
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Mul,
-            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(2))),
-            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::VPoly(2, 1))),
-            ATyp::VPoly(2, 2),
+            mk::<ArkBls12_381>(Op::Ref(
+                Ref::new(NodeIndex::new(0)),
+                ATyp::Poly(PolyTyp::Mle { vars: 2 }),
+            )),
+            mk::<ArkBls12_381>(Op::Ref(
+                Ref::new(NodeIndex::new(1)),
+                ATyp::Poly(PolyTyp::General { vars: 2, degree: 1 }),
+            )),
+            ATyp::Poly(PolyTyp::General { vars: 2, degree: 2 }),
         );
         builder.add_op(var.clone(), op, &mut ideal);
 
@@ -718,7 +873,7 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let s = ATyp::scalar();
-        let uni2 = ATyp::Uni(2);
+        let uni2 = ATyp::Poly(PolyTyp::Uni { degree: 2 });
 
         let var_s = Var::from_node(NodeIndex::new(0), s.clone(), Qualifier::Instance);
         ideal.register(&var_s);
@@ -809,9 +964,9 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let elem_a = ATyp::VPoly(1, 1);
+        let elem_a = ATyp::Poly(PolyTyp::General { vars: 1, degree: 1 });
         let vec_a = ATyp::Vec(Box::new(elem_a.clone()), 2);
-        let b_t = ATyp::VPoly(1, 1);
+        let b_t = ATyp::Poly(PolyTyp::General { vars: 1, degree: 1 });
 
         let var_a = Var::from_node(NodeIndex::new(0), vec_a.clone(), Qualifier::Witness);
         ideal.register(&var_a);
@@ -822,7 +977,10 @@ mod tests {
         // lub_mul(Vec(VPoly(1,1),2), VPoly(1,1))
         //   = Vec(lub_mul(VPoly(1,1), VPoly(1,1)), 2)
         //   = Vec(VPoly(1,2), 2)
-        let result_t = ATyp::Vec(Box::new(ATyp::VPoly(1, 2)), 2);
+        let result_t = ATyp::Vec(
+            Box::new(ATyp::Poly(PolyTyp::General { vars: 1, degree: 2 })),
+            2,
+        );
         let var_r = Var::from_node(NodeIndex::new(2), result_t.clone(), Qualifier::Witness);
         ideal.register(&var_r);
 
@@ -864,8 +1022,8 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let a_t = ATyp::VPoly(1, 1);
-        let elem_b = ATyp::VPoly(1, 1);
+        let a_t = ATyp::Poly(PolyTyp::General { vars: 1, degree: 1 });
+        let elem_b = ATyp::Poly(PolyTyp::General { vars: 1, degree: 1 });
         let vec_b = ATyp::Vec(Box::new(elem_b.clone()), 2);
 
         let var_a = Var::from_node(NodeIndex::new(0), a_t.clone(), Qualifier::Witness);
@@ -877,7 +1035,10 @@ mod tests {
         // lub_mul(VPoly(1,1), Vec(VPoly(1,1),2))
         //   = Vec(lub_mul(VPoly(1,1), VPoly(1,1)), 2)
         //   = Vec(VPoly(1,2), 2)
-        let result_t = ATyp::Vec(Box::new(ATyp::VPoly(1, 2)), 2);
+        let result_t = ATyp::Vec(
+            Box::new(ATyp::Poly(PolyTyp::General { vars: 1, degree: 2 })),
+            2,
+        );
         let var_r = Var::from_node(NodeIndex::new(2), result_t.clone(), Qualifier::Witness);
         ideal.register(&var_r);
 

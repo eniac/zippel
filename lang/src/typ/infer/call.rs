@@ -3,8 +3,8 @@
 
 use super::*;
 use crate::ast::sig::SigError;
-use crate::typ::CTyps;
 use crate::typ::instantiate::CallError;
+use crate::typ::{CTyps, PolyTyp};
 
 impl CRef<'_> {
     pub(super) fn infer_app(
@@ -25,7 +25,7 @@ impl CRef<'_> {
         match vctx.get(&id.node) {
             // Applying a polynomial is `eval` at one point; a scalar for a multilinear or
             // general polynomial is the point `[x]`, fixing its variable 0.
-            Some(p_typ @ (CTyp::Uni(..) | CTyp::Mle(..) | CTyp::Poly(..))) => {
+            Some(p_typ @ CTyp::Poly(_, shape)) => {
                 let [point] = &param_types.0[..] else {
                     return Err(TypeError::PolyApp(
                         kctx.clone(),
@@ -35,7 +35,7 @@ impl CRef<'_> {
                 };
                 let point = match &point.node {
                     x @ CTyp::Vec(..) => x.clone(),
-                    x if !matches!(p_typ, CTyp::Uni(..)) => CTyp::vec(x, 1),
+                    x if !matches!(shape, PolyTyp::Uni { .. }) => CTyp::vec(x, 1),
                     x => x.clone(),
                 };
                 super::poly::evaluated_typ(p_typ.clone(), point, kctx)

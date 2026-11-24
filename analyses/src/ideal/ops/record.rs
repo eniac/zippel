@@ -84,6 +84,7 @@ pub fn proj_op<C: ArkConfig + HasOpFactory>(
 
 #[cfg(test)]
 mod tests {
+    use backend::PolyTyp;
 
     use super::super::{Ideal, IdealBuilder};
 
@@ -166,7 +167,7 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let s = ATyp::scalar();
-        let uni_typ = ATyp::Uni(2);
+        let uni_typ = ATyp::Poly(PolyTyp::Uni { degree: 2 });
         let mut rec_fields = Ctx::<String, ATyp>::new();
         rec_fields.insert(&"a".to_string(), &s);
         rec_fields.insert(&"p".to_string(), &uni_typ);
@@ -371,7 +372,7 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let s = ATyp::scalar();
-        let uni2 = ATyp::Uni(2);
+        let uni2 = ATyp::Poly(PolyTyp::Uni { degree: 2 });
         // "a" < "b" alphabetically
         // "a": Uni(2) → 3 slots at offset 0
         // "b": Scalar → 1 slot at offset 3

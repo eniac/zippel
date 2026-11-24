@@ -12,7 +12,7 @@ use lang::ast::{
 use lang::id::Tid;
 use lang::stack_guard;
 use lang::typ::infer::{Cx, TypeTable, VarTypes};
-use lang::typ::{CKind, CTyp};
+use lang::typ::{CKind, CTyp, PolyTyp};
 use num::{BigUint, ToPrimitive};
 use share::ScopedCtx;
 use share::traversal::ToTraversal1;

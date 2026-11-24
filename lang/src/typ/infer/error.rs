@@ -397,9 +397,11 @@ fn primary_label(cause: &TypeError) -> String {
 }
 
 /// Explains, when `a` and `b` are polynomials over different numbers of variables, that this
-/// is why they do not combine ([`CTyp::poly_vars_differ`]).
+/// is why they do not combine ([`PolyShapeError::VariableCount`](crate::typ::PolyShapeError)).
 fn note_variable_count(d: Diagnostic, a: &CTyp, b: &CTyp) -> Diagnostic {
-    if a.poly_vars_differ(b) {
+    if let (CTyp::Poly(_, p), CTyp::Poly(_, q)) = (a, b)
+        && p.vars() != q.vars()
+    {
         d.note(
             "polynomials over different numbers of variables never combine; lift one to the \
              other's variables explicitly",
@@ -602,7 +604,7 @@ fn type_vars(t: &CTyp, out: &mut Vec<Tid>) {
         }
     };
     match t {
-        CTyp::Base(v) | CTyp::Uni(v, _) | CTyp::Mle(v, _) | CTyp::Poly(v, _, _) => push(v),
+        CTyp::Base(v) | CTyp::Poly(v, _) => push(v),
         CTyp::Vec(t, _) => type_vars(t, out),
         CTyp::Record(fields) => {
             for (_, t) in fields.iter() {

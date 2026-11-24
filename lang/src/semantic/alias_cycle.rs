@@ -112,7 +112,7 @@ fn type_dependencies(typ: &UTyp) -> share::Set<Tid> {
 
 fn collect_deps(typ: &UTyp, deps: &mut share::Set<Tid>) {
     match typ {
-        Typ::Base(t) | Typ::Uni(t, _) | Typ::Mle(t, _) | Typ::Poly(t, _, _) => {
+        Typ::Base(t) | Typ::Poly(t, _) => {
             deps.insert(t.clone());
         }
         Typ::Vec(box_typ, _) => collect_deps(box_typ, deps),

@@ -4,7 +4,7 @@ use lang::ast::{Size, Spanned};
 use lang::id::Tid;
 use lang::parser::Token;
 use lang::stack_guard;
-use lang::typ::{GTyp, Typ, TypeVar, TypeVars};
+use lang::typ::{GTyp, PolyTyp, Typ, TypeVar, TypeVars};
 use pretty::DocAllocator;
 
 use crate::ctx::{Doc, Formatter};
@@ -68,9 +68,15 @@ impl<'doc> Formatter<'doc, '_> {
         let alloc = self.alloc;
         let style = self.style;
         match typ {
-            Typ::Uni(base, n) => self.format_poly("Uni", base, &[&n.node], end),
-            Typ::Mle(base, n) => self.format_poly("Mle", base, &[&n.node], end),
-            Typ::Poly(base, m, n) => self.format_poly("Poly", base, &[&m.node, &n.node], end),
+            Typ::Poly(base, shape) => {
+                let keyword = match shape {
+                    PolyTyp::Uni { .. } => "Uni",
+                    PolyTyp::Mle { .. } => "Mle",
+                    PolyTyp::General { .. } => "Poly",
+                };
+                let sizes: Vec<&Size> = shape.sizes().into_iter().map(|s| &s.node).collect();
+                self.format_poly(keyword, base, &sizes, end)
+            }
             Typ::Vec(typ, size) => {
                 let open_gap = self
                     .cursor
