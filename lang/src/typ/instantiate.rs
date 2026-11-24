@@ -191,10 +191,9 @@ impl Instantiation {
     }
 
     /// Matches a parameter type (callee names) against an argument type (caller names),
-    /// binding the parameters it meets. Three widenings are allowed: a polynomial where one with
-    /// at least as many variables and as high a degree is expected (of its encoding, or a general
-    /// one), an integer where a wider integer range is expected, and an integer where a scalar is
-    /// expected.
+    /// binding the parameters it meets. Three widenings are allowed: a polynomial where a wider
+    /// one of the same encoding is expected ([`CTyp::poly_fit`]), an integer where a wider integer
+    /// range is expected, and an integer where a scalar is expected.
     ///
     /// # Errors
     /// The shapes differ, a kind class differs, or a parameter would stand for two different
@@ -212,18 +211,9 @@ impl Instantiation {
             (CTyp::Unit, CTyp::Unit) | (CTyp::Bool, CTyp::Bool) => Ok(()),
             // An integer fits an integer parameter whose range contains its range.
             (CTyp::Fin(p), CTyp::Fin(a)) => a.is_subset_of(p).then_some(()).ok_or_else(mismatch),
-            // A polynomial fits a parameter of its encoding with at least as many variables
-            // (`Mle`) or as high a degree (`Uni`), and a general one with both.
-            (CTyp::Uni(p, pd), CTyp::Uni(a, ad)) | (CTyp::Mle(p, pd), CTyp::Mle(a, ad)) => {
-                if pd.node < ad.node {
-                    return Err(mismatch());
-                }
-                self.bind(p, a, caller).map_err(within)
-            }
-            (CTyp::Poly(p, pn, pd), arg) if let Some((a, an, ad)) = arg.poly_shape() => {
-                if pn.node < an || pd.node < ad {
-                    return Err(mismatch());
-                }
+            // A polynomial argument fits a parameter as `CTyp::poly_fit` says.
+            (CTyp::Uni(..) | CTyp::Mle(..) | CTyp::Poly(..), _) => {
+                let (a, p) = arg.poly_fit(param).ok_or_else(mismatch)?;
                 self.bind(p, a, caller).map_err(within)
             }
             (CTyp::Vec(p, pn), CTyp::Vec(a, an)) => {
@@ -644,12 +634,18 @@ mod tests {
         let fin = |a, b| CTyp::fin(crate::ast::range::CRange::from_raw(a, 1, b));
         let ok = |p: &CTyp, a: &CTyp| Instantiation::new(&sig).match_typ(p, a, &caller);
 
-        // A polynomial widens to more variables or a higher degree, never the other way.
+        // A coefficient form widens to more variables or a higher degree, never the other
+        // way; an MLE matches only the same variables; no polynomial changes encoding.
         assert_eq!(ok(&CTyp::uni(&t, 11), &CTyp::uni(&f, 10)), Ok(()));
         assert!(ok(&CTyp::uni(&t, 10), &CTyp::uni(&f, 11)).is_err());
-        assert_eq!(ok(&CTyp::mle(&t, 11), &CTyp::mle(&f, 10)), Ok(()));
+        assert_eq!(ok(&CTyp::poly(&t, 3, 4), &CTyp::poly(&f, 2, 3)), Ok(()));
+        assert!(ok(&CTyp::poly(&t, 2, 4), &CTyp::poly(&f, 3, 3)).is_err());
+        assert_eq!(ok(&CTyp::mle(&t, 10), &CTyp::mle(&f, 10)), Ok(()));
+        assert!(ok(&CTyp::mle(&t, 11), &CTyp::mle(&f, 10)).is_err());
         assert!(ok(&CTyp::mle(&t, 10), &CTyp::mle(&f, 11)).is_err());
         assert!(ok(&CTyp::mle(&t, 3), &CTyp::uni(&f, 2)).is_err());
+        assert!(ok(&CTyp::poly(&t, 2, 1), &CTyp::mle(&f, 2)).is_err());
+        assert!(ok(&CTyp::poly(&t, 1, 3), &CTyp::uni(&f, 3)).is_err());
         // No coercion between scalars and polynomials.
         assert!(ok(&CTyp::uni(&t, 3), &CTyp::base(&f)).is_err());
         assert!(ok(&CTyp::uni(&t, 3), &fin(0, 2)).is_err());

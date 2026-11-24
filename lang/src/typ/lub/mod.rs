@@ -1035,6 +1035,29 @@ impl Lub for CTyp {
 }
 
 impl CTyp {
+    /// The base types of a polynomial `self` and a polynomial `expected` when a value of
+    /// `self` may stand where `expected` is declared (a return value, a record field, a call
+    /// argument); `None` when it may not or either is not a polynomial. Only a polynomial of
+    /// the same encoding fits:
+    /// - `Uni<A, d>` fits `Uni<B, d'>` for `d <= d'`, and `Poly<A, v, d>` fits `Poly<B, v', d'>`
+    ///   for `v <= v'` and `d <= d'`: padding coefficients with zeros keeps the polynomial;
+    /// - `Mle<A, n>` fits only `Mle<B, n>`: a table over more variables has no single meaning
+    ///   (the new variables could be ignored or vanish).
+    ///
+    /// A different encoding does not fit even when it describes the same polynomials: each
+    /// encoding is a representation the analyses and the input check rely on, so changing it
+    /// is never implicit.
+    pub fn poly_fit<'a>(&'a self, expected: &'a Self) -> Option<(&'a Tid, &'a Tid)> {
+        match (self, expected) {
+            (CTyp::Uni(a, d), CTyp::Uni(b, e)) if d.node <= e.node => Some((a, b)),
+            (CTyp::Mle(a, n), CTyp::Mle(b, m)) if n.node == m.node => Some((a, b)),
+            (CTyp::Poly(a, v, d), CTyp::Poly(b, w, e)) if v.node <= w.node && d.node <= e.node => {
+                Some((a, b))
+            }
+            _ => None,
+        }
+    }
+
     /// A polynomial's base type, variable count and degree bound, as a general polynomial:
     /// `Uni<F, d>` has one variable of degree `d`, `Mle<F, n>` `n` variables of degree 1.
     /// `None` for a type that is not a polynomial.
@@ -1050,8 +1073,7 @@ impl CTyp {
     /// Whether a value of this type can stand where `expected` is declared: a function body
     /// against its return type, a value against a record field. Unlike [`Lub::lub_equ`], this
     /// is one-way:
-    /// - a polynomial fits one of its encoding with at least as many variables (`Mle`) or as
-    ///   high a degree (`Uni`), and a general one (`Poly`) with both;
+    /// - a polynomial fits as [`CTyp::poly_fit`] says, with equal base types;
     /// - an integer (`Fin`) fits a wider integer range, and a scalar;
     /// - a field-only integer fits a scalar, never an integer range or a group;
     /// - vectors need equal lengths, records every expected field;
@@ -1064,15 +1086,9 @@ impl CTyp {
             (CTyp::Fin(_) | CTyp::FieldLiteral, CTyp::Base(b)) => {
                 ctx.get(b).is_some_and(CKind::is_scalar)
             }
-            (CTyp::Uni(a, ad), CTyp::Uni(b, bd)) | (CTyp::Mle(a, ad), CTyp::Mle(b, bd)) => {
-                ad.node <= bd.node && Tid::lub_equ(a, b, ctx).is_ok()
-            }
-            // A univariate or multilinear polynomial is a general one of its shape.
-            (CTyp::Uni(..) | CTyp::Mle(..) | CTyp::Poly(..), CTyp::Poly(b, bn, bd)) => {
-                self.poly_shape().is_some_and(|(a, an, ad)| {
-                    an <= bn.node && ad <= bd.node && Tid::lub_equ(a, b, ctx).is_ok()
-                })
-            }
+            (CTyp::Uni(..) | CTyp::Mle(..) | CTyp::Poly(..), _) => self
+                .poly_fit(expected)
+                .is_some_and(|(a, b)| Tid::lub_equ(a, b, ctx).is_ok()),
             (CTyp::Vec(a, n), CTyp::Vec(b, m)) => n == m && a.node.fits(&b.node, ctx),
             (CTyp::Record(fa), CTyp::Record(fb)) => fb
                 .iter()

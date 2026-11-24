@@ -1541,11 +1541,21 @@ fn fits_is_one_way() {
     let ctx = Ctx::from([(f.clone(), Kind::Field), (g.clone(), Kind::Group)]);
     let fin = CTyp::fin(CRange::from_raw(0, 1, 3));
 
-    // A polynomial fits one with as many or more variables and as high or higher a degree.
+    // A polynomial fits one of its own encoding: a coefficient form with as many or more
+    // variables and as high or higher a degree, an MLE only with the same variables.
     assert!(CTyp::uni(&f, 3).fits(&CTyp::uni(&f, 5), &ctx));
     assert!(!CTyp::uni(&f, 5).fits(&CTyp::uni(&f, 3), &ctx));
-    assert!(CTyp::mle(&f, 2).fits(&CTyp::mle(&f, 3), &ctx));
+    assert!(CTyp::poly(&f, 2, 3).fits(&CTyp::poly(&f, 3, 4), &ctx));
+    assert!(!CTyp::poly(&f, 3, 3).fits(&CTyp::poly(&f, 2, 4), &ctx));
+    assert!(!CTyp::poly(&f, 2, 4).fits(&CTyp::poly(&f, 3, 3), &ctx));
+    assert!(CTyp::mle(&f, 2).fits(&CTyp::mle(&f, 2), &ctx));
+    assert!(!CTyp::mle(&f, 2).fits(&CTyp::mle(&f, 3), &ctx));
     assert!(!CTyp::mle(&f, 3).fits(&CTyp::mle(&f, 2), &ctx));
+    // No polynomial fits another encoding, even one covering its shape.
+    assert!(!CTyp::uni(&f, 3).fits(&CTyp::poly(&f, 1, 3), &ctx));
+    assert!(!CTyp::mle(&f, 2).fits(&CTyp::poly(&f, 2, 1), &ctx));
+    assert!(!CTyp::uni(&f, 1).fits(&CTyp::mle(&f, 1), &ctx));
+    assert!(!CTyp::poly(&f, 1, 1).fits(&CTyp::uni(&f, 1), &ctx));
     // An integer fits a range containing its range, and a scalar, not the other way round,
     // and not a group.
     assert!(fin.fits(&CTyp::fin(CRange::from_raw(0, 1, 8)), &ctx));

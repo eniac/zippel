@@ -509,12 +509,10 @@ impl Lub for ATyp {
             }
 
             (ATyp::Uni(n1), ATyp::Uni(n2)) => Ok(ATyp::uni(*n1.max(n2))),
-            // `Mle(n)` is `VPoly(n, 1)` and `Uni(d)` is `VPoly(1, d)`.
-            (ATyp::Mle(n1), ATyp::Mle(n2)) => Ok(if n1 == n2 {
-                ATyp::mle(*n1)
-            } else {
-                ATyp::vpoly(*n1.max(n2), 1)
-            }),
+            (ATyp::Mle(n1), ATyp::Mle(n2)) if n1 == n2 => Ok(ATyp::mle(*n1)),
+            // Any other two polynomials meet in `VPoly`, where `Mle(n)` counts as
+            // `VPoly(n, 1)` and `Uni(d)` as `VPoly(1, d)`.
+            (ATyp::Mle(n1), ATyp::Mle(n2)) => Ok(ATyp::vpoly(*n1.max(n2), 1)),
             (ATyp::Uni(n), ATyp::Mle(m)) | (ATyp::Mle(m), ATyp::Uni(n)) => {
                 Ok(ATyp::vpoly(*m, (*n).max(1)))
             }
@@ -558,12 +556,10 @@ impl Lub for ATyp {
                 Ok(ATyp::vec(&t, *n))
             }
             (ATyp::Uni(n1), ATyp::Uni(n2)) => Ok(ATyp::uni(*n1.max(n2))),
-            // `Mle(n)` is `VPoly(n, 1)` and `Uni(d)` is `VPoly(1, d)`.
-            (ATyp::Mle(n1), ATyp::Mle(n2)) => Ok(if n1 == n2 {
-                ATyp::mle(*n1)
-            } else {
-                ATyp::vpoly(*n1.max(n2), 1)
-            }),
+            (ATyp::Mle(n1), ATyp::Mle(n2)) if n1 == n2 => Ok(ATyp::mle(*n1)),
+            // Any other two polynomials meet in `VPoly`, where `Mle(n)` counts as
+            // `VPoly(n, 1)` and `Uni(d)` as `VPoly(1, d)`.
+            (ATyp::Mle(n1), ATyp::Mle(n2)) => Ok(ATyp::vpoly(*n1.max(n2), 1)),
             (ATyp::Uni(n), ATyp::Mle(m)) | (ATyp::Mle(m), ATyp::Uni(n)) => {
                 Ok(ATyp::vpoly(*m, (*n).max(1)))
             }
