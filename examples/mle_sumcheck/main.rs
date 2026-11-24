@@ -1,8 +1,6 @@
 use ark_ff::Zero;
-use ark_poly::DenseMultilinearExtension;
 use ark_std::UniformRand;
 use backend::VirtualPolynomial;
-use backend::poly_variant::PolyVariant;
 use backend::{ArkBls12_381, ArkConfig, Value};
 use lang::id::Vid;
 use share::Ctx;
@@ -20,9 +18,7 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381
 
     let claimed_sum: F = base_evals.iter().fold(F::zero(), |acc, val| acc + val);
 
-    let base = VirtualPolynomial::from_poly(PolyVariant::DenseMle(
-        DenseMultilinearExtension::from_evaluations_vec(num_vars, base_evals),
-    ));
+    let base = VirtualPolynomial::dense_mle(num_vars, base_evals);
     let poly = Value::poly(base);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([

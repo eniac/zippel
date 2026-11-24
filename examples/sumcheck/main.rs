@@ -1,8 +1,6 @@
 use ark_ff::Zero;
-use ark_poly::DenseMultilinearExtension;
 use ark_std::UniformRand;
 use backend::VirtualPolynomial;
-use backend::poly_variant::PolyVariant;
 use backend::{ArkBls12_381, ArkConfig, Value};
 use lang::id::Vid;
 use share::Ctx;
@@ -24,9 +22,7 @@ fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381
         .map(|x| (0..max_degree).fold(F::from(1u64), |acc, _| acc * *x))
         .fold(F::zero(), |acc, val| acc + val);
 
-    let base = VirtualPolynomial::from_poly(PolyVariant::DenseMle(
-        DenseMultilinearExtension::from_evaluations_vec(num_vars, base_evals),
-    ));
+    let base = VirtualPolynomial::dense_mle(num_vars, base_evals);
     let mut full_poly = base.clone();
     for _ in 1..max_degree {
         full_poly = full_poly.poly_mul(&base);

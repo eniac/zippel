@@ -143,6 +143,35 @@ return `Result`; the example uses `?` to propagate errors. The analysis result
 is handled separately so the example can print whether the completeness check
 passed.
 
+### Polynomial inputs
+
+A polynomial argument is passed as `Value::poly(VirtualPolynomial)`. A
+`VirtualPolynomial` is a sum of products of polynomials. The source type
+decides which shapes an input may have, and `prove`/`verify` reject any
+input that doesn't fit its type:
+
+| Source type | Input | Build it with |
+|---|---|---|
+| `Mle<F, N>` | the multilinear extension of a table over `{0,1}^N` | `VirtualPolynomial::dense_mle(N, evals)` (all `2^N` entries) or `sparse_mle(N, entries)` (non-zero `(index, value)` pairs only) |
+| `Poly<F, V, D>` | a sum of products of `V`-variable multilinear polynomials, of degree at most `D` in each variable | products (`poly_mul`, `*`) and sums (`poly_add`, `+`) of `V`-variable MLEs, with at most `D` factors in each product |
+| `Uni<F, D>` | a univariate polynomial of degree at most `D` | `VirtualPolynomial::from_poly(PolyVariant::from_coeffs(coeffs))` |
+
+The three types are three representations, not three sets of
+polynomials: `Uni<F, 1>`, `Mle<F, 1>` and `Poly<F, 1, 1>` all describe
+`a + b·x`. `Poly` is what sumcheck proves a sum of. Its input is the
+products of tables the prover already has; it is never expanded into
+coefficients. Table indices are LSB-first: entry `i` is the value at the
+point whose coordinate `k` is bit `k` of `i`.
+
+For example, `p: Poly<F, NV, 3>`, the cube of one table:
+
+```rust
+use zippel::backend::VirtualPolynomial;
+
+let f = VirtualPolynomial::dense_mle(nv, evals); // evals.len() == 1 << nv
+let p = Value::poly(f.poly_mul(&f).poly_mul(&f));
+```
+
 ## 4. Compile and run
 
 ```bash

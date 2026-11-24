@@ -13,7 +13,7 @@ use ark_ec::CurveGroup;
 use ark_ff::{Field, Zero};
 use ark_std::UniformRand;
 use ark_std::rand::SeedableRng;
-use backend::{ArkCurve25519, PolyVariant, Value, VirtualPolynomial};
+use backend::{ArkCurve25519, Value, VirtualPolynomial};
 use lang::id::{Tid, Vid};
 use rand::Rng;
 use share::Ctx;
@@ -335,12 +335,8 @@ fn make_inputs(m: usize) -> (HashMap<Vid, Value<ArkCurve25519>>, MatVec) {
             .collect()
     };
     let two_m_vars = 2 * m;
-    let mk_sparse_mle = |evals: Vec<(usize, Fr)>| {
-        Value::poly(VirtualPolynomial::from_poly(PolyVariant::SparseMle {
-            num_vars: two_m_vars,
-            evals,
-        }))
-    };
+    let mk_sparse_mle =
+        |entries: Vec<(usize, Fr)>| Value::poly(VirtualPolynomial::sparse_mle(two_m_vars, entries));
     let mat_a_t = mk_sparse_mle(triples_to_mle_evals(&r1cs.mat_a));
     let mat_b_t = mk_sparse_mle(triples_to_mle_evals(&r1cs.mat_b));
     let mat_c_t = mk_sparse_mle(triples_to_mle_evals(&r1cs.mat_c));
