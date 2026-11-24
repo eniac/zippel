@@ -1,3 +1,4 @@
+use lang::ast::BinOp;
 use lang::ast::range::CRange;
 use lang::id::Tid;
 pub use lang::typ::lub::{Lub, LubError};
@@ -66,6 +67,19 @@ pub enum ATyp {
 }
 
 impl ATyp {
+    /// Whether `self` and `other` are both polynomials, over different numbers of variables
+    /// (`Uni` has one); the backend counterpart of `CTyp::poly_vars_differ`, so such
+    /// polynomials never combine or join here either.
+    #[must_use]
+    pub fn poly_vars_differ(&self, other: &Self) -> bool {
+        let vars = |t: &Self| match t {
+            ATyp::Uni(_) => Some(1),
+            ATyp::Mle(n) | ATyp::VPoly(n, _) => Some(*n),
+            _ => None,
+        };
+        matches!((vars(self), vars(other)), (Some(n), Some(m)) if n != m)
+    }
+
     /// The scalar-field type of the configured curve.
     pub fn scalar() -> Self {
         ATyp::Base(ABase::Scalar)
@@ -462,6 +476,7 @@ impl Lub for ATyp {
     type Context = Nothing;
     fn lub_equ(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
         match (a, b) {
+            (p, q) if p.poly_vars_differ(q) => Err(LubError::variable_count(BinOp::Equ, &a, &b)),
             (ATyp::Base(a), ATyp::Base(b)) => ABase::lub_equ(a, b, &Nothing)
                 .map(ATyp::Base)
                 .map_err(|e| LubError::next(LubError::equ(&a, &b), e)),
@@ -490,6 +505,7 @@ impl Lub for ATyp {
 
     fn lub_add(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError> {
         match (a, b) {
+            (p, q) if p.poly_vars_differ(q) => Err(LubError::variable_count(BinOp::Add, &a, &b)),
             (ATyp::Base(a), ATyp::Base(b)) => ABase::lub_add(a, b, ctx)
                 .map(ATyp::Base)
                 .map_err(|e| LubError::next(LubError::add(&a, &b), e)),
@@ -509,10 +525,9 @@ impl Lub for ATyp {
             }
 
             (ATyp::Uni(n1), ATyp::Uni(n2)) => Ok(ATyp::uni(*n1.max(n2))),
-            (ATyp::Mle(n1), ATyp::Mle(n2)) if n1 == n2 => Ok(ATyp::mle(*n1)),
-            // Any other two polynomials meet in `VPoly`, where `Mle(n)` counts as
-            // `VPoly(n, 1)` and `Uni(d)` as `VPoly(1, d)`.
-            (ATyp::Mle(n1), ATyp::Mle(n2)) => Ok(ATyp::vpoly(*n1.max(n2), 1)),
+            (ATyp::Mle(n), ATyp::Mle(_)) => Ok(ATyp::mle(*n)),
+            // Any other two polynomials (over the same variables) meet in `VPoly`, where
+            // `Mle(n)` counts as `VPoly(n, 1)` and `Uni(d)` as `VPoly(1, d)`.
             (ATyp::Uni(n), ATyp::Mle(m)) | (ATyp::Mle(m), ATyp::Uni(n)) => {
                 Ok(ATyp::vpoly(*m, (*n).max(1)))
             }
@@ -535,6 +550,7 @@ impl Lub for ATyp {
 
     fn lub_sub(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError> {
         match (a, b) {
+            (p, q) if p.poly_vars_differ(q) => Err(LubError::variable_count(BinOp::Sub, &a, &b)),
             (ATyp::Base(a), ATyp::Base(b)) => ABase::lub_sub(a, b, ctx)
                 .map(ATyp::Base)
                 .map_err(|e| LubError::next(LubError::sub(&a, &b), e)),
@@ -556,10 +572,9 @@ impl Lub for ATyp {
                 Ok(ATyp::vec(&t, *n))
             }
             (ATyp::Uni(n1), ATyp::Uni(n2)) => Ok(ATyp::uni(*n1.max(n2))),
-            (ATyp::Mle(n1), ATyp::Mle(n2)) if n1 == n2 => Ok(ATyp::mle(*n1)),
-            // Any other two polynomials meet in `VPoly`, where `Mle(n)` counts as
-            // `VPoly(n, 1)` and `Uni(d)` as `VPoly(1, d)`.
-            (ATyp::Mle(n1), ATyp::Mle(n2)) => Ok(ATyp::vpoly(*n1.max(n2), 1)),
+            (ATyp::Mle(n), ATyp::Mle(_)) => Ok(ATyp::mle(*n)),
+            // Any other two polynomials (over the same variables) meet in `VPoly`, where
+            // `Mle(n)` counts as `VPoly(n, 1)` and `Uni(d)` as `VPoly(1, d)`.
             (ATyp::Uni(n), ATyp::Mle(m)) | (ATyp::Mle(m), ATyp::Uni(n)) => {
                 Ok(ATyp::vpoly(*m, (*n).max(1)))
             }
@@ -581,6 +596,7 @@ impl Lub for ATyp {
     }
     fn lub_mul(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError> {
         match (a, b) {
+            (p, q) if p.poly_vars_differ(q) => Err(LubError::variable_count(BinOp::Mul, &a, &b)),
             (ATyp::Base(a), ATyp::Base(b)) => ABase::lub_mul(a, b, ctx)
                 .map(ATyp::Base)
                 .map_err(|e| LubError::next(LubError::mul(&a, &b), e)),
@@ -842,14 +858,40 @@ mod tests {
 
     #[test]
     fn vpoly_add_uni() {
-        let result = ATyp::lub_add(&ATyp::vpoly(2, 3), &ATyp::uni(5), &Nothing).unwrap();
-        assert_eq!(result, ATyp::vpoly(2, 5));
+        let result = ATyp::lub_add(&ATyp::vpoly(1, 3), &ATyp::uni(5), &Nothing).unwrap();
+        assert_eq!(result, ATyp::vpoly(1, 5));
     }
 
     #[test]
     fn vpoly_sub_mle() {
-        let result = ATyp::lub_sub(&ATyp::vpoly(2, 3), &ATyp::mle(5), &Nothing).unwrap();
+        let result = ATyp::lub_sub(&ATyp::vpoly(5, 3), &ATyp::mle(5), &Nothing).unwrap();
         assert_eq!(result, ATyp::vpoly(5, 3));
+    }
+
+    /// Polynomials over different numbers of variables never combine or join, whatever the
+    /// encoding.
+    #[test]
+    fn polynomials_over_different_variables_do_not_combine() {
+        let pairs = [
+            (ATyp::mle(2), ATyp::mle(3)),
+            (ATyp::uni(3), ATyp::mle(2)),
+            (ATyp::vpoly(2, 3), ATyp::vpoly(4, 5)),
+            (ATyp::mle(2), ATyp::vpoly(3, 1)),
+        ];
+        for (a, b) in pairs {
+            for (op, result) in [
+                (BinOp::Equ, ATyp::lub_equ(&a, &b, &Nothing)),
+                (BinOp::Add, ATyp::lub_add(&a, &b, &Nothing)),
+                (BinOp::Sub, ATyp::lub_sub(&a, &b, &Nothing)),
+                (BinOp::Mul, ATyp::lub_mul(&a, &b, &Nothing)),
+            ] {
+                assert_eq!(
+                    result,
+                    Err(LubError::variable_count(op, &a, &b)),
+                    "{a} {op:?} {b}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -877,9 +919,9 @@ mod tests {
     }
 
     #[test]
-    fn vpoly_equ_different_coerces_to_wider() {
-        let result = ATyp::lub_equ(&ATyp::vpoly(2, 3), &ATyp::vpoly(4, 5), &Nothing);
-        assert_eq!(result.unwrap(), ATyp::vpoly(4, 5));
+    fn vpoly_equ_different_degree_coerces_to_wider() {
+        let result = ATyp::lub_equ(&ATyp::vpoly(2, 3), &ATyp::vpoly(2, 5), &Nothing);
+        assert_eq!(result.unwrap(), ATyp::vpoly(2, 5));
     }
 
     #[test]
@@ -910,11 +952,12 @@ mod tests {
 
             let m1: usize = u.int_in_range(1..=6)?;
             let n1: usize = u.int_in_range(1..=6)?;
-            let m2: usize = u.int_in_range(1..=6)?;
             let n2: usize = u.int_in_range(1..=6)?;
 
+            // Over the same variables; different ones are rejected by both (see
+            // `polynomials_over_different_variables_do_not_combine`).
             let c1 = CTyp::Poly(f.clone(), Spanned::dummy(m1), Spanned::dummy(n1));
-            let c2 = CTyp::Poly(f.clone(), Spanned::dummy(m2), Spanned::dummy(n2));
+            let c2 = CTyp::Poly(f.clone(), Spanned::dummy(m1), Spanned::dummy(n2));
             let c_mul = CTyp::lub_mul(&c1, &c2, &kctx).unwrap();
             let c_mul_lowered = ATyp::from_ctyp(&c_mul, &kctx).unwrap();
 
@@ -930,31 +973,37 @@ mod tests {
     // Property-based tests for algebraic laws
     // ========================================================================
 
-    use arbitrary::{Arbitrary, Unstructured};
+    use arbitrary::Unstructured;
 
-    /// Newtype for generating random polynomial ATyp variants
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    struct PolyATyp(ATyp);
+    /// A random polynomial type over `vars` variables, of any encoding that has that many
+    /// (`Uni` only when `vars == 1`). The algebraic laws hold among polynomials over the same
+    /// variables; others do not combine.
+    fn arb_poly_over(u: &mut Unstructured<'_>, vars: usize) -> arbitrary::Result<ATyp> {
+        let variant: u8 = u.int_in_range(if vars == 1 { 0..=2 } else { 1..=2 })?;
+        Ok(match variant {
+            0 => ATyp::uni(u.int_in_range(1..=10)?),
+            1 => ATyp::mle(vars),
+            _ => ATyp::vpoly(vars, u.int_in_range(1..=10)?),
+        })
+    }
 
-    impl<'a> Arbitrary<'a> for PolyATyp {
-        fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-            let variant: u8 = u.int_in_range(0..=2)?;
-            Ok(PolyATyp(match variant {
-                0 => ATyp::uni(u.int_in_range(1..=10)?),
-                1 => ATyp::mle(u.int_in_range(1..=10)?),
-                _ => ATyp::vpoly(u.int_in_range(1..=10)?, u.int_in_range(1..=10)?),
-            }))
-        }
+    /// Three random polynomial types over one shared, random number of variables.
+    fn arb_polys(u: &mut Unstructured<'_>) -> arbitrary::Result<[ATyp; 3]> {
+        let vars = u.int_in_range(1..=4)?;
+        Ok([
+            arb_poly_over(u, vars)?,
+            arb_poly_over(u, vars)?,
+            arb_poly_over(u, vars)?,
+        ])
     }
 
     #[test]
     fn pbt_mul_commutativity() {
         arbtest::arbtest(|u| {
-            let a: PolyATyp = u.arbitrary()?;
-            let b: PolyATyp = u.arbitrary()?;
-            let ab = ATyp::lub_mul(&a.0, &b.0, &Nothing);
-            let ba = ATyp::lub_mul(&b.0, &a.0, &Nothing);
-            assert_eq!(ab, ba, "mul not commutative: {:?} * {:?}", a.0, b.0);
+            let [a, b, _] = arb_polys(u)?;
+            let ab = ATyp::lub_mul(&a, &b, &Nothing);
+            let ba = ATyp::lub_mul(&b, &a, &Nothing);
+            assert_eq!(ab, ba, "mul not commutative: {:?} * {:?}", a, b);
             Ok(())
         });
     }
@@ -962,17 +1011,15 @@ mod tests {
     #[test]
     fn pbt_mul_associativity() {
         arbtest::arbtest(|u| {
-            let a: PolyATyp = u.arbitrary()?;
-            let b: PolyATyp = u.arbitrary()?;
-            let c: PolyATyp = u.arbitrary()?;
-            let ab = ATyp::lub_mul(&a.0, &b.0, &Nothing).unwrap();
-            let ab_c = ATyp::lub_mul(&ab, &c.0, &Nothing);
-            let bc = ATyp::lub_mul(&b.0, &c.0, &Nothing).unwrap();
-            let a_bc = ATyp::lub_mul(&a.0, &bc, &Nothing);
+            let [a, b, c] = arb_polys(u)?;
+            let ab = ATyp::lub_mul(&a, &b, &Nothing).unwrap();
+            let ab_c = ATyp::lub_mul(&ab, &c, &Nothing);
+            let bc = ATyp::lub_mul(&b, &c, &Nothing).unwrap();
+            let a_bc = ATyp::lub_mul(&a, &bc, &Nothing);
             assert_eq!(
                 ab_c, a_bc,
                 "(a*b)*c != a*(b*c) for a={:?}, b={:?}, c={:?}",
-                a.0, b.0, c.0
+                a, b, c
             );
             Ok(())
         });
@@ -981,11 +1028,10 @@ mod tests {
     #[test]
     fn pbt_add_commutativity() {
         arbtest::arbtest(|u| {
-            let a: PolyATyp = u.arbitrary()?;
-            let b: PolyATyp = u.arbitrary()?;
-            let ab = ATyp::lub_add(&a.0, &b.0, &Nothing);
-            let ba = ATyp::lub_add(&b.0, &a.0, &Nothing);
-            assert_eq!(ab, ba, "add not commutative: {:?} + {:?}", a.0, b.0);
+            let [a, b, _] = arb_polys(u)?;
+            let ab = ATyp::lub_add(&a, &b, &Nothing);
+            let ba = ATyp::lub_add(&b, &a, &Nothing);
+            assert_eq!(ab, ba, "add not commutative: {:?} + {:?}", a, b);
             Ok(())
         });
     }
@@ -993,21 +1039,19 @@ mod tests {
     #[test]
     fn pbt_add_associativity() {
         arbtest::arbtest(|u| {
-            let a: PolyATyp = u.arbitrary()?;
-            let b: PolyATyp = u.arbitrary()?;
-            let c: PolyATyp = u.arbitrary()?;
+            let [a, b, c] = arb_polys(u)?;
             // add may fail for incompatible types; only test when all succeed
             if let (Ok(ab), Ok(bc)) = (
-                ATyp::lub_add(&a.0, &b.0, &Nothing),
-                ATyp::lub_add(&b.0, &c.0, &Nothing),
+                ATyp::lub_add(&a, &b, &Nothing),
+                ATyp::lub_add(&b, &c, &Nothing),
             ) && let (Ok(ab_c), Ok(a_bc)) = (
-                ATyp::lub_add(&ab, &c.0, &Nothing),
-                ATyp::lub_add(&a.0, &bc, &Nothing),
+                ATyp::lub_add(&ab, &c, &Nothing),
+                ATyp::lub_add(&a, &bc, &Nothing),
             ) {
                 assert_eq!(
                     ab_c, a_bc,
                     "(a+b)+c != a+(b+c) for a={:?}, b={:?}, c={:?}",
-                    a.0, b.0, c.0
+                    a, b, c
                 );
             }
             Ok(())
@@ -1017,11 +1061,11 @@ mod tests {
     #[test]
     fn pbt_scalar_mul_identity() {
         arbtest::arbtest(|u| {
-            let a: PolyATyp = u.arbitrary()?;
-            let sa = ATyp::lub_mul(&ATyp::scalar(), &a.0, &Nothing).unwrap();
-            let as_ = ATyp::lub_mul(&a.0, &ATyp::scalar(), &Nothing).unwrap();
-            assert_eq!(sa, a.0, "Scalar * a != a for a={:?}", a.0);
-            assert_eq!(as_, a.0, "a * Scalar != a for a={:?}", a.0);
+            let [a, _, _] = arb_polys(u)?;
+            let sa = ATyp::lub_mul(&ATyp::scalar(), &a, &Nothing).unwrap();
+            let as_ = ATyp::lub_mul(&a, &ATyp::scalar(), &Nothing).unwrap();
+            assert_eq!(sa, a, "Scalar * a != a for a={:?}", a);
+            assert_eq!(as_, a, "a * Scalar != a for a={:?}", a);
             Ok(())
         });
     }
@@ -1056,103 +1100,91 @@ mod tests {
         });
     }
 
-    /// `Uni(d) * Mle(n) == VPoly(n, d+1)` (and reverse).
+    /// `Uni(d) * Mle(1) == VPoly(1, d+1)` (and reverse); `Uni` has one variable.
     #[test]
     fn pbt_lub_mul_uni_mle_pins_vpoly() {
         arbtest::arbtest(|u| {
             let d: usize = u.int_in_range(0..=8)?;
+            let left = ATyp::lub_mul(&ATyp::uni(d), &ATyp::mle(1), &Nothing).unwrap();
+            let right = ATyp::lub_mul(&ATyp::mle(1), &ATyp::uni(d), &Nothing).unwrap();
+            let expected = ATyp::vpoly(1, d + 1);
+            assert_eq!(left, expected, "Uni({d}) * Mle(1) should equal {expected}");
+            assert_eq!(right, expected, "Mle(1) * Uni({d}) should equal {expected}");
+            Ok(())
+        });
+    }
+
+    /// `Mle(n) * Mle(n) == VPoly(n, 2)`: the degree in each variable adds (Mle(n) has
+    /// degree 1 in each).
+    #[test]
+    fn pbt_lub_mul_mle_mle_pins_degree_two() {
+        arbtest::arbtest(|u| {
             let n: usize = u.int_in_range(1..=8)?;
-            let left = ATyp::lub_mul(&ATyp::uni(d), &ATyp::mle(n), &Nothing).unwrap();
-            let right = ATyp::lub_mul(&ATyp::mle(n), &ATyp::uni(d), &Nothing).unwrap();
-            let expected = ATyp::vpoly(n, d + 1);
-            assert_eq!(
-                left, expected,
-                "Uni({d}) * Mle({n}) should equal {expected}"
-            );
-            assert_eq!(
-                right, expected,
-                "Mle({n}) * Uni({d}) should equal {expected}"
-            );
-            Ok(())
-        });
-    }
-
-    /// `Mle(n1) * Mle(n2)` always pins to `VPoly(max(n1,n2), 2)` — the degree
-    /// in each variable adds (Mle(n) has degree 1 in each).
-    #[test]
-    fn pbt_lub_mul_mle_mle_pins_max_and_degree_two() {
-        arbtest::arbtest(|u| {
-            let n1: usize = u.int_in_range(1..=8)?;
-            let n2: usize = u.int_in_range(1..=8)?;
-            let result = ATyp::lub_mul(&ATyp::mle(n1), &ATyp::mle(n2), &Nothing).unwrap();
+            let result = ATyp::lub_mul(&ATyp::mle(n), &ATyp::mle(n), &Nothing).unwrap();
             assert_eq!(
                 result,
-                ATyp::vpoly(n1.max(n2), 2),
-                "Mle({n1}) * Mle({n2}) should equal VPoly(max, 2)",
+                ATyp::vpoly(n, 2),
+                "Mle({n}) * Mle({n}) should equal VPoly({n}, 2)"
             );
             Ok(())
         });
     }
 
-    /// `VPoly(n1,m1) * VPoly(n2,m2) == VPoly(max(n1,n2), m1+m2)`.
+    /// `VPoly(n,m1) * VPoly(n,m2) == VPoly(n, m1+m2)`.
     #[test]
-    fn pbt_lub_mul_vpoly_vpoly_pins_max_vars_and_sum_degree() {
+    fn pbt_lub_mul_vpoly_vpoly_pins_sum_degree() {
         arbtest::arbtest(|u| {
-            let n1: usize = u.int_in_range(1..=8)?;
+            let n: usize = u.int_in_range(1..=8)?;
             let m1: usize = u.int_in_range(1..=8)?;
-            let n2: usize = u.int_in_range(1..=8)?;
             let m2: usize = u.int_in_range(1..=8)?;
-            let result =
-                ATyp::lub_mul(&ATyp::vpoly(n1, m1), &ATyp::vpoly(n2, m2), &Nothing).unwrap();
+            let result = ATyp::lub_mul(&ATyp::vpoly(n, m1), &ATyp::vpoly(n, m2), &Nothing).unwrap();
             assert_eq!(
                 result,
-                ATyp::vpoly(n1.max(n2), m1 + m2),
-                "VPoly({n1},{m1}) * VPoly({n2},{m2}) should equal VPoly(max, sum)",
+                ATyp::vpoly(n, m1 + m2),
+                "VPoly({n},{m1}) * VPoly({n},{m2}) should equal VPoly({n}, sum)",
             );
             Ok(())
         });
     }
 
-    /// `VPoly(n,m) * Uni(d) == VPoly(n, m+d)` (in both orders).
+    /// `VPoly(1,m) * Uni(d) == VPoly(1, m+d)` (in both orders); `Uni` has one variable.
     #[test]
     fn pbt_lub_mul_vpoly_uni_pins_degree_sum() {
         arbtest::arbtest(|u| {
-            let n: usize = u.int_in_range(1..=8)?;
             let m: usize = u.int_in_range(0..=8)?;
             let d: usize = u.int_in_range(0..=8)?;
-            let left = ATyp::lub_mul(&ATyp::vpoly(n, m), &ATyp::uni(d), &Nothing).unwrap();
-            let right = ATyp::lub_mul(&ATyp::uni(d), &ATyp::vpoly(n, m), &Nothing).unwrap();
-            let expected = ATyp::vpoly(n, m + d);
+            let left = ATyp::lub_mul(&ATyp::vpoly(1, m), &ATyp::uni(d), &Nothing).unwrap();
+            let right = ATyp::lub_mul(&ATyp::uni(d), &ATyp::vpoly(1, m), &Nothing).unwrap();
+            let expected = ATyp::vpoly(1, m + d);
             assert_eq!(
                 left, expected,
-                "VPoly({n},{m}) * Uni({d}) should equal {expected}"
+                "VPoly(1,{m}) * Uni({d}) should equal {expected}"
             );
             assert_eq!(
                 right, expected,
-                "Uni({d}) * VPoly({n},{m}) should equal {expected}"
+                "Uni({d}) * VPoly(1,{m}) should equal {expected}"
             );
             Ok(())
         });
     }
 
-    /// `VPoly(n,m) * Mle(n')` pins to `VPoly(max(n,n'), m+1)` — the
-    /// multilinear has degree 1 in each variable, which adds to the VPoly's.
+    /// `VPoly(n,m) * Mle(n)` pins to `VPoly(n, m+1)`: the multilinear has degree 1 in each
+    /// variable, which adds to the VPoly's.
     #[test]
     fn pbt_lub_mul_vpoly_mle_pins_degree_plus_one() {
         arbtest::arbtest(|u| {
             let n: usize = u.int_in_range(1..=8)?;
             let m: usize = u.int_in_range(0..=8)?;
-            let n_mle: usize = u.int_in_range(1..=8)?;
-            let left = ATyp::lub_mul(&ATyp::vpoly(n, m), &ATyp::mle(n_mle), &Nothing).unwrap();
-            let right = ATyp::lub_mul(&ATyp::mle(n_mle), &ATyp::vpoly(n, m), &Nothing).unwrap();
-            let expected = ATyp::vpoly(n.max(n_mle), m + 1);
+            let left = ATyp::lub_mul(&ATyp::vpoly(n, m), &ATyp::mle(n), &Nothing).unwrap();
+            let right = ATyp::lub_mul(&ATyp::mle(n), &ATyp::vpoly(n, m), &Nothing).unwrap();
+            let expected = ATyp::vpoly(n, m + 1);
             assert_eq!(
                 left, expected,
-                "VPoly({n},{m}) * Mle({n_mle}) should equal {expected}"
+                "VPoly({n},{m}) * Mle({n}) should equal {expected}"
             );
             assert_eq!(
                 right, expected,
-                "Mle({n_mle}) * VPoly({n},{m}) should equal {expected}"
+                "Mle({n}) * VPoly({n},{m}) should equal {expected}"
             );
             Ok(())
         });
@@ -1262,41 +1294,33 @@ mod tests {
         });
     }
 
-    /// `Mle(n1) + Mle(n2)` pins to `Mle(n)` if `n1 == n2`, else to
-    /// `VPoly(max(n1,n2), 1)` — Mle(n) has degree 1 in each variable.
+    /// `Mle(n) + Mle(n) == Mle(n)`.
     #[test]
     fn pbt_lub_add_mle_mle_pins() {
         arbtest::arbtest(|u| {
-            let n1: usize = u.int_in_range(1..=8)?;
-            let n2: usize = u.int_in_range(1..=8)?;
-            let result = ATyp::lub_add(&ATyp::mle(n1), &ATyp::mle(n2), &Nothing).unwrap();
-            let expected = if n1 == n2 {
-                ATyp::mle(n1)
-            } else {
-                ATyp::vpoly(n1.max(n2), 1)
-            };
+            let n: usize = u.int_in_range(1..=8)?;
+            let result = ATyp::lub_add(&ATyp::mle(n), &ATyp::mle(n), &Nothing).unwrap();
             assert_eq!(
-                result, expected,
-                "Mle({n1}) + Mle({n2}) should equal {expected}",
+                result,
+                ATyp::mle(n),
+                "Mle({n}) + Mle({n}) should equal Mle({n})"
             );
             Ok(())
         });
     }
 
-    /// `VPoly(n1,m1) + VPoly(n2,m2) == VPoly(max(n1,n2), max(m1,m2))`.
+    /// `VPoly(n,m1) + VPoly(n,m2) == VPoly(n, max(m1,m2))`.
     #[test]
-    fn pbt_lub_add_vpoly_vpoly_pins_max_max() {
+    fn pbt_lub_add_vpoly_vpoly_pins_max_degree() {
         arbtest::arbtest(|u| {
-            let n1: usize = u.int_in_range(1..=8)?;
+            let n: usize = u.int_in_range(1..=8)?;
             let m1: usize = u.int_in_range(1..=8)?;
-            let n2: usize = u.int_in_range(1..=8)?;
             let m2: usize = u.int_in_range(1..=8)?;
-            let result =
-                ATyp::lub_add(&ATyp::vpoly(n1, m1), &ATyp::vpoly(n2, m2), &Nothing).unwrap();
+            let result = ATyp::lub_add(&ATyp::vpoly(n, m1), &ATyp::vpoly(n, m2), &Nothing).unwrap();
             assert_eq!(
                 result,
-                ATyp::vpoly(n1.max(n2), m1.max(m2)),
-                "VPoly({n1},{m1}) + VPoly({n2},{m2}) should equal VPoly(max, max)",
+                ATyp::vpoly(n, m1.max(m2)),
+                "VPoly({n},{m1}) + VPoly({n},{m2}) should equal VPoly({n}, max)",
             );
             Ok(())
         });

@@ -33,6 +33,10 @@ pub enum LubError {
     /// A [`Tid`] has no entry in the kind context, so its kind cannot be consulted.
     #[error("Unknown type `{0}`")]
     KindNotFound(Tid),
+    /// A binary operation or join between polynomials over different numbers of variables
+    /// (see [`CTyp::poly_vars_differ`](crate::typ::CTyp::poly_vars_differ)).
+    #[error("{}: they are polynomials over different numbers of variables", describe_bin(*.0, .1, .2))]
+    VariableCount(BinOp, String, String),
     /// A polynomial evaluation whose point shape is incompatible with the polynomial.
     #[error("Cannot evaluate {0} at {1}")]
     Eval(String, String),
@@ -79,6 +83,10 @@ impl LubError {
     /// Exponentiation (`lub_pow`) failed between `a` and `b`.
     pub fn pow<K: fmt::Display>(a: &K, b: &K) -> Self {
         LubError::Bin(BinOp::Pow, a.to_string(), b.to_string())
+    }
+    /// `op` failed between the polynomials `a` and `b`, whose numbers of variables differ.
+    pub fn variable_count<K: fmt::Display>(op: BinOp, a: &K, b: &K) -> Self {
+        LubError::VariableCount(op, a.to_string(), b.to_string())
     }
     /// Evaluating the polynomial `a` at the point `b` is ill-typed.
     pub fn eval<K: fmt::Display>(a: &K, b: &K) -> Self {

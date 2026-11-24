@@ -114,31 +114,28 @@ impl<C: ArkConfig> PolySource<C> {
     ///   `multi_indices(1, n)` is a prefix of `multi_indices(1, n')`,
     ///   so zero-padding is correct.
     ///
-    /// **VPoly(n1, m1) → VPoly(n2, m2)** where `n1 ≤ n2` and `m1 ≤ m2`:
-    ///   NOT a simple prefix, even at equal arity: the slots bound the degree
-    ///   in each variable, so `multi_indices(n, m')` interleaves indices such
-    ///   as `(0, m+1)` between those of `multi_indices(n, m)`. Each source
-    ///   multi-index `(k1,…,kn1)` embeds as `(k1,…,kn1,0,…,0)` in
-    ///   `n2`-variable space. We look up each embedded index's position in
-    ///   `multi_indices(n2, m2)` and place the source poly there; all other
-    ///   ideal slots are zero.
+    /// **VPoly(n, m1) → VPoly(n, m2)** where `m1 ≤ m2`:
+    ///   NOT a simple prefix: the slots bound the degree in each variable, so
+    ///   `multi_indices(n, m2)` interleaves indices such as `(0, m1+1)` between
+    ///   those of `multi_indices(n, m1)`. We look up each source multi-index's
+    ///   position in `multi_indices(n, m2)` and place the source poly there;
+    ///   all other ideal slots are zero.
     ///
-    /// **Mle(n1) → Mle(n2)** where `n1 ≤ n2`:
-    ///   The hypercube `{0,1}^n1` embeds as `{(b1,…,bn1,0,…,0)} ⊂ {0,1}^n2`.
-    ///   Since `hypercube` enumerates in bit-order, each `(b1,…,bn1)` maps to
-    ///   the same slot index in Mle(n2) (trailing zeros don't affect the index).
-    ///   Mle(n1) IS a prefix of Mle(n2) — zero-padding is correct.
+    /// **Mle(n) → VPoly(n, m)** where `m ≥ 1`:
+    ///   Cross-encoding lift (from `lub_add`/`lub_sub` of an Mle and another
+    ///   encoding). Mle stores evaluations at hypercube points; VPoly stores
+    ///   coefficients at multi-indices. We convert via Lagrange-basis
+    ///   expansion: the VPoly coefficient at multi-index `k` is
+    ///   `Σ_b f(b) · Π_i C[b_i][k_i]` where `C = [[1,-1],[0,1]]` encodes
+    ///   `L_0(x)=1-x`, `L_1(x)=x`.
     ///
-    /// **Mle(n) → VPoly(n', m')** where `n ≤ n'`:
-    ///   Cross-type lift (from `lub_add`/`lub_sub` when Mle arities differ).
-    ///   Mle stores evaluations at hypercube points; VPoly stores coefficients
-    ///   at multi-indices. We convert via Lagrange-basis expansion: the VPoly
-    ///   coefficient at multi-index `k` is `Σ_b f(b) · Π_i C[b_i][k_i]`
-    ///   where `C = [[1,-1],[0,1]]` encodes `L_0(x)=1-x`, `L_1(x)=x`.
+    /// **Uni(n) → VPoly(1, m)** where `n ≤ m`: `multi_indices(1, m)` is
+    ///   `0..=m`, the Uni layout, so zero-padding is correct.
     ///
-    /// **Uni(n) → VPoly(n', m')** where `1 ≤ n'` and `n ≤ m'`:
-    ///   Same as VPoly(1,n) → VPoly(n',m'). Handled by same-arity prefix or
-    ///   cross-arity embedding as above.
+    /// The number of variables never changes: polynomials over different
+    /// numbers of variables do not combine (`CTyp::poly_vars_differ`), so
+    /// lifting one to more variables panics. An MLE table in particular has no
+    /// lift to more variables that keeps its polynomial by zero-padding.
     ///
     /// **Vec(A, n) → Vec(B, n)**:
     ///   Lifts each element from `A` to `B` by the rules above, in order.
@@ -183,14 +180,10 @@ impl<C: ArkConfig> PolySource<C> {
                 }
             }
 
-            (ATyp::Mle(_n1), ATyp::Mle(_n2)) => {
-                let mut out = self.polys.clone();
-                out.resize(dst_len, Polynomial::zero());
-                PolySource {
-                    polys: out,
-                    typ: target.clone(),
-                }
-            }
+            (source, target) if source.poly_vars_differ(target) => panic!(
+                "lift_to: {source} → {target} changes the number of variables, which the type \
+                 checker rejects"
+            ),
 
             (ATyp::Mle(1), ATyp::Uni(m2)) if *m2 >= 1 => {
                 assert_eq!(
@@ -209,36 +202,26 @@ impl<C: ArkConfig> PolySource<C> {
                 }
             }
 
-            (ATyp::VPoly(n1, m1), ATyp::VPoly(n2, m2)) if n1 <= n2 && m1 <= m2 => {
-                let dst_idx = multi_indices(*n2, *m2);
-                let src_idx = multi_indices(*n1, *m1);
-                let out = Self::embed_multi_indexed_polys(&self.polys, &src_idx, &dst_idx, *n2);
+            (ATyp::VPoly(n, m1), ATyp::VPoly(_, m2)) if m1 <= m2 => {
+                let dst_idx = multi_indices(*n, *m2);
+                let src_idx = multi_indices(*n, *m1);
+                let out = Self::embed_multi_indexed_polys(&self.polys, &src_idx, &dst_idx, *n);
                 PolySource {
                     polys: out,
                     typ: target.clone(),
                 }
             }
 
-            (ATyp::Uni(m1), ATyp::VPoly(n2, m2)) if *n2 >= 1 && m1 <= m2 => {
-                if *n2 == 1 {
-                    let mut out = self.polys.clone();
-                    out.resize(dst_len, Polynomial::zero());
-                    PolySource {
-                        polys: out,
-                        typ: target.clone(),
-                    }
-                } else {
-                    let dst_idx = multi_indices(*n2, *m2);
-                    let src_idx = multi_indices(1, *m1);
-                    let out = Self::embed_multi_indexed_polys(&self.polys, &src_idx, &dst_idx, *n2);
-                    PolySource {
-                        polys: out,
-                        typ: target.clone(),
-                    }
+            (ATyp::Uni(m1), ATyp::VPoly(_, m2)) if m1 <= m2 => {
+                let mut out = self.polys.clone();
+                out.resize(dst_len, Polynomial::zero());
+                PolySource {
+                    polys: out,
+                    typ: target.clone(),
                 }
             }
 
-            // Mle(n1) → VPoly(n2, m2): convert from evaluation form to
+            // Mle(n) → VPoly(n, m): convert from evaluation form to
             // coefficient form via Lagrange-basis expansion.
             //
             // Each Mle slot `j` (corresponding to hypercube point `b =
@@ -252,16 +235,14 @@ impl<C: ArkConfig> PolySource<C> {
             //
             // The VPoly coefficient at index `k` is then
             // `Σ_b f(b) · Π_i C[b_i][k_i]`.
-            (ATyp::Mle(n1), ATyp::VPoly(n2, m2)) if n1 <= n2 && *m2 >= 1 => {
+            (ATyp::Mle(n), ATyp::VPoly(_, m)) if *m >= 1 => {
                 // Per-variable Lagrange eval→coeff: `C[b][k]` is the
                 // coefficient of `x^k` in `L_b(x)`.
                 // `L_0(x) = 1 - x` → C[0] = [1, -1]
                 // `L_1(x) = x`     → C[1] = [0,  1]
                 const C: [[i64; 2]; 2] = [[1, -1], [0, 1]];
-                let src_hcube = hypercube(*n1);
-                let dst_idx = multi_indices(*n2, *m2);
-                let n2_val = *n2;
-                let n1_val = *n1;
+                let src_hcube = hypercube(*n);
+                let dst_idx = multi_indices(*n, *m);
                 let mut out = vec![Polynomial::<C::F>::zero(); dst_idx.len()];
                 let lit_of = |v: i64| -> Polynomial<C::F> {
                     if v >= 0 {
@@ -273,22 +254,13 @@ impl<C: ArkConfig> PolySource<C> {
                 for (j, src_b) in src_hcube.iter().enumerate() {
                     for (ir, k) in dst_idx.iter().enumerate() {
                         let mut scalar: i64 = 1;
-                        for i in 0..n1_val {
+                        for i in 0..*n {
                             let ki = if i < k.len() { k[i] } else { 0 };
                             if ki >= 2 {
                                 scalar = 0;
                                 break;
                             }
                             scalar *= C[src_b[i]][ki];
-                        }
-                        if n2_val > n1_val {
-                            for i in n1_val..n2_val {
-                                let ki = if i < k.len() { k[i] } else { 0 };
-                                if ki != 0 {
-                                    scalar = 0;
-                                    break;
-                                }
-                            }
                         }
                         if scalar == 0 {
                             continue;
@@ -581,7 +553,8 @@ mod tests {
     }
 
     #[test]
-    fn test_lift_mle_to_wider_mle() {
+    #[should_panic(expected = "changes the number of variables")]
+    fn test_lift_mle_to_more_variables_panics() {
         use crate::Var;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
@@ -593,24 +566,7 @@ mod tests {
             &ideal.vars,
             &Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(2)),
         );
-        assert_eq!(src.polys.len(), 4);
-
-        let lifted = src.lift_to(&ATyp::Mle(3));
-        assert_eq!(lifted.polys.len(), 8);
-        assert_eq!(*lifted.typ(), ATyp::Mle(3));
-        for i in 0..4 {
-            assert_eq!(
-                lifted.polys[i],
-                Polynomial::var(&var.clone().with_index(i).unwrap())
-            );
-        }
-        for i in 4..8 {
-            assert!(
-                lifted.polys[i].is_zero(),
-                "padded slot {} should be zero",
-                i
-            );
-        }
+        let _ = src.lift_to(&ATyp::Mle(3));
     }
 
     #[test]
@@ -645,42 +601,6 @@ mod tests {
                     "multi-index {dk:?} should be zero"
                 ),
             }
-        }
-    }
-
-    #[test]
-    fn test_lift_vpoly_cross_arity_embedding() {
-        use crate::Var;
-        use lang::typ::Qualifier;
-        use petgraph::graph::NodeIndex;
-
-        let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var = Var::from_node(NodeIndex::new(0), ATyp::VPoly(2, 2), Qualifier::Witness);
-        ideal.register(&var);
-        let src = PolySource::<ArkBls12_381>::from_ref_vars(
-            &ideal.vars,
-            &Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 2)),
-        );
-
-        let lifted = src.lift_to(&ATyp::VPoly(3, 2));
-        assert_eq!(*lifted.typ(), ATyp::VPoly(3, 2));
-        assert_eq!(lifted.polys.len(), ATyp::VPoly(3, 2).physical_len());
-
-        let dst = multi_indices(3, 2);
-        let src_idx = multi_indices(2, 2);
-        for (j, sk) in src_idx.iter().enumerate() {
-            let mut padded = sk.clone();
-            padded.resize(3, 0);
-            let pos = dst.iter().position(|dk| dk == &padded).unwrap();
-            assert_eq!(
-                lifted.polys[pos],
-                Polynomial::var(&var.clone().with_index(j).unwrap()),
-                "src multi-index {:?} → padded {:?} → dst position {} should have src slot {}",
-                sk,
-                padded,
-                pos,
-                j
-            );
         }
     }
 

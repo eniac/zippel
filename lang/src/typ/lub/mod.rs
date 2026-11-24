@@ -443,6 +443,7 @@ impl Lub for CTyp {
     type Context = Ctx<Tid, CKind>;
     fn lub_equ(x: &Self, y: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Self, LubError> {
         match (x, y) {
+            (p, q) if p.poly_vars_differ(q) => Err(LubError::variable_count(BinOp::Equ, &x, &y)),
             (CTyp::Unit, CTyp::Unit) => Ok(CTyp::Unit),
             (CTyp::Bool, CTyp::Bool) => Ok(CTyp::Bool),
             (CTyp::Base(a), CTyp::Base(b)) => Ok(CTyp::Base(
@@ -453,8 +454,8 @@ impl Lub for CTyp {
                 Range::lub_equ(a, b, &Nothing)
                     .map_err(|e| LubError::next(LubError::equ(&x, &y), e))?,
             )),
-            // Polynomials of one encoding coerce to the wider type of that encoding; of
-            // different encodings, to the general polynomial covering both.
+            // Polynomials over the same variables: of one encoding, the wider type of that
+            // encoding; of different encodings, the general polynomial covering both.
             (CTyp::Uni(a, n), CTyp::Uni(b, m)) => Ok(CTyp::uni(
                 &Tid::lub_equ(a, b, ctx).map_err(|e| LubError::next(LubError::equ(&x, &y), e))?,
                 n.node.max(m.node),
@@ -464,13 +465,12 @@ impl Lub for CTyp {
                 n.node.max(m.node),
             )),
             (p, q)
-                if let (Some((a, na, ma)), Some((b, nb, mb))) =
-                    (p.poly_shape(), q.poly_shape()) =>
+                if let (Some((a, n, ma)), Some((b, _, mb))) = (p.poly_shape(), q.poly_shape()) =>
             {
                 Ok(CTyp::poly(
                     &Tid::lub_equ(a, b, ctx)
                         .map_err(|e| LubError::next(LubError::equ(&x, &y), e))?,
-                    na.max(nb),
+                    n,
                     ma.max(mb),
                 ))
             }
@@ -520,6 +520,7 @@ impl Lub for CTyp {
 
     fn lub_add(x: &Self, y: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Self, LubError> {
         match (x, y) {
+            (p, q) if p.poly_vars_differ(q) => Err(LubError::variable_count(BinOp::Add, &x, &y)),
             (CTyp::Base(a), CTyp::Base(b)) => Ok(CTyp::Base(
                 Tid::lub_add(a, b, ctx).map_err(|e| LubError::next(LubError::add(&x, &y), e))?,
             )),
@@ -535,21 +536,21 @@ impl Lub for CTyp {
                     .map_err(|e| LubError::next(LubError::add(&x, &y), e))?;
                 Ok(CTyp::uni(&t, n.node.max(m.node)))
             }
-            // Mle<A> + Mle<B> = Mle<max(A, B)>
+            // Mle<A, n> + Mle<B, n> = Mle<A + B, n>
             (CTyp::Mle(a, n), CTyp::Mle(b, m)) => {
                 let t = Tid::lub_add(a, b, ctx)
                     .map_err(|err| LubError::next(LubError::add(&x, &y), err))?;
                 Ok(CTyp::mle(&t, n.node.max(m.node)))
             }
-            // Any other two polynomials: a general polynomial, vars and degree both take max.
+            // Any other two polynomials (over the same variables): a general polynomial of the
+            // higher degree.
             (p, q)
-                if let (Some((a, na, ma)), Some((b, nb, mb))) =
-                    (p.poly_shape(), q.poly_shape()) =>
+                if let (Some((a, n, ma)), Some((b, _, mb))) = (p.poly_shape(), q.poly_shape()) =>
             {
                 Ok(CTyp::poly(
                     &Tid::lub_add(a, b, ctx)
                         .map_err(|e| LubError::next(LubError::add(&x, &y), e))?,
-                    na.max(nb),
+                    n,
                     ma.max(mb),
                 ))
             }
@@ -605,6 +606,7 @@ impl Lub for CTyp {
 
     fn lub_sub(x: &Self, y: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Self, LubError> {
         match (x, y) {
+            (p, q) if p.poly_vars_differ(q) => Err(LubError::variable_count(BinOp::Sub, &x, &y)),
             (CTyp::Base(a), CTyp::Base(b)) => Ok(CTyp::Base(
                 Tid::lub_sub(a, b, ctx).map_err(|e| LubError::next(LubError::sub(&x, &y), e))?,
             )),
@@ -620,21 +622,21 @@ impl Lub for CTyp {
                     .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?;
                 Ok(CTyp::uni(&t, n.node.max(m.node)))
             }
-            // Mle<A> - Mle<B> = Mle<max(A, B)>
+            // Mle<A, n> - Mle<B, n> = Mle<A - B, n>
             (CTyp::Mle(a, n), CTyp::Mle(b, m)) => {
                 let t = Tid::lub_sub(a, b, ctx)
                     .map_err(|err| LubError::next(LubError::sub(&x, &y), err))?;
                 Ok(CTyp::mle(&t, n.node.max(m.node)))
             }
-            // Any other two polynomials: a general polynomial, vars and degree both take max.
+            // Any other two polynomials (over the same variables): a general polynomial of the
+            // higher degree.
             (p, q)
-                if let (Some((a, na, ma)), Some((b, nb, mb))) =
-                    (p.poly_shape(), q.poly_shape()) =>
+                if let (Some((a, n, ma)), Some((b, _, mb))) = (p.poly_shape(), q.poly_shape()) =>
             {
                 Ok(CTyp::poly(
                     &Tid::lub_sub(a, b, ctx)
                         .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?,
-                    na.max(nb),
+                    n,
                     ma.max(mb),
                 ))
             }
@@ -686,6 +688,7 @@ impl Lub for CTyp {
 
     fn lub_mul(x: &Self, y: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Self, LubError> {
         match (x, y) {
+            (p, q) if p.poly_vars_differ(q) => Err(LubError::variable_count(BinOp::Mul, &x, &y)),
             (CTyp::Base(a), CTyp::Base(b)) => Ok(CTyp::Base(
                 Tid::lub_mul(a, b, ctx).map_err(|e| LubError::next(LubError::mul(&x, &y), e))?,
             )),
@@ -704,17 +707,17 @@ impl Lub for CTyp {
                     degree,
                 ))
             }
-            // Any other two polynomials (`Mle * Mle` included): a general polynomial,
-            // Poly(F, n, m) * Poly(F, n', m') = Poly(F, max(n,n'), m+m').
+            // Any other two polynomials over the same variables (`Mle * Mle` included): a
+            // general polynomial,
+            // Poly(F, n, m) * Poly(F, n, m') = Poly(F, n, m+m').
             (p, q)
-                if let (Some((a, na, ma)), Some((b, nb, mb))) =
-                    (p.poly_shape(), q.poly_shape()) =>
+                if let (Some((a, n, ma)), Some((b, _, mb))) = (p.poly_shape(), q.poly_shape()) =>
             {
                 let degree = ma.checked_add(mb).ok_or_else(|| LubError::mul(&x, &y))?;
                 Ok(CTyp::poly(
                     &Tid::lub_mul(a, b, ctx)
                         .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?,
-                    na.max(nb),
+                    n,
                     degree,
                 ))
             }
@@ -1039,10 +1042,10 @@ impl CTyp {
     /// `self` may stand where `expected` is declared (a return value, a record field, a call
     /// argument); `None` when it may not or either is not a polynomial. Only a polynomial of
     /// the same encoding fits:
-    /// - `Uni<A, d>` fits `Uni<B, d'>` for `d <= d'`, and `Poly<A, v, d>` fits `Poly<B, v', d'>`
-    ///   for `v <= v'` and `d <= d'`: padding coefficients with zeros keeps the polynomial;
-    /// - `Mle<A, n>` fits only `Mle<B, n>`: a table over more variables has no single meaning
-    ///   (the new variables could be ignored or vanish).
+    /// - `Uni<A, d>` fits `Uni<B, d'>` and `Poly<A, v, d>` fits `Poly<B, v, d'>` for `d <= d'`:
+    ///   padding coefficients with zeros keeps the polynomial;
+    /// - `Mle<A, n>` fits `Mle<B, n>`;
+    /// - the number of variables never changes ([`CTyp::poly_vars_differ`]).
     ///
     /// A different encoding does not fit even when it describes the same polynomials: each
     /// encoding is a representation the analyses and the input check rely on, so changing it
@@ -1051,11 +1054,23 @@ impl CTyp {
         match (self, expected) {
             (CTyp::Uni(a, d), CTyp::Uni(b, e)) if d.node <= e.node => Some((a, b)),
             (CTyp::Mle(a, n), CTyp::Mle(b, m)) if n.node == m.node => Some((a, b)),
-            (CTyp::Poly(a, v, d), CTyp::Poly(b, w, e)) if v.node <= w.node && d.node <= e.node => {
+            (CTyp::Poly(a, v, d), CTyp::Poly(b, w, e)) if v.node == w.node && d.node <= e.node => {
                 Some((a, b))
             }
             _ => None,
         }
+    }
+
+    /// Whether `self` and `other` are both polynomials, over different numbers of variables
+    /// (`Uni` has one). Such polynomials never combine, join or fit: lifting one to the
+    /// other's variables has no meaning every layer shares (the analysis would zero-pad an MLE
+    /// table, so the new variables vanish, and the runtime cannot evaluate the mix).
+    #[must_use]
+    pub fn poly_vars_differ(&self, other: &Self) -> bool {
+        matches!(
+            (self.poly_shape(), other.poly_shape()),
+            (Some((_, n, _)), Some((_, m, _))) if n != m
+        )
     }
 
     /// A polynomial's base type, variable count and degree bound, as a general polynomial:

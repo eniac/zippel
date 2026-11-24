@@ -396,6 +396,19 @@ fn primary_label(cause: &TypeError) -> String {
     }
 }
 
+/// Explains, when `a` and `b` are polynomials over different numbers of variables, that this
+/// is why they do not combine ([`CTyp::poly_vars_differ`]).
+fn note_variable_count(d: Diagnostic, a: &CTyp, b: &CTyp) -> Diagnostic {
+    if a.poly_vars_differ(b) {
+        d.note(
+            "polynomials over different numbers of variables never combine; lift one to the \
+             other's variables explicitly",
+        )
+    } else {
+        d
+    }
+}
+
 /// Labels the parts of the failing expression with their types, and adds the notes and
 /// suggestions specific to `cause`.
 fn decorate(cause: &TypeError, mut d: Diagnostic) -> Diagnostic {
@@ -415,12 +428,14 @@ fn decorate(cause: &TypeError, mut d: Diagnostic) -> Diagnostic {
             }
             d.primary_label = format!("`{}` is not defined for these operands", op);
             d = has_type(d, &a.span, kinded(a, kctx));
-            has_type(d, &b.span, kinded(b, kctx))
+            d = has_type(d, &b.span, kinded(b, kctx));
+            note_variable_count(d, &a.node, &b.node)
         }
         TypeError::Vec(kctx, elem, first) => {
             d.primary_label = "in this vector".to_string();
             d = has_type(d, &first.span, kinded(first, kctx));
-            has_type(d, &elem.span, kinded(elem, kctx))
+            d = has_type(d, &elem.span, kinded(elem, kctx));
+            note_variable_count(d, &first.node, &elem.node)
         }
         TypeError::Ram(kctx, ta, tb) | TypeError::RamDynamicIndex(kctx, ta, tb) => {
             // The caret goes on the index; the vector gets its own label.

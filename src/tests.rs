@@ -497,3 +497,131 @@ fn analysis_preparation_keeps_the_relation() {
             .is_ok()
     );
 }
+
+/// A protocol over `a: Mle<F, 2>`, `b: Mle<F, 3>`, `q: Poly<F, 2, 2>`,
+/// `p: Poly<F, 3, 2>`, `u: Uni<F, 2>` and a point `x: [F; 3]` that sends `sent`
+/// and checks it equals `expected`; `helpers` are function declarations `sent`
+/// may call.
+fn polynomial_mix_source(helpers: &str, sent: &str, expected: &str) -> String {
+    format!(
+        "{helpers}
+        proto mix<F: Field>(
+            instance a: Mle<F, 2>, instance b: Mle<F, 3>, instance q: Poly<F, 2, 2>,
+            instance p: Poly<F, 3, 2>, instance u: Uni<F, 2>, instance x: [F; 3],
+        ) where x[0] == x[0] {{
+            y <- {sent};
+            verify(y == {expected})
+        }}"
+    )
+}
+
+/// Polynomials over different numbers of variables never combine, join or fit:
+/// no layer agrees on lifting one to more variables (the runtime cannot
+/// evaluate the mix, and the analysis would zero-pad an MLE table).
+#[test]
+fn polynomials_over_different_numbers_of_variables_are_rejected() {
+    let combine = "polynomials over different numbers of variables never combine";
+    let join = combine;
+    let first = "fn first<F: Field>(instance a: Mle<F, 2>, instance b: Mle<F, 3>) -> Mle<F, 3> {
+        let v = [a, b];
+        v[0]
+    }";
+    let widen = "fn widen<F: Field>(instance p: Poly<F, 3, 2>) -> Poly<F, 3, 2> { p }";
+    for (helpers, sent, reason) in [
+        ("", "eval(a + b, x)", combine),
+        ("", "eval(a - b, x)", combine),
+        ("", "eval(a * b, x)", combine),
+        ("", "eval(a + p, x)", combine),
+        ("", "eval(a * p, x)", combine),
+        ("", "eval(q + p, x)", combine),
+        ("", "eval(u + b, x)", combine),
+        ("", "eval(u * p, x)", combine),
+        ("", "eval(reduce(+, [a, b]), x)", join),
+        (first, "eval(first(a, b), x)", join),
+        (
+            widen,
+            "eval(widen(q), x)",
+            "No definition of `widen` accepts arguments of type Poly<F, 2, 2>",
+        ),
+    ] {
+        let source = polynomial_mix_source(helpers, sent, "y");
+        let compiled = ParsedModule::parse("mix.zippel", source)
+            .and_then(|m| m.compile::<ArkBls12_381>(&Ctx::new(), CompileOptions::default()));
+        let Err(CompileError::Diagnostics { diagnostics, .. }) = compiled else {
+            panic!("`{sent}` should not typecheck");
+        };
+        // The diagnostics' own text, not the source they quote.
+        let text: Vec<String> = diagnostics
+            .iter()
+            .flat_map(|d| {
+                [d.summary.clone(), d.primary_label.clone()]
+                    .into_iter()
+                    .chain(d.notes.iter().map(|n| n.message.clone()))
+            })
+            .collect();
+        assert!(
+            text.iter().any(|t| t.contains(reason)),
+            "`{sent}` should fail with `{reason}`: {text:?}"
+        );
+    }
+}
+
+/// Over the same variables, polynomials of different encodings and degrees
+/// combine, and the analysis and the runtime agree on the result.
+#[test]
+fn polynomials_over_the_same_variables_combine_in_analysis_and_runtime() {
+    use ark_ff::UniformRand;
+    type F = <ArkBls12_381 as ArkConfig>::F;
+    let mut rng = ark_std::test_rng();
+    let mut rand = |n: usize| (0..n).map(|_| F::rand(&mut rng)).collect::<Vec<_>>();
+    let a = backend::VirtualPolynomial::dense_mle(2, rand(4));
+    let b = backend::VirtualPolynomial::dense_mle(3, rand(8));
+    let inputs: TestInputs = HashMap::from([
+        ("a", Value::poly(a.clone())),
+        ("b", Value::poly(b.clone())),
+        ("q", Value::poly(a.poly_mul(&a))),
+        ("p", Value::poly(b.poly_mul(&b))),
+        (
+            "u",
+            Value::poly(backend::VirtualPolynomial::univariate(rand(3))),
+        ),
+        ("x", Value::vec_scalar(rand(3))),
+    ]);
+    let at_uni = "fn at_uni<F: Field>(instance p: Uni<F, 4>, instance t: F) -> F { p(t) }";
+    let x01 = "[x[0], x[1]]";
+    for (helpers, sent, expected) in [
+        (
+            "",
+            "eval(b + p, x)".to_string(),
+            "eval(b, x) + eval(p, x)".to_string(),
+        ),
+        (
+            "",
+            "eval(b * p, x)".to_string(),
+            "eval(b, x) * eval(p, x)".to_string(),
+        ),
+        (
+            "",
+            format!("eval(a + q, {x01})"),
+            format!("eval(a, {x01}) + eval(q, {x01})"),
+        ),
+        (at_uni, "at_uni(u, x[0])".to_string(), "u(x[0])".to_string()),
+    ] {
+        let protocol = compile_src(&polynomial_mix_source(helpers, &sent, &expected));
+        let analysis = protocol.prepare_analysis().expect("prepare analysis");
+        let completeness = analysis.run(Analysis::Completeness, analyses::GbBackendKind::ArkGb);
+        assert!(
+            completeness.is_ok(),
+            "completeness of `{sent}`: {completeness:?}"
+        );
+        let proof = protocol
+            .project_prover()
+            .prove(inputs.clone())
+            .expect("prove");
+        let verifier = protocol.project_verifier().expect("project verifier");
+        assert!(
+            matches!(verifier.verify(proof, inputs.clone()), Ok(true)),
+            "`{sent}` should verify"
+        );
+    }
+}

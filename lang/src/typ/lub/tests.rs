@@ -213,8 +213,37 @@ fn lub_typ() {
         Ok(CTyp::uni(&f, 11))
     );
     assert_eq!(
-        CTyp::lub_add(&CTyp::mle(&f, 10), &CTyp::mle(&f, 11), &ctx),
+        CTyp::lub_add(&CTyp::mle(&f, 11), &CTyp::mle(&f, 11), &ctx),
         Ok(CTyp::mle(&f, 11))
+    );
+    // Polynomials over different numbers of variables never combine, whatever the encoding.
+    for (a, b) in [
+        (CTyp::mle(&f, 10), CTyp::mle(&f, 11)),
+        (CTyp::uni(&f, 3), CTyp::mle(&f, 2)),
+        (CTyp::poly(&f, 2, 2), CTyp::poly(&f, 3, 2)),
+        (CTyp::mle(&f, 2), CTyp::poly(&f, 3, 1)),
+    ] {
+        assert_eq!(
+            CTyp::lub_add(&a, &b, &ctx),
+            Err(LubError::variable_count(BinOp::Add, &a, &b))
+        );
+        assert_eq!(
+            CTyp::lub_sub(&a, &b, &ctx),
+            Err(LubError::variable_count(BinOp::Sub, &a, &b))
+        );
+        assert_eq!(
+            CTyp::lub_mul(&a, &b, &ctx),
+            Err(LubError::variable_count(BinOp::Mul, &a, &b))
+        );
+        assert_eq!(
+            CTyp::lub_equ(&a, &b, &ctx),
+            Err(LubError::variable_count(BinOp::Equ, &a, &b))
+        );
+    }
+    // Over the same variables, encodings and degrees still combine.
+    assert_eq!(
+        CTyp::lub_add(&CTyp::uni(&f, 3), &CTyp::mle(&f, 1), &ctx),
+        Ok(CTyp::poly(&f, 1, 3))
     );
     assert_eq!(
         CTyp::lub_add(&CTyp::vec(&tg1, 10), &CTyp::vec(&tg1, 10), &ctx),
@@ -247,15 +276,10 @@ fn lub_typ() {
         CTyp::lub_mul(&CTyp::mle(&f, 3), &CTyp::mle(&f, 3), &ctx),
         Ok(CTyp::Poly(f.clone(), Spanned::dummy(3), Spanned::dummy(2)))
     );
-    // Mle<F, 2> * Mle<F, 3> = Poly<F, 3, 2> (max vars, degree 2)
+    // Uni<F, 5> * Mle<F, 1> via general Poly*Poly: Poly(F,1,5) * Poly(F,1,1) = Poly(F, 1, 6)
     assert_eq!(
-        CTyp::lub_mul(&CTyp::mle(&f, 2), &CTyp::mle(&f, 3), &ctx),
-        Ok(CTyp::Poly(f.clone(), Spanned::dummy(3), Spanned::dummy(2)))
-    );
-    // Uni<F, 5> * Mle<F, 3> via general Poly*Poly: Poly(F,1,5) * Poly(F,3,1) = Poly(F, 3, 6)
-    assert_eq!(
-        CTyp::lub_mul(&CTyp::uni(&f, 5), &CTyp::mle(&f, 3), &ctx),
-        Ok(CTyp::Poly(f.clone(), Spanned::dummy(3), Spanned::dummy(6)))
+        CTyp::lub_mul(&CTyp::uni(&f, 5), &CTyp::mle(&f, 1), &ctx),
+        Ok(CTyp::Poly(f.clone(), Spanned::dummy(1), Spanned::dummy(6)))
     );
     // Poly<F, 2, 3> * Poly<F, 2, 4> = Poly<F, 2, 7>
     assert_eq!(
@@ -265,15 +289,6 @@ fn lub_typ() {
             &ctx
         ),
         Ok(CTyp::Poly(f.clone(), Spanned::dummy(2), Spanned::dummy(7)))
-    );
-    // Poly<F, 2, 3> * Poly<F, 4, 2> = Poly<F, 4, 5> (max vars, sum degrees)
-    assert_eq!(
-        CTyp::lub_mul(
-            &CTyp::Poly(f.clone(), Spanned::dummy(2), Spanned::dummy(3)),
-            &CTyp::Poly(f.clone(), Spanned::dummy(4), Spanned::dummy(2)),
-            &ctx
-        ),
-        Ok(CTyp::Poly(f.clone(), Spanned::dummy(4), Spanned::dummy(5)))
     );
 
     // Regression (phase 7): Poly == Poly falls through to the general arm when
@@ -289,10 +304,10 @@ fn lub_typ() {
     assert_eq!(
         CTyp::lub_equ(
             &CTyp::Poly(f.clone(), Spanned::dummy(2), Spanned::dummy(3)),
-            &CTyp::Poly(f.clone(), Spanned::dummy(3), Spanned::dummy(2)),
+            &CTyp::Poly(f.clone(), Spanned::dummy(2), Spanned::dummy(2)),
             &ctx
         ),
-        Ok(CTyp::Poly(f.clone(), Spanned::dummy(3), Spanned::dummy(3)))
+        Ok(CTyp::Poly(f.clone(), Spanned::dummy(2), Spanned::dummy(3)))
     );
 
     // Regression: `lub_div` preserves the dividend's degree *upper bound*.
@@ -837,22 +852,30 @@ mod ctyp_lub_poly_tests {
 
     // ----- Shape-grid PBTs (one per lub_* arm) -----
 
-    /// `lub_add(Poly, Poly) = Poly(max(n1, n2), max(m1, m2))` — covers Uni-Uni,
-    /// Mle-Mle, mixed Uni-Mle, and general VPoly under the general arm
-    /// introduced in Phase 14.
+    /// `lub_add(Poly(n, m1), Poly(n, m2)) = Poly(n, max(m1, m2))`; polynomials over
+    /// different numbers of variables do not add.
     #[test]
     fn lub_add_poly_grid() {
         arbtest::arbtest(|u| {
             let n1 = arb_n(u)?;
             let m1 = arb_m(u)?;
-            let n2 = arb_n(u)?;
+            // Half the cases share the variables, so both outcomes are covered.
+            let n2 = if u.arbitrary()? { n1 } else { arb_n(u)? };
             let m2 = arb_m(u)?;
             let a = CTyp::Poly(f(), Spanned::dummy(n1), Spanned::dummy(m1));
             let b = CTyp::Poly(f(), Spanned::dummy(n2), Spanned::dummy(m2));
-            let expected = CTyp::Poly(f(), Spanned::dummy(n1.max(n2)), Spanned::dummy(m1.max(m2)));
+            let expected = if n1 == n2 {
+                Ok(CTyp::Poly(
+                    f(),
+                    Spanned::dummy(n1),
+                    Spanned::dummy(m1.max(m2)),
+                ))
+            } else {
+                Err(LubError::variable_count(BinOp::Add, &a, &b))
+            };
             assert_eq!(
                 CTyp::lub_add(&a, &b, &kind_ctx()),
-                Ok(expected),
+                expected,
                 "lub_add(Poly(F,{},{}), Poly(F,{},{}))",
                 n1,
                 m1,
@@ -863,21 +886,30 @@ mod ctyp_lub_poly_tests {
         });
     }
 
-    /// `lub_sub(Poly, Poly) = Poly(max(n1, n2), max(m1, m2))` — same shape
+    /// `lub_sub(Poly(n, m1), Poly(n, m2)) = Poly(n, max(m1, m2))` — same shape
     /// rule as `lub_add`. Subtraction can't grow degree.
     #[test]
     fn lub_sub_poly_grid() {
         arbtest::arbtest(|u| {
             let n1 = arb_n(u)?;
             let m1 = arb_m(u)?;
-            let n2 = arb_n(u)?;
+            // Half the cases share the variables, so both outcomes are covered.
+            let n2 = if u.arbitrary()? { n1 } else { arb_n(u)? };
             let m2 = arb_m(u)?;
             let a = CTyp::Poly(f(), Spanned::dummy(n1), Spanned::dummy(m1));
             let b = CTyp::Poly(f(), Spanned::dummy(n2), Spanned::dummy(m2));
-            let expected = CTyp::Poly(f(), Spanned::dummy(n1.max(n2)), Spanned::dummy(m1.max(m2)));
+            let expected = if n1 == n2 {
+                Ok(CTyp::Poly(
+                    f(),
+                    Spanned::dummy(n1),
+                    Spanned::dummy(m1.max(m2)),
+                ))
+            } else {
+                Err(LubError::variable_count(BinOp::Sub, &a, &b))
+            };
             assert_eq!(
                 CTyp::lub_sub(&a, &b, &kind_ctx()),
-                Ok(expected),
+                expected,
                 "lub_sub(Poly(F,{},{}), Poly(F,{},{}))",
                 n1,
                 m1,
@@ -888,22 +920,26 @@ mod ctyp_lub_poly_tests {
         });
     }
 
-    /// `lub_mul(Poly, Poly) = Poly(max(n1, n2), m1 + m2)` — Phase-14 degrees
-    /// add under multiplication; the general `(Poly, Poly)` arm handles
-    /// arbitrary `(n, m)` shapes including mixed Uni-Mle and general VPoly.
+    /// `lub_mul(Poly(n, m1), Poly(n, m2)) = Poly(n, m1 + m2)`: degrees add under
+    /// multiplication; polynomials over different numbers of variables do not multiply.
     #[test]
     fn lub_mul_poly_grid() {
         arbtest::arbtest(|u| {
             let n1 = arb_n(u)?;
             let m1 = arb_m(u)?;
-            let n2 = arb_n(u)?;
+            // Half the cases share the variables, so both outcomes are covered.
+            let n2 = if u.arbitrary()? { n1 } else { arb_n(u)? };
             let m2 = arb_m(u)?;
             let a = CTyp::Poly(f(), Spanned::dummy(n1), Spanned::dummy(m1));
             let b = CTyp::Poly(f(), Spanned::dummy(n2), Spanned::dummy(m2));
-            let expected = CTyp::Poly(f(), Spanned::dummy(n1.max(n2)), Spanned::dummy(m1 + m2));
+            let expected = if n1 == n2 {
+                Ok(CTyp::Poly(f(), Spanned::dummy(n1), Spanned::dummy(m1 + m2)))
+            } else {
+                Err(LubError::variable_count(BinOp::Mul, &a, &b))
+            };
             assert_eq!(
                 CTyp::lub_mul(&a, &b, &kind_ctx()),
-                Ok(expected),
+                expected,
                 "lub_mul(Poly(F,{},{}), Poly(F,{},{}))",
                 n1,
                 m1,
@@ -1541,13 +1577,14 @@ fn fits_is_one_way() {
     let ctx = Ctx::from([(f.clone(), Kind::Field), (g.clone(), Kind::Group)]);
     let fin = CTyp::fin(CRange::from_raw(0, 1, 3));
 
-    // A polynomial fits one of its own encoding: a coefficient form with as many or more
-    // variables and as high or higher a degree, an MLE only with the same variables.
+    // A polynomial fits one of its own encoding over the same variables, a coefficient form
+    // also one of as high or higher a degree.
     assert!(CTyp::uni(&f, 3).fits(&CTyp::uni(&f, 5), &ctx));
     assert!(!CTyp::uni(&f, 5).fits(&CTyp::uni(&f, 3), &ctx));
-    assert!(CTyp::poly(&f, 2, 3).fits(&CTyp::poly(&f, 3, 4), &ctx));
+    assert!(CTyp::poly(&f, 2, 3).fits(&CTyp::poly(&f, 2, 4), &ctx));
+    assert!(!CTyp::poly(&f, 2, 4).fits(&CTyp::poly(&f, 2, 3), &ctx));
+    assert!(!CTyp::poly(&f, 2, 3).fits(&CTyp::poly(&f, 3, 4), &ctx));
     assert!(!CTyp::poly(&f, 3, 3).fits(&CTyp::poly(&f, 2, 4), &ctx));
-    assert!(!CTyp::poly(&f, 2, 4).fits(&CTyp::poly(&f, 3, 3), &ctx));
     assert!(CTyp::mle(&f, 2).fits(&CTyp::mle(&f, 2), &ctx));
     assert!(!CTyp::mle(&f, 2).fits(&CTyp::mle(&f, 3), &ctx));
     assert!(!CTyp::mle(&f, 3).fits(&CTyp::mle(&f, 2), &ctx));

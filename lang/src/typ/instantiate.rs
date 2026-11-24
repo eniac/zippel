@@ -634,11 +634,12 @@ mod tests {
         let fin = |a, b| CTyp::fin(crate::ast::range::CRange::from_raw(a, 1, b));
         let ok = |p: &CTyp, a: &CTyp| Instantiation::new(&sig).match_typ(p, a, &caller);
 
-        // A coefficient form widens to more variables or a higher degree, never the other
-        // way; an MLE matches only the same variables; no polynomial changes encoding.
+        // A coefficient form widens to a higher degree, never the other way; no polynomial
+        // changes its number of variables or its encoding.
         assert_eq!(ok(&CTyp::uni(&t, 11), &CTyp::uni(&f, 10)), Ok(()));
         assert!(ok(&CTyp::uni(&t, 10), &CTyp::uni(&f, 11)).is_err());
-        assert_eq!(ok(&CTyp::poly(&t, 3, 4), &CTyp::poly(&f, 2, 3)), Ok(()));
+        assert_eq!(ok(&CTyp::poly(&t, 2, 4), &CTyp::poly(&f, 2, 3)), Ok(()));
+        assert!(ok(&CTyp::poly(&t, 3, 4), &CTyp::poly(&f, 2, 3)).is_err());
         assert!(ok(&CTyp::poly(&t, 2, 4), &CTyp::poly(&f, 3, 3)).is_err());
         assert_eq!(ok(&CTyp::mle(&t, 10), &CTyp::mle(&f, 10)), Ok(()));
         assert!(ok(&CTyp::mle(&t, 11), &CTyp::mle(&f, 10)).is_err());
